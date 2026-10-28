@@ -1,0 +1,63 @@
+﻿/* =========================================================
+   Conline â€“ Loaders
+   Troque a cor de fundo/tamanho pelas variÃ¡veis abaixo.
+   ========================================================= */
+.cl-loader {
+  --cl-bg: #07080a;
+  --cl-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  place-items: center;
+  background: var(--cl-bg);
+}
+.cl-loader--contained { position: absolute; }
+
+/* ---------- Modelo 1: somente sÃ­mbolo ---------- */
+.cl-symbol {
+  position: relative;
+  width: var(--cl-symbol-size, 120px);
+  aspect-ratio: 455 / 370;
+  animation: cl-breathe 2.4s ease-in-out infinite;
+}
+.cl-symbol__base {
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0.28;
+}
+/* faixa de luz que varre o sÃ­mbolo (usa o prÃ³prio PNG como mÃ¡scara) */
+.cl-symbol__shine {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 38%, #fff 50%, transparent 62%)
+    100% 0 / 250% 100% no-repeat;
+  -webkit-mask: var(--cl-symbol-url) center / contain no-repeat;
+          mask: var(--cl-symbol-url) center / contain no-repeat;
+  animation: cl-shine 1.8s ease-in-out infinite;
+}
+@keyframes cl-shine   { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+@keyframes cl-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+
+.cl-loader--inline {
+  position: static;
+  inset: auto;
+  z-index: auto;
+  display: flex;
+  width: auto;
+  height: auto;
+  background: transparent;
+}
+
+html.tema-claro .cl-loader { --cl-bg: #f3f5f8; }
+html.tema-claro .cl-symbol__base { filter: brightness(0); opacity: 0.35; }
+html.tema-claro .cl-symbol__shine {
+  background: linear-gradient(110deg, transparent 38%, #c62828 50%, transparent 62%) 100% 0 / 250% 100% no-repeat;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cl-symbol, .cl-symbol__shine { animation: none; }
+  .cl-symbol__base { opacity: 1; }
+  .cl-symbol__shine { display: none; }
+}

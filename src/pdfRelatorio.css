@@ -1,0 +1,60 @@
+/*
+  Visual do PDF do relatório.
+  Edite os valores abaixo e gere o PDF de novo na conversa.
+  Cores em hexadecimal. Tamanhos em pontos (a página é A4).
+*/
+
+:root {
+  /* Página */
+  --largura: 595.28;
+  --altura: 841.89;
+  --margem: 36;
+  --reserva-rodape: 46;
+
+  /* Cores */
+  --vinho: #6b121a;
+  --vermelho: #b22129;
+  --rosa: #edcccc;
+  --cinza: #6b6666;
+  --linha: #e6dbdb;
+  --zebra: #f6f1f0;
+  --fundo: #f9f4f3;
+  --branco: #ffffff;
+  --tinta: #1f242e;
+
+  /* Capa */
+  --capa-base: 78;
+  --capa-linha: 22;
+  --titulo: 18;
+  --marca: 8;
+  --marca-espaco: 1.6;
+  --marca-escala: 1.45;
+  --marca-opacidade: 0.42;
+  --marca-folga: 24;
+  --faixa: 6;
+  --meta: 8;
+
+  /* Seção e tabela */
+  --secao: 8;
+  --secao-espaco: 1.4;
+  --tabela-cabeca: 7;
+  --tabela-cabeca-espaco: 0.7;
+  --tabela-texto: 8.5;
+  --tabela-linha: 12;
+  --coluna-minima: 46;
+  --coluna-maxima: 240;
+  --colunas-paisagem: 5;
+  --colunas-cards: 10;
+
+  /* Indicadores da capa */
+  --kpi-altura: 40;
+  --kpi-valor: 12;
+
+  /* Resumo, quando a resposta não vira tabela */
+  --resumo: 9.5;
+  --resumo-rotulo: 7.5;
+
+  /* Rodapé */
+  --rodape: 8;
+  --rodape-espaco: 1.5;
+}

@@ -1,0 +1,17 @@
+node_modules
+certs/
+dist
+.DS_Store
+*.local
+.env
+.env.*
+!.env.example
+*.pem
+*.pfx
+*.key
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+server/connection.json
+server/memoria.json
+data/

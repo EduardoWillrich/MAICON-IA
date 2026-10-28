@@ -1,0 +1,6 @@
+.ia-flutuante { position: relative; display: flex; align-items: center; }
+.ia-dica { position: absolute; right: 0; top: calc(100% + 10px); margin: 0; width: max-content; max-width: 280px; padding: 8px 12px; border-radius: 12px; background: var(--card); color: var(--text); border: 1px solid var(--line); font-size: 0.75rem; line-height: 1.35; white-space: normal; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35); pointer-events: none; z-index: 6; animation: ia-dica 4s ease forwards; }
+@keyframes ia-dica { 0% { opacity: 0; transform: translateY(-4px); } 12% { opacity: 1; transform: none; } 75% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(-4px); } }
+.ia-botao { width: 42px; height: 42px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; padding: 0; background: #c62828; cursor: pointer; flex-shrink: 0; }
+.ia-botao img { width: 22px; height: auto; object-fit: contain; }
+.ia-botao:hover { background: #b71c1c; }
