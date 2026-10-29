@@ -956,9 +956,21 @@ async function chamarGroq(chave, corpo, aoTexto) {
   }
   const texto = ultimoErro?.message || "";
   if (/does not exist|do not have access/i.test(texto)) {
-    throw new Error("O modelo configurado não está disponível nesta conta. A consulta não foi feita.");
+    throw erroDoProvedor(
+      "O modelo configurado não está disponível nesta conta. A consulta não foi feita.",
+      statusDoErro(ultimoErro) || 404,
+    );
   }
-  throw new Error("A IA está sobrecarregada no momento. Tente de novo em instantes.");
+  if (/request too large|reduce your message size/i.test(texto)) {
+    throw erroDoProvedor(
+      "A consulta ficou grande demais para a IA neste momento. Tente de novo em instantes.",
+      statusDoErro(ultimoErro) || 413,
+    );
+  }
+  throw erroDoProvedor(
+    "A IA está sobrecarregada no momento. Tente de novo em instantes.",
+    statusDoErro(ultimoErro) || 503,
+  );
 }
 
 function textoDe(valor) {
@@ -1221,9 +1233,36 @@ function corpoAberto(corpo) {
   return aberto;
 }
 
+function compactarCorpoParaGroq(corpo) {
+  const LIMITE = Number(process.env.GROQ_SYSTEM_MAX_CHARS) || 14000;
+  const messages = (corpo.messages || []).map((mensagem, indice) => {
+    if (indice !== 0 || mensagem?.role !== "system") return mensagem;
+    let content = String(mensagem.content ?? "");
+    const marca = content.indexOf("CONSULTAS PRONTAS (já validadas");
+    if (marca >= 0) {
+      content =
+        content.slice(0, marca).trimEnd() +
+        "\n\nCONSULTAS PRONTAS: o dump SQL completo foi omitido para caber no limite da Groq. " +
+        "Prefira as ferramentas tipadas. Se precisar de SQL novo, use buscar_tabelas e listar_colunas.\n";
+    }
+    if (content.length > LIMITE) {
+      content =
+        content.slice(0, LIMITE).trimEnd() +
+        "\n\n[Instruções enxutas para o limite da Groq. Responda em português com as ferramentas disponíveis.]\n";
+    }
+    return { ...mensagem, content };
+  });
+  const { tools, ...resto } = corpo;
+  return {
+    ...resto,
+    messages,
+    ...(Array.isArray(tools) && tools.length ? { tools } : {}),
+  };
+}
+
 async function chamarProvedor(item, corpo, aoTexto, sinal) {
   const aberto = corpoAberto(corpo);
-  if (item.provedor === "groq") return chamarGroq(item.chave, aberto, aoTexto);
+  if (item.provedor === "groq") return chamarGroq(item.chave, compactarCorpoParaGroq(aberto), aoTexto);
   if (item.provedor === "gemini") return chamarGemini(item.chave, aberto, aoTexto);
   if (item.provedor === "openrouter") return chamarModelo(item.chave, aberto, aoTexto);
   return chamarOllama({ ...corpo, modelo: process.env.OLLAMA_MODEL || "beam" }, aoTexto, sinal, item.chave, item.extra);

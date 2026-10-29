@@ -142,3 +142,9 @@ test("erro de propriedade unsupported permite fallback", () => {
   assert.equal(podeTrocarChave(new Error("property 'modelo' is unsupported")), true);
   assert.equal(podeTrocarChave(new Error("O modelo configurado não está disponível nesta conta.")), true);
 });
+
+test("413 request too large permite fallback", () => {
+  const erro = new Error("Request too large");
+  erro.status = 413;
+  assert.equal(podeTrocarChave(erro), true);
+});
