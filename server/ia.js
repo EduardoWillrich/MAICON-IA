@@ -1,5 +1,12 @@
 import { Ollama } from "ollama";
 import { textoAprendizado } from "./aprendizado.js";
+import {
+  amostraDaConsulta,
+  conferirTabelas,
+  lerJulgamento,
+  respostaConfereComRetorno,
+  rodadasDesdePergunta,
+} from "./avaliacaoConsulta.js";
 import { textoConsultasRelevantes } from "./consultas.js";
 import { executarFilaComFallback, filaDeChaves, statusDoErro } from "./filaIa.js";
 import { ferramentaDaVisao } from "./funcoes.js";
@@ -22,8 +29,8 @@ const FERRAMENTAS = [
     function: {
       name: "buscar_tabelas",
       description:
-        "Passo 1 do catálogo: lista tabelas dbo do banco cujo nome contém o termo (ex.: 'Pessoa', 'Proposta', " +
-        "'Processo', 'Cliente'). Pode repetir com outros termos.",
+        "Passo 1 do catálogo dbo: lista tabelas cujo nome contém o termo (Pessoa, Proposta, Oferta, Processo, Cliente). " +
+        "Pode repetir. Não invente nome de tabela. Não use SELECT * para descobrir estrutura.",
       parameters: {
         type: "object",
         properties: { termo: { type: "string" } },
@@ -36,8 +43,8 @@ const FERRAMENTAS = [
     function: {
       name: "listar_colunas",
       description:
-        "Passo 2 do catálogo: colunas de até 6 tabelas, com tipo, tamanho, se aceita nulo, PK e chave estrangeira " +
-        "(Ref_Tabela/Ref_Coluna). Ex.: mov_Proposta_Frete.IdCliente → cad_Cliente.IdPessoa.",
+        "Passo 2 do catálogo, obrigatório antes de SQL de negócio: colunas, tipo, tamanho, nulo, PK e chave estrangeira " +
+        "(Ref_Tabela/Ref_Coluna). Ex.: mov_Proposta_Frete.IdCliente aponta para cad_Cliente.IdPessoa. Não invente coluna.",
       parameters: {
         type: "object",
         properties: { tabelas: { type: "array", items: { type: "string" } } },
@@ -50,10 +57,11 @@ const FERRAMENTAS = [
     function: {
       name: "executar_sql",
       description:
-        "Executa um único SELECT de leitura no SQL Server (schema dbo). Só use tabelas e colunas que apareceram " +
-        "em listar_colunas. Padrão obrigatório: SELECT sem TOP de lista, uma coluna por linha, apelido AS em português " +
+        "Executa um único SELECT de leitura no SQL Server (schema dbo). Recusa INSERT, UPDATE e DELETE. " +
+        "Só use tabelas e colunas que listar_colunas devolveu nesta conversa. Sem SELECT * e sem LIMIT. " +
+        "Padrão obrigatório: SELECT sem TOP de lista, uma coluna por linha, apelido AS em português " +
         "(Cia.Nome AS Companhia_Transporte), CASE WHEN para códigos, apelido curto da tabela (Lhs, Lms, Cia), " +
-        "LEFT OUTER JOIN, WHERE com filtro de data e ORDER BY. Sem SELECT * e sem LIMIT. " +
+        "LEFT OUTER JOIN, WHERE com filtro de data e ORDER BY. " +
         "Não use TOP 50 nem TOP 500 para cortar a lista. TOP 1 só para achar um único registro pela chave.",
       parameters: {
         type: "object",
@@ -689,9 +697,14 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "ou o valor do filtro. Não reescreva a consulta. Só crie um SQL novo se nenhuma pronta servir. " +
     "{processo} nas consultas prontas não é um processo real. Se o usuário não informou o número, pergunte qual processo. " +
     "Não invente número e não reutilize um processo de exemplo.\n" +
-    "SQL LIVRE (perguntas que cruzam tabelas, contagens, listas): antes de qualquer SQL de negócio, se não tiver certeza " +
-    "do nome da tabela, coluna, tipo ou chave estrangeira, leia o catálogo: buscar_tabelas e depois listar_colunas. " +
-    "Não invente nomes. Nunca selecione uma coluna Id* sozinha: traga o nome, número ou descrição da tabela ligada " +
+    "CATÁLOGO, antes de qualquer SQL de negócio: se não tiver certeza do nome da tabela, da coluna, do tipo ou da chave " +
+    "estrangeira, chame buscar_tabelas e depois listar_colunas. Não invente nomes. Não use SELECT * para descobrir estrutura. " +
+    "Só SELECT. O catálogo é do schema dbo. No SELECT de negócio, qualifique a tabela com dbo. (dbo.mov_Logistica_House). " +
+    "COLUMN_KEY PK é a chave primária. Ref_Tabela e Ref_Coluna são a chave estrangeira. " +
+    "Escreva executar_sql somente com tabelas e colunas que apareceram nesse retorno. " +
+    "Uma conferência interna roda depois da consulta. Se a tabela, a coluna ou o resultado não responderem a pergunta, " +
+    "você será obrigado a consultar de novo e não deve falar com o usuário antes disso. " +
+    "SQL LIVRE: nunca selecione uma coluna Id* sozinha. Traga o nome, número ou descrição da tabela ligada " +
     "(ex.: mov_Registro_Financeiro.Numero AS Fatura, cad_Pessoa.Nome AS Cliente). " +
     (setor === "ti"
       ? "Nesta aba, cite tabela e campo quando isso ajudar o TI. "
@@ -715,8 +728,8 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "SELECT\n" +
     "    Cia.Nome AS Companhia_Transporte,\n" +
     "    CASE Lhs.Tipo_Carga WHEN 1 THEN 'Aéreo' WHEN 3 THEN 'FCL' END AS Tipo_Carga\n" +
-    "FROM mov_Logistica_House Lhs\n" +
-    "LEFT OUTER JOIN cad_Pessoa Cia ON Cia.IdPessoa = Lhs.IdCliente\n" +
+    "FROM dbo.mov_Logistica_House Lhs\n" +
+    "LEFT OUTER JOIN dbo.cad_Pessoa Cia ON Cia.IdPessoa = Lhs.IdCliente\n" +
     "WHERE Lhs.Data_Abertura_Processo >= '2026-01-01' AND Lhs.Data_Abertura_Processo < '2027-01-01'\n" +
     "ORDER BY Cia.Nome\n" +
     "LIMITE: é proibido SELECT TOP 50, TOP 100 ou TOP 500. Esse TOP corta as datas mais antigas quando o ORDER BY é descendente. " +
@@ -726,7 +739,7 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "Se não houver período, use o ano atual inteiro.\n" +
     "Regras: uma coluna por linha; apelido AS em português com underscore; CASE para campos de código; " +
     "apelido da tabela com 2 a 4 letras (Lhs, Lms, Cia, Pai, Con); sempre LEFT OUTER JOIN, nunca só JOIN; " +
-    "FROM, WHERE e ORDER BY em linha própria; sem SELECT *, sem dbo. e sem LIMIT. " +
+    "FROM, WHERE e ORDER BY em linha própria; sem SELECT * e sem LIMIT. Qualifique a tabela com dbo. " +
     "Se der erro, leia a mensagem, corrija pelo catálogo e tente de novo. " +
     "Cada SELECT vai uma vez só: não repita a mesma consulta nem cole o SQL duas vezes no argumento. " +
     "Histórico de alterações: depois de localizar, chame consultar_log em mov_Logistica_House com campo_chave " +
@@ -784,7 +797,7 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
       ? "Depois da consulta, responda em português direto para o time de TI. Use somente os dados retornados; " +
         "se algo não constar, diga isso.\n\n"
       : "Depois da consulta, responda em português claro, para alguém não técnico. Use somente os dados retornados; " +
-        "se algo não constar, diga isso.\n\n") +
+        "se algo não constar, diga isso. Não invente cliente, valor, data, processo ou tabela.\n\n") +
     "FORMATO: responda em Markdown (GFM). Frases curtas. Use lista, negrito e tabela quando houver vários itens ou colunas. " +
     "Se a ferramenta devolver um bloco ```log, ```painel ou ```rota, copie o bloco inteiro, sem reescrever em lista ou parágrafo. " +
     "Não use a frase 'Atualização em data, por usuário. N campos.'. " +
@@ -1292,29 +1305,44 @@ async function filtrarPedido(chave, pergunta, nomes) {
   }
 }
 
-async function enxugarRetornos(chave, pergunta, mensagens) {
-  const copia = mensagens.map((item) => ({ ...item }));
-  const longos = copia.filter((item) => item?.role === "tool" && String(item.content || "").length > 1800);
-  if (!chave || !longos.length) return copia;
-  const pacote = longos.map((item) => String(item.content).slice(0, 3500)).join("\n\n---\n\n").slice(0, 8000);
-  try {
-    const resumo = await comModeloLeve(
-      chave,
-      "Extraia somente os fatos que respondem a pergunta. No máximo 12 linhas. Sem SQL, sem tabela interna e sem repetir instruções.",
-      `Pergunta: ${String(pergunta || "").slice(0, 500)}\n\nDados:\n${pacote}`,
-      450,
-    );
-    if (resumo.trim().length > 40) {
-      longos.forEach((item, indice) => {
-        item.content = indice === longos.length - 1 ? resumo.trim() : "Resumo incluído no último retorno.";
-      });
-      return copia;
-    }
-  } catch (erro) {
-    console.warn(`[IA] Resumo leve indisponível; status ${erro?.status || "desconhecido"}.`);
-  }
-  for (const item of longos) item.content = String(item.content).slice(0, 1800);
-  return copia;
+function cortarRetornos(mensagens) {
+  return mensagens.map((item) => {
+    if (item?.role !== "tool") return item;
+    const texto = String(item.content || "");
+    if (texto.length <= 6000) return item;
+    return { ...item, content: `${texto.slice(0, 6000)}\n…(recorte)` };
+  });
+}
+
+function mensagemPronta(msg) {
+  return {
+    role: "assistant",
+    content: msg?.content ?? "",
+    ...(msg?.uso ? { uso: msg.uso } : {}),
+    ...(msg?.tool_calls?.length ? { tool_calls: msg.tool_calls } : {}),
+  };
+}
+
+function corpoDeCorrecao(corpo, instrucao, ferramentas) {
+  return {
+    ...corpo,
+    temperature: 0,
+    num_predict: 1500,
+    limiteTokens: 1500,
+    modelosGemini: MODELOS_LEVES,
+    tools: ferramentas,
+    ...(ferramentas.length ? { tool_choice: "required" } : {}),
+    messages: corpo.messages.map((item, indice) =>
+      indice === 0
+        ? {
+            role: "system",
+            content:
+              "Você é a conferência interna do Maicon. Não escreva a resposta ao usuário. " +
+              `${instrucao} Chame uma ferramenta agora.`,
+          }
+        : item,
+    ),
+  };
 }
 
 function ferramentasDoPedido(opcoes, nomes) {
@@ -1367,11 +1395,14 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
   const filtro = temRetorno || informativo || provaveis.length || opcoes.apresentacao
     ? { ferramentas: provaveis, termos: "" }
     : await filtrarPedido(chaveLeve, pedido, nomes);
-  const base = temRetorno ? await enxugarRetornos(chaveLeve, pedido, mensagens) : mensagens;
+  const base = temRetorno ? cortarRetornos(mensagens) : mensagens;
   const escolhidas = filtro.ferramentas.length ? ferramentasDoPedido(opcoes, filtro.ferramentas) : [];
   const ferramentas = informativo ? [] : escolhidas.length ? escolhidas : ferramentasDoPedido(opcoes);
   const roteando = !temRetorno && !opcoes.relatorio && !opcoes.apresentacao && ferramentas.length > 0;
-  const instrucoes = informativo
+  const conferencia = temRetorno && !opcoes.apresentacao ? conferirTabelas(mensagens) : { ok: true, aviso: "" };
+  const rodadas = rodadasDesdePergunta(mensagens);
+  const corrigindo = conferencia.ok === false && rodadas < 3;
+  let instrucoes = informativo
     ? "Você é o Maicon, a IA da Conline. Responda a pergunta geral em português, com clareza e no máximo cinco frases. " +
       "Não consulte o banco, não escreva SQL e não invente dados da empresa."
     : roteando
@@ -1396,6 +1427,7 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
       Boolean(opcoes.apresentacao),
       opcoes.apresentacao ? "" : textoConsultasRelevantes(`${pedido}\n${filtro.termos}`),
     );
+  if (conferencia.aviso && !roteando && !informativo && !corrigindo) instrucoes += `\n${conferencia.aviso}\n`;
   const corpo = {
     modelo: modeloDaPergunta(),
     temperature: roteando ? 0 : 0.3,
@@ -1409,35 +1441,93 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
       ...prepararMensagens(base.map(({ uso: _uso, relatorio: _relatorio, log: _log, ...resto }) => resto)),
     ],
   };
-  console.warn(`[IA] rota ${roteando ? "leve" : informativo ? "informativa" : "resposta"}; instrucoes ${instrucoes.length} caracteres; ferramentas ${corpo.tools.length}.`);
   const filaBase = filaDeChaves(opcoes.chaves);
   const prioridadeLeve = { openrouter: 0, gemini: 1, ollama: 2 };
-  const fila = roteando || informativo
-    ? [...filaBase].sort((a, b) => prioridadeLeve[a.provedor] - prioridadeLeve[b.provedor])
-    : filaBase;
-  const dados = await executarFilaComFallback(
-    fila,
-    async (item, { indice, total }) => {
-      const temReserva = indice < total - 1;
-      let guardado = "";
-      const dadosDoProvedor = await chamarProvedor(
-        item,
-        corpo,
-        temReserva ? (pedaco) => { guardado += pedaco; } : aoTexto,
-        opcoes.sinal,
-      );
-      if (guardado) aoTexto?.(guardado);
-      return dadosDoProvedor;
-    },
-    ({ provedor, status }) => {
-      console.warn(`[IA] Falha no provedor ${provedor}; status ${status ?? "desconhecido"}.`);
-    },
-  );
-  const msg = dados ?? {};
-  return {
-    role: "assistant",
-    content: msg.content ?? "",
-    ...(msg.uso ? { uso: msg.uso } : {}),
-    ...(msg.tool_calls?.length ? { tool_calls: msg.tool_calls } : {}),
-  };
+  const filaLeve = [...filaBase].sort((a, b) => prioridadeLeve[a.provedor] - prioridadeLeve[b.provedor]);
+  const fila = roteando || informativo ? filaLeve : filaBase;
+  const permitidas = ferramentasDoPedido(opcoes);
+  const corpoUsado = corrigindo ? corpoDeCorrecao(corpo, conferencia.instrucao, permitidas) : corpo;
+  const querJulgar = temRetorno && !opcoes.apresentacao && !opcoes.relatorio && !roteando && !informativo;
+  const silencioso = corrigindo || querJulgar;
+  console.warn(`[IA] rota ${corrigindo ? "conferencia" : roteando ? "leve" : informativo ? "informativa" : "resposta"}; instrucoes ${instrucoes.length} caracteres; ferramentas ${corpoUsado.tools.length}.`);
+  if (corrigindo) console.warn(`[IA] Autoavaliação reprovou a consulta: ${conferencia.motivo}`);
+
+  async function pedir(corpoAtual, filaAtual, transmitir) {
+    return executarFilaComFallback(
+      filaAtual,
+      async (item, { indice, total }) => {
+        const temReserva = indice < total - 1;
+        let guardado = "";
+        const dadosDoProvedor = await chamarProvedor(
+          item,
+          corpoAtual,
+          temReserva ? (pedaco) => { guardado += pedaco; } : transmitir,
+          opcoes.sinal,
+        );
+        if (guardado && transmitir) transmitir(guardado);
+        return dadosDoProvedor;
+      },
+      ({ provedor, status }) => {
+        console.warn(`[IA] Falha no provedor ${provedor}; status ${status ?? "desconhecido"}.`);
+      },
+    );
+  }
+
+  async function julgarRascunho(rascunho) {
+    if (!chaveLeve || !String(rascunho || "").trim() || respostaConfereComRetorno(rascunho, mensagens)) {
+      return { ok: true, motivo: "", deNovo: false };
+    }
+    const texto = await comModeloLeve(
+      chaveLeve,
+      "Você é a autoavaliação interna do Maicon. Não responda ao usuário. " +
+        "Responda só JSON {\"ok\":true} ou {\"ok\":false,\"motivo\":\"...\",\"deNovo\":false}. " +
+        "Reprove se a resposta inventa cliente, valor, data, processo ou fato que não está na amostra, " +
+        "se as tabelas não servem para a pergunta, ou se ignora os dados retornados. " +
+        "Aprove se a resposta só organiza o que a consulta devolveu. " +
+        "deNovo=true quando precisa consultar outra tabela ou corrigir o SQL. deNovo=false quando basta reescrever com os dados que já vieram.",
+      `Pergunta: ${String(pedido).slice(0, 500)}\n\nAmostra da consulta:\n${amostraDaConsulta(mensagens) || "(sem amostra)"}\n\nRascunho:\n${String(rascunho).slice(0, 1800)}`,
+      220,
+    );
+    return lerJulgamento(texto);
+  }
+
+  const dados = await pedir(corpoUsado, corrigindo ? filaLeve : fila, silencioso ? () => {} : aoTexto);
+  if (!silencioso || dados?.tool_calls?.length) return mensagemPronta(dados);
+  if (corrigindo) {
+    const texto = "Não confirmei essa consulta no banco, então não vou inventar o resultado.";
+    aoTexto?.(texto);
+    return { role: "assistant", content: texto, ...(dados?.uso ? { uso: dados.uso } : {}) };
+  }
+  let veredito = { ok: true, motivo: "", deNovo: false };
+  try {
+    veredito = await julgarRascunho(dados?.content);
+  } catch (erro) {
+    console.warn(`[IA] Autoavaliação indisponível; status ${erro?.status || "desconhecido"}.`);
+  }
+  if (!veredito.ok) {
+    console.warn(`[IA] Autoavaliação reprovou a resposta: ${veredito.motivo}`);
+    if (veredito.deNovo && rodadas < 3) {
+      const segunda = await pedir(corpoDeCorrecao(corpo, veredito.motivo, permitidas), filaLeve, () => {});
+      if (segunda?.tool_calls?.length) return mensagemPronta(segunda);
+    }
+    try {
+      const novo = chaveLeve
+        ? String(await comModeloLeve(
+          chaveLeve,
+          "Reescreva a resposta do Maicon em português claro, só com os dados da consulta. " +
+            "Não invente número, nome, data ou valor. Se o dado não está na consulta, diga que não consta. Sem SQL e sem nome de tabela.",
+          `Pergunta: ${String(pedido).slice(0, 500)}\n\nProblema: ${veredito.motivo}\n\nDados:\n${amostraDaConsulta(mensagens)}\n\nRascunho:\n${String(dados?.content || "").slice(0, 1800)}`,
+          700,
+        )).trim()
+        : "";
+      if (novo) {
+        aoTexto?.(novo);
+        return { role: "assistant", content: novo, ...(dados?.uso ? { uso: dados.uso } : {}) };
+      }
+    } catch (erro) {
+      console.warn(`[IA] Reescrita indisponível; status ${erro?.status || "desconhecido"}.`);
+    }
+  }
+  if (dados?.content) aoTexto?.(dados.content);
+  return mensagemPronta(dados);
 }
