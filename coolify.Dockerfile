@@ -1,9 +1,9 @@
 FROM node:22.20-bookworm
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates   && rm -rf /var/lib/apt/lists/*
-ARG CACHEBUST=84e4aea
-RUN echo "cachebust=$CACHEBUST"   && git clone --depth 40 --branch main https://github.com/EduardoWillrich/MAICON-IA.git .   && git checkout 84e4aea8d94d4d13335042221a09550a99499701   && git rev-parse --short HEAD
-ENV MAICON_GIT_SHA=84e4aea8d94d4d13335042221a09550a99499701
+ARG CACHEBUST=a3b0bda
+RUN echo "cachebust=$CACHEBUST"   && git clone --depth 40 --branch main https://github.com/EduardoWillrich/MAICON-IA.git .   && git checkout a3b0bda231790de4a375f9b1c59b358319f37016   && git rev-parse --short HEAD
+ENV MAICON_GIT_SHA=a3b0bda231790de4a375f9b1c59b358319f37016
 RUN npm ci
 ARG VITE_GOOGLE_CLIENT_ID
 ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
