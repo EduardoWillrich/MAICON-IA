@@ -3410,8 +3410,9 @@ export function ChatIa({
         if (!falhou && partes.length) {
           const content = graficoSePedido(partes.join("\n\n"), `${pergunta}\n${perguntaAberta(mensagens)}`);
           const resposta: Extract<Mensagem, { role: "assistant" }> = { role: "assistant", content, duracaoMs: duracaoConsulta() };
-          if (relatorioGrande(secoesDaPergunta)) {
+          if (modoRelatorioRef.current && relatorioGrande(secoesDaPergunta)) {
             resposta.relatorio = { titulo: pergunta.replace(/\s+/g, " ").slice(0, 90), secoes: secoesDaPergunta };
+            resposta.pedidoRelatorio = true;
           }
           if (logDaPergunta) resposta.log = logDaPergunta;
           const rastros: Mensagem[] = brutos.flatMap((item, indice) => {
@@ -3703,12 +3704,6 @@ export function ChatIa({
             secoes: [ultimaSecao],
           };
           ultima.pedidoRelatorio = true;
-        } else if (relatorioGrande(secoesDaPergunta)) {
-          ultima.relatorio = {
-            titulo: pergunta.replace(/\s+/g, " ").slice(0, 90),
-            secoes: secoesDaPergunta,
-          };
-          ultima.detalheNoChat = completo;
         }
         const explicacao = textoItensDaRodada(historico, pergunta);
         if (explicacao) ultima.content = explicacao;
@@ -4984,23 +4979,26 @@ export function ChatIa({
                 </div>
               ) : null}
 
-              {blocos.map((bloco, i) =>
-                bloco.mensagem.role === "assistant" &&
+              {blocos.map((bloco, i) => {
+                const pedidoUsuario =
+                  blocos
+                    .slice(0, i)
+                    .reverse()
+                    .find((item) => item.mensagem.role === "user")?.mensagem.content ?? "";
+                const pediuRelatorio =
+                  bloco.mensagem.role === "assistant" &&
+                  Boolean(bloco.mensagem.relatorio) &&
+                  (("pedidoRelatorio" in bloco.mensagem && bloco.mensagem.pedidoRelatorio) ||
+                    /^\s*pedir relat[oó]rio/i.test(pedidoUsuario));
+                return bloco.mensagem.role === "assistant" &&
                 !("log" in bloco.mensagem && bloco.mensagem.log) &&
-                !bloco.mensagem.relatorio &&
+                !pediuRelatorio &&
                 !normalizarCartoes(bloco.mensagem.content) ? null : bloco.mensagem.role === "assistant" ? (
                   <div key={i} id={`chat-msg-${i}`} className={`chat-linha${buscaAlvo === i ? " busca-alvo" : ""}`}>
                     <div className="chat-msg chat-assistant">
                       {"log" in bloco.mensagem && bloco.mensagem.log ? (
                         <LogCard log={cartaoDoHistorico(bloco.mensagem.log)} />
-                      ) : bloco.mensagem.relatorio &&
-                        (("pedidoRelatorio" in bloco.mensagem && bloco.mensagem.pedidoRelatorio) ||
-                          /^\s*pedir relat[oó]rio/i.test(
-                            blocos
-                              .slice(0, i)
-                              .reverse()
-                              .find((item) => item.mensagem.role === "user")?.mensagem.content ?? "",
-                          )) ? null : (
+                      ) : pediuRelatorio ? null : (
                         <Markdown
                           ocultarSql={!admin}
                           textoCorrido={pediuTextoParaEnviar(
@@ -5034,7 +5032,7 @@ export function ChatIa({
                           </button>
                         </div>
                       ) : null}
-                      {pode.relatorio && bloco.mensagem.relatorio && !("log" in bloco.mensagem && bloco.mensagem.log) ? (
+                      {pediuRelatorio && bloco.mensagem.role === "assistant" && bloco.mensagem.relatorio ? (
                         <RelatorioChatBloco
                           relatorio={bloco.mensagem.relatorio}
                           excel={Boolean(pode.excel)}
@@ -5102,8 +5100,8 @@ export function ChatIa({
                       {textoVisivel(bloco.mensagem.content)}
                     </div>
                   </div>
-                ),
-              )}
+                );
+              })}
 
               {status ? (
                 <div className="chat-linha chat-pensando">

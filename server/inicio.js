@@ -1,55 +1,12 @@
 import sql from "mssql";
+import { pessoaDaConta } from "./pessoaConta.js";
 import { nomeDe, pessoasPorLogin } from "./pessoas.js";
 import { parseCamposXml } from "./query.js";
 import { perfilDaConta } from "./setor.js";
 
-function tokens(nome, email) {
-  const limpo = String(nome ?? "")
-    .split(" - ")[0]
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^A-Za-z\s]/g, " ")
-    .trim();
-  let partes = limpo.split(/\s+/).filter((p) => p.length > 1);
-  if (partes.length < 2) {
-    const local = String(email ?? "").split("@")[0] ?? "";
-    partes = local
-      .split(/[._-]+/)
-      .map((p) => p.replace(/[^A-Za-z]/g, ""))
-      .filter((p) => p.length > 1);
-  }
-  if (partes.length < 2) return null;
-  const limpar = (valor) => valor.replace(/[%_[\]]/g, "");
-  return { primeiro: limpar(partes[0]), ultimo: limpar(partes[partes.length - 1]) };
-}
-
 export async function painelDoUsuario(pool, email, nome, admin = false) {
   const conta = String(email ?? "").trim().toLowerCase();
-  let pessoa = (
-    await pool.request().input("email", sql.VarChar(180), conta).query(`
-      SELECT TOP 1 IdPessoa, Nome
-      FROM cad_Pessoa
-      WHERE LOWER(LTRIM(RTRIM(ISNULL(EMail, '')))) = @email
-         OR LOWER(LTRIM(RTRIM(ISNULL(EMail_Pessoal, '')))) = @email
-    `)
-  ).recordset[0];
-
-  const nomeSistema = tokens(nome, conta);
-  if (!pessoa && nomeSistema) {
-    pessoa = (
-      await pool
-        .request()
-        .input("primeiro", sql.VarChar(80), nomeSistema.primeiro)
-        .input("ultimo", sql.VarChar(80), nomeSistema.ultimo)
-        .query(`
-          SELECT TOP 1 IdPessoa, Nome
-          FROM cad_Pessoa
-          WHERE Nome LIKE @primeiro + ' %'
-            AND Nome LIKE '% ' + @ultimo
-          ORDER BY LEN(Nome)
-        `)
-    ).recordset[0];
-  }
+  const pessoa = await pessoaDaConta(pool, conta);
 
   if (!pessoa) {
     return { encontrado: false, nome: nome || conta };
@@ -126,26 +83,8 @@ function diaCurto(valor) {
   return new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" }).format(data);
 }
 
-async function localizarPessoa(pool, email, nome) {
-  const conta = String(email ?? "").trim().toLowerCase();
-  const porEmail = await pool.request().input("email", sql.VarChar(180), conta).query(`
-    SELECT TOP 1 IdPessoa, Nome
-    FROM cad_Pessoa
-    WHERE LOWER(LTRIM(RTRIM(ISNULL(EMail, '')))) = @email
-       OR LOWER(LTRIM(RTRIM(ISNULL(EMail_Pessoal, '')))) = @email`);
-  if (porEmail.recordset[0]) return porEmail.recordset[0];
-  const nomeSistema = tokens(nome, conta);
-  if (!nomeSistema) return null;
-  const porNome = await pool
-    .request()
-    .input("primeiro", sql.VarChar(80), nomeSistema.primeiro)
-    .input("ultimo", sql.VarChar(80), nomeSistema.ultimo)
-    .query(`
-      SELECT TOP 1 IdPessoa, Nome
-      FROM cad_Pessoa
-      WHERE Nome LIKE @primeiro + ' %' AND Nome LIKE '% ' + @ultimo
-      ORDER BY LEN(Nome)`);
-  return porNome.recordset[0] ?? null;
+async function localizarPessoa(pool, email) {
+  return pessoaDaConta(pool, email);
 }
 
 async function pendenciasDaPessoa(pool, email, nome) {
@@ -770,26 +709,8 @@ function perguntaCliente(nome) {
   return `Ficha do cliente ${limpo}: processos abertos, vendedor, quantos estão sem proposta, o último processo e a comissão deste mês.`;
 }
 
-async function cadastroDaPessoa(pool, email, nome) {
-  const conta = String(email ?? "").trim().toLowerCase();
-  const porEmail = await pool.request().input("email", sql.VarChar(180), conta).query(`
-    SELECT TOP 1 IdPessoa, Nome
-    FROM cad_Pessoa
-    WHERE LOWER(LTRIM(RTRIM(ISNULL(EMail, '')))) = @email
-       OR LOWER(LTRIM(RTRIM(ISNULL(EMail_Pessoal, '')))) = @email`);
-  if (porEmail.recordset[0]) return porEmail.recordset[0];
-  const nomeSistema = tokens(nome, conta);
-  if (!nomeSistema) return null;
-  const porNome = await pool
-    .request()
-    .input("primeiro", sql.VarChar(80), nomeSistema.primeiro)
-    .input("ultimo", sql.VarChar(80), nomeSistema.ultimo)
-    .query(`
-      SELECT TOP 1 IdPessoa, Nome
-      FROM cad_Pessoa
-      WHERE Nome LIKE @primeiro + ' %' AND Nome LIKE '% ' + @ultimo
-      ORDER BY LEN(Nome)`);
-  return porNome.recordset[0] ?? null;
+async function cadastroDaPessoa(pool, email) {
+  return pessoaDaConta(pool, email);
 }
 
 function consultaComercial(pool, id) {

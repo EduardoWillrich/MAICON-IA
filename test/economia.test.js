@@ -73,6 +73,10 @@ test("seleciona ferramentas comuns sem gastar uma chamada de IA", () => {
     nome: "pendencias",
     args: { escopo: "atrasadas" },
   });
+  assert.deepEqual(chamadaDireta("quais atividade tenho pendente ?"), {
+    nome: "pendencias",
+    args: { escopo: "abertas" },
+  });
   assert.deepEqual(chamadaDireta("Quais são minhas pendências atrasadas, de hoje e da semana?"), {
     nome: "pendencias",
     args: { escopo: "abertas" },
@@ -181,15 +185,34 @@ test("devolve diretamente o texto de ferramenta já formatado", () => {
   const id = "direta_1";
   assert.equal(
     respostaDeFerramentaPronta([
+      { role: "user", content: "quais processos embarcaram hoje?" },
       {
         role: "assistant",
         content: "",
         tool_calls: [{ id, function: { name: "prazos", arguments: "{\"dias\":1}" } }],
       },
-      { role: "tool", tool_call_id: id, content: "{\"texto\":\"Processos de hoje\"}" },
+      { role: "tool", tool_call_id: id, content: "{\"texto\":\"Processos com embarque realizado hoje\"}" },
+      { role: "assistant", content: "Processos com embarque realizado hoje" },
+      { role: "user", content: "quais clientes tiveram mais processos abertos hoje?" },
     ]),
-    "Processos de hoje",
+    "",
   );
+  assert.equal(
+    respostaDeFerramentaPronta([
+      { role: "user", content: "quais processos embarcaram hoje?" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [{ id, function: { name: "prazos", arguments: "{\"dias\":1}" } }],
+      },
+      { role: "tool", tool_call_id: id, content: "{\"texto\":\"Processos com embarque realizado hoje\"}" },
+    ]),
+    "Processos com embarque realizado hoje",
+  );
+  assert.deepEqual(chamadaDireta("quais clientes tiveram mais processos abertos hoje?"), {
+    nome: "processos_abertos_cliente",
+    args: { foco: "abertos", quando: "hoje" },
+  });
 });
 
 test("filtro aceita só ferramentas conhecidas", () => {

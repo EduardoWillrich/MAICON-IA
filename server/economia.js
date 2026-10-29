@@ -73,7 +73,7 @@ function argsPendencias(texto) {
   if (hoje) return { escopo: "hoje" };
   if (semana) return { escopo: "semana" };
   if (atrasadas) return { escopo: "atrasadas" };
-  return { escopo: "semana" };
+  return { escopo: "abertas" };
 }
 
 function argsDocumental(texto) {
@@ -105,10 +105,10 @@ export function ferramentasProvaveis(texto) {
   if (/parad/i.test(pedido) && /processo|acompanh/i.test(pedido)) return ["processos_parados"];
   if (/documental/i.test(pedido) && /atividade|fila|pend[eê]ncia|liberad|campo livre/i.test(pedido)) return ["documental_ce"];
   if (/atividad|pend[eê]ncia/i.test(pedido) && /\b(?:do|da|de)\s+(?:operacional|comercial|inside)\b/i.test(pedido)) return ["atividades_pendentes"];
-  if (/(?:\bminha|\bminhas|\bmeu|\bmeus)\b/i.test(pedido) && /atividad|pend[eê]ncia/i.test(pedido)) return ["pendencias"];
+  if (/(?:\bminha|\bminhas|\bmeu|\bmeus|\btenho\b)\b/i.test(pedido) && /atividad|pend[eê]ncia/i.test(pedido)) return ["pendencias"];
   if (/atividad/i.test(pedido) && /atras/i.test(pedido)) return ["pendencias"];
   if (/^ficha do cliente\b/i.test(pedido)) return ["processos_abertos_cliente"];
-  if (/quais clientes t[eê]m mais processos abertos/i.test(pedido)) return ["processos_abertos_cliente"];
+  if (/quais clientes (?:t[eê]m|tiveram) mais processos abertos/i.test(pedido)) return ["processos_abertos_cliente"];
   if (/quais clientes t[eê]m processo aberto sem proposta/i.test(pedido)) return ["processos_abertos_cliente"];
   if (/quais clientes j[aá] abriram processo e n[aã]o abrem/i.test(pedido)) return ["processos_abertos_cliente"];
   if (/desembar[qc]|(?<!des)embar[qc]|entrega|\bprazos?\b/i.test(pedido) && !PROCESSO.test(pedido)) return ["prazos"];
@@ -175,7 +175,9 @@ export function chamadaDireta(texto) {
     if (ficha && !/qual cliente/i.test(pedido)) return { nome, args: { cliente: ficha.replace(/\.$/, "") } };
     if (/sem proposta/i.test(pedido)) return { nome, args: { foco: "sem_proposta" } };
     if (/n[aã]o abrem|90 dias/i.test(pedido)) return { nome, args: { foco: "sem_movimento" } };
-    if (/mais processos abertos/i.test(pedido)) return { nome, args: { foco: "abertos" } };
+    if (/mais processos abertos/i.test(pedido)) {
+      return { nome, args: { foco: "abertos", ...(/\bhoje\b/i.test(pedido) ? { quando: "hoje" } : {}) } };
+    }
   }
   return null;
 }
@@ -206,9 +208,18 @@ const TEXTOS_PRONTOS = new Set([
 ]);
 
 export function respostaDeFerramentaPronta(mensagens) {
-  const ultima = [...(mensagens ?? [])].reverse().find((item) => item?.role === "tool");
+  const lista = mensagens ?? [];
+  let inicio = 0;
+  for (let i = lista.length - 1; i >= 0; i--) {
+    if (lista[i]?.role === "user") {
+      inicio = i;
+      break;
+    }
+  }
+  const destaPergunta = lista.slice(inicio);
+  const ultima = [...destaPergunta].reverse().find((item) => item?.role === "tool");
   if (!ultima?.tool_call_id || String(ultima.content ?? "").startsWith("Erro:")) return "";
-  const chamada = [...mensagens]
+  const chamada = [...destaPergunta]
     .reverse()
     .filter((item) => item?.role === "assistant")
     .flatMap((item) => item.tool_calls ?? [])

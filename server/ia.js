@@ -253,7 +253,9 @@ const FERRAMENTAS = [
     type: "function",
     function: {
       name: "pendencias",
-      description: "Pendências da pessoa logada. escopo: hoje, atrasadas ou semana (próximos 7 dias).",
+      description:
+        "Pendências da pessoa logada, identificada pelo e-mail no cadastro do HeadCargo. " +
+        "Sem período na pergunta, use escopo abertas. hoje, atrasadas e semana só quando o usuário pedir isso.",
       parameters: {
         type: "object",
         properties: { escopo: { type: "string", enum: ["hoje", "atrasadas", "semana"] } },

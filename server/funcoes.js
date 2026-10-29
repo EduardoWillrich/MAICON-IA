@@ -1,4 +1,5 @@
 import sql from "mssql";
+import { pessoaDaConta } from "./pessoaConta.js";
 import { enriquecerNomes } from "./nomes.js";
 import { nomeDe, pessoasPorLogin, relogioLog } from "./pessoas.js";
 import { nomeProprio } from "./itensCarga.js";
@@ -186,48 +187,6 @@ async function houseDoProcesso(pool, numero) {
   return r.recordset[0] ?? null;
 }
 
-function tokens(nome, email) {
-  const limpo = String(nome ?? "")
-    .split(" - ")[0]
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^A-Za-z\s]/g, " ")
-    .trim();
-  let partes = limpo.split(/\s+/).filter((p) => p.length > 1);
-  if (partes.length < 2) {
-    const local = String(email ?? "").split("@")[0] ?? "";
-    partes = local
-      .split(/[._-]+/)
-      .map((p) => p.replace(/[^A-Za-z]/g, ""))
-      .filter((p) => p.length > 1);
-  }
-  if (partes.length < 2) return null;
-  const limpar = (valor) => valor.replace(/[%_[\]]/g, "");
-  return { primeiro: limpar(partes[0]), ultimo: limpar(partes[partes.length - 1]) };
-}
-
-async function pessoaDaConta(pool, email, nome) {
-  const conta = String(email ?? "").trim().toLowerCase();
-  const porEmail = await pool.request().input("email", sql.VarChar(180), conta).query(`
-    SELECT TOP 1 IdPessoa, Nome
-    FROM cad_Pessoa
-    WHERE LOWER(LTRIM(RTRIM(ISNULL(EMail, '')))) = @email
-       OR LOWER(LTRIM(RTRIM(ISNULL(EMail_Pessoal, '')))) = @email`);
-  if (porEmail.recordset[0]) return porEmail.recordset[0];
-  const nomeSistema = tokens(nome, conta);
-  if (!nomeSistema) return null;
-  const porNome = await pool
-    .request()
-    .input("primeiro", sql.VarChar(80), nomeSistema.primeiro)
-    .input("ultimo", sql.VarChar(80), nomeSistema.ultimo)
-    .query(`
-      SELECT TOP 1 IdPessoa, Nome
-      FROM cad_Pessoa
-      WHERE Nome LIKE @primeiro + ' %' AND Nome LIKE '% ' + @ultimo
-      ORDER BY LEN(Nome)`);
-  return porNome.recordset[0] ?? null;
-}
-
 async function resumoProcesso(pool, args, recorte) {
   const numero = numeroDe(args.numero);
   const r = await pool.request().input("n", sql.VarChar(30), numero).query(`
@@ -400,17 +359,17 @@ async function acompanhamentosProcesso(pool, args) {
 }
 
 async function pendencias(pool, args, ctx) {
-  const pessoa = await pessoaDaConta(pool, ctx.email, ctx.nome);
-  if (!pessoa) return "Não localizei seu cadastro de pessoa para listar as pendências.";
-  const escopo = ["hoje", "atrasadas", "semana", "abertas"].includes(args.escopo) ? args.escopo : "semana";
+  const pessoa = await pessoaDaConta(pool, ctx.email);
+  if (!pessoa) return `Não localizei no HeadCargo o cadastro do e-mail ${String(ctx.email ?? "").trim() || "desta conta"}.`;
+  const escopo = ["hoje", "atrasadas", "semana", "abertas"].includes(args.escopo) ? args.escopo : "abertas";
   const filtro =
     escopo === "hoje"
-      ? "CAST(Ati.Previsao_Termino AS date) = CAST(GETDATE() AS date)"
+      ? "Ati.Previsao_Termino IS NOT NULL AND CAST(Ati.Previsao_Termino AS date) = CAST(GETDATE() AS date)"
       : escopo === "atrasadas"
-        ? "CAST(Ati.Previsao_Termino AS date) < CAST(GETDATE() AS date)"
+        ? "Ati.Previsao_Termino IS NOT NULL AND CAST(Ati.Previsao_Termino AS date) < CAST(GETDATE() AS date)"
         : escopo === "abertas"
-          ? "CAST(Ati.Previsao_Termino AS date) < DATEADD(day, 8, CAST(GETDATE() AS date))"
-          : "CAST(Ati.Previsao_Termino AS date) >= CAST(GETDATE() AS date) AND CAST(Ati.Previsao_Termino AS date) < DATEADD(day, 8, CAST(GETDATE() AS date))";
+          ? "(Ati.Previsao_Termino IS NULL OR CAST(Ati.Previsao_Termino AS date) < DATEADD(day, 8, CAST(GETDATE() AS date)))"
+          : "Ati.Previsao_Termino IS NOT NULL AND CAST(Ati.Previsao_Termino AS date) >= CAST(GETDATE() AS date) AND CAST(Ati.Previsao_Termino AS date) < DATEADD(day, 8, CAST(GETDATE() AS date))";
   const r = await pool.request().input("id", sql.Int, pessoa.IdPessoa).query(`
     SELECT TOP 30
       Tar.Descricao AS Atividade,
@@ -422,16 +381,15 @@ async function pendencias(pool, args, ctx) {
     WHERE Ati.IdResponsavel = @id
       AND Ati.Data_Termino IS NULL
       AND Ati.Situacao NOT IN (4, 6)
-      AND Ati.Previsao_Termino IS NOT NULL
       AND ${filtro}
-    ORDER BY Ati.Previsao_Termino`);
+    ORDER BY CASE WHEN Ati.Previsao_Termino IS NULL THEN 1 ELSE 0 END, Ati.Previsao_Termino`);
   const titulo =
     escopo === "hoje"
       ? "Pendências de hoje"
       : escopo === "atrasadas"
         ? "Pendências atrasadas"
         : escopo === "abertas"
-          ? "Pendências atrasadas, de hoje e da semana"
+          ? "Pendências em aberto"
           : "Pendências dos próximos 7 dias";
   const linhas = r.recordset.map(
     (linha) =>
@@ -562,7 +520,7 @@ async function idDaCarteira(pool, recorte, ctx) {
   return pessoa ? Number(pessoa.IdPessoa) || 0 : 0;
 }
 
-async function resumoCarteira(pool, foco, recorte, ctx) {
+async function resumoCarteira(pool, foco, recorte, ctx, quando = "") {
   const visao = String(recorte?.visao ?? "");
   const admin = ctx?.acesso?.papel === "admin" || ["tudo", "gerencia", "admin"].includes(visao);
   const carteira = await idDaCarteira(pool, recorte, ctx);
@@ -570,7 +528,10 @@ async function resumoCarteira(pool, foco, recorte, ctx) {
   if (!carteira && !admin && !["comercial", "inside"].includes(visao)) return "A carteira de clientes aparece no comercial.";
   const filtro = carteira ? "AND Lhs.IdVendedor = @id" : "";
   const real = "Lhs.Data_Cancelamento IS NULL AND Lhs.Numero_Processo NOT LIKE '%TESTE%' AND Lhs.Numero_Processo NOT LIKE 'DEMU%'";
-  const aberto = `${real} AND Lhs.Data_Fechamento_Processo IS NULL AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))`;
+  const hoje = quando === "hoje";
+  const aberto = hoje
+    ? `${real} AND CAST(Lhs.Data_Abertura_Processo AS date) = CAST(GETDATE() AS date)`
+    : `${real} AND Lhs.Data_Fechamento_Processo IS NULL AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))`;
   const pedido = pool.request();
   if (carteira) pedido.input("id", sql.Int, carteira);
   const titulo =
@@ -578,7 +539,9 @@ async function resumoCarteira(pool, foco, recorte, ctx) {
       ? "Clientes com processo aberto sem proposta"
       : foco === "sem_movimento"
         ? "Clientes sem abrir processo há 90 dias ou mais"
-        : "Clientes com mais processos abertos";
+        : hoje
+          ? "Clientes com mais processos abertos hoje"
+          : "Clientes com mais processos abertos";
   const comando =
     foco === "sem_movimento"
       ? `
@@ -618,7 +581,7 @@ async function resumoCarteira(pool, foco, recorte, ctx) {
 async function processosAbertosCliente(pool, args, recorte, ctx) {
   const foco = String(args.foco ?? "");
   if (foco === "abertos" || foco === "sem_proposta" || foco === "sem_movimento") {
-    return resumoCarteira(pool, foco, recorte, ctx);
+    return resumoCarteira(pool, foco, recorte, ctx, args.quando);
   }
   const termo = termoSeguro(args.cliente || args.termo);
   if (termo.length < 2) throw new Error("Informe o nome do cliente.");

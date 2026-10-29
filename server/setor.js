@@ -1,27 +1,8 @@
 import sql from "mssql";
+import { pessoaDaConta } from "./pessoaConta.js";
 
 const cache = new Map();
 const MINUTOS = 5 * 60 * 1000;
-
-function tokens(nome, email) {
-  const limpo = String(nome ?? "")
-    .split(" - ")[0]
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^A-Za-z\s]/g, " ")
-    .trim();
-  let partes = limpo.split(/\s+/).filter((p) => p.length > 1);
-  if (partes.length < 2) {
-    const local = String(email ?? "").split("@")[0] ?? "";
-    partes = local
-      .split(/[._-]+/)
-      .map((p) => p.replace(/[^A-Za-z]/g, ""))
-      .filter((p) => p.length > 1);
-  }
-  if (partes.length < 2) return null;
-  const limpar = (valor) => valor.replace(/[%_[\]]/g, "");
-  return { primeiro: limpar(partes[0]), ultimo: limpar(partes[partes.length - 1]) };
-}
 
 export function classificarCargo(nome) {
   const texto = String(nome ?? "")
@@ -42,33 +23,16 @@ export function classificarCargo(nome) {
   return "geral";
 }
 
-async function pessoaPorConta(pool, email, nome) {
-  const conta = String(email ?? "").trim().toLowerCase();
-  const porEmail = await pool.request().input("email", sql.VarChar(180), conta).query(`
-    SELECT TOP 1 P.IdPessoa, C.Nome AS Cargo
-    FROM cad_Pessoa P
-    JOIN cad_Funcionario F ON F.IdPessoa = P.IdPessoa
+async function pessoaPorConta(pool, email) {
+  const pessoa = await pessoaDaConta(pool, email);
+  if (!pessoa) return null;
+  const cargo = await pool.request().input("id", sql.Int, pessoa.IdPessoa).query(`
+    SELECT TOP 1 C.Nome AS Cargo
+    FROM cad_Funcionario F
     JOIN cad_Cargo C ON C.IdCargo = F.IdCargo
-    WHERE LOWER(LTRIM(RTRIM(ISNULL(P.EMail, '')))) = @email
-       OR LOWER(LTRIM(RTRIM(ISNULL(P.EMail_Pessoal, '')))) = @email
+    WHERE F.IdPessoa = @id
   `);
-  if (porEmail.recordset[0]) return porEmail.recordset[0];
-  const nomeSistema = tokens(nome, conta);
-  if (!nomeSistema) return null;
-  const porNome = await pool
-    .request()
-    .input("primeiro", sql.VarChar(80), nomeSistema.primeiro)
-    .input("ultimo", sql.VarChar(80), nomeSistema.ultimo)
-    .query(`
-      SELECT TOP 1 P.IdPessoa, C.Nome AS Cargo
-      FROM cad_Pessoa P
-      JOIN cad_Funcionario F ON F.IdPessoa = P.IdPessoa
-      JOIN cad_Cargo C ON C.IdCargo = F.IdCargo
-      WHERE P.Nome LIKE @primeiro + ' %'
-        AND P.Nome LIKE '% ' + @ultimo
-      ORDER BY LEN(P.Nome)
-    `);
-  return porNome.recordset[0] ?? null;
+  return { IdPessoa: pessoa.IdPessoa, Cargo: cargo.recordset[0]?.Cargo ?? "" };
 }
 
 async function modalidadeDaPessoa(pool, idPessoa) {
