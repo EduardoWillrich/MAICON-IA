@@ -7,9 +7,11 @@ import { registrarResultadoGemini } from "./gemini.js";
 import {
   MODELOS_LEVES,
   MODELOS_RESPOSTA,
+  chamadaDireta,
   ferramentasProvaveis,
   lerFiltro,
   pedidoInformativo,
+  respostaDeFerramentaPronta,
   respostaImediata,
 } from "./economia.js";
 import { modelosOpenRouter } from "./openrouter.js";
@@ -1284,9 +1286,24 @@ function ferramentasDoPedido(opcoes, nomes) {
 
 export async function conversar(mensagens, aoTexto, opcoes = {}) {
   const pedido = [...mensagens].reverse().find((item) => item?.role === "user")?.content ?? "";
+  const pronta = respostaDeFerramentaPronta(mensagens);
+  if (pronta) return { role: "assistant", content: pronta, uso: { entrada: 0, saida: 0, total: 0 } };
   if (!opcoes.relatorio && !opcoes.apresentacao) {
     const direta = respostaImediata(pedido);
     if (direta) return { role: "assistant", content: direta, uso: { entrada: 0, saida: 0, total: 0 } };
+    const ferramenta = chamadaDireta(pedido);
+    if (ferramenta && ferramentasDoPedido(opcoes, [ferramenta.nome]).length) {
+      return {
+        role: "assistant",
+        content: "",
+        uso: { entrada: 0, saida: 0, total: 0 },
+        tool_calls: [{
+          id: `direta_${Date.now()}`,
+          type: "function",
+          function: { name: ferramenta.nome, arguments: JSON.stringify(ferramenta.args) },
+        }],
+      };
+    }
   }
   const temRetorno = mensagens.some((item) => item?.role === "tool");
   const informativo = !opcoes.relatorio && !opcoes.apresentacao && !temRetorno && pedidoInformativo(pedido);

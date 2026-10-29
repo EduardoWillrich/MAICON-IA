@@ -49,6 +49,7 @@ import {
   lerConversa,
   listarChaves,
   listarConversas,
+  provedoresCompartilhados,
   registrarConsultaFeita,
   salvarConversa,
 } from "./conversas.js";
@@ -88,13 +89,14 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: "4mb" }));
 app.get("/api/ia/saude", (_req, res) => {
+  const compartilhados = new Set(provedoresCompartilhados());
   res.json({
     ok: true,
     commit: process.env.MAICON_GIT_SHA || "",
     provedores: {
-      gemini: Boolean(String(process.env.GEMINI_API_KEY || "").trim()),
-      openrouter: Boolean(String(process.env.OPENROUTER_API_KEY || "").trim()),
-      ollama: Boolean(String(process.env.OLLAMA_API_KEY || "").trim()),
+      gemini: Boolean(String(process.env.GEMINI_API_KEY || "").trim()) || compartilhados.has("gemini"),
+      openrouter: Boolean(String(process.env.OPENROUTER_API_KEY || "").trim()) || compartilhados.has("openrouter"),
+      ollama: Boolean(String(process.env.OLLAMA_API_KEY || "").trim()) || compartilhados.has("ollama"),
     },
   });
 });

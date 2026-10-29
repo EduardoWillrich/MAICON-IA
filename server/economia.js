@@ -42,6 +42,7 @@ export function respostaImediata(texto) {
 export function ferramentasProvaveis(texto) {
   const pedido = String(texto ?? "");
   const base = ["localizar_processo"];
+  if (/desembarc|embarque|entrega|prazos?/i.test(pedido)) return ["prazos"];
   if (/\btaxas?\b/i.test(pedido)) return [...base, "taxas_processo"];
   if (/rota|navio|rastre/i.test(pedido)) return [...base, "rota_processo"];
   if (/acompanhament/i.test(pedido)) return [...base, "acompanhamentos_processo"];
@@ -56,6 +57,59 @@ export function ferramentasProvaveis(texto) {
     return [...base, "consultar_dados", "resumo_processo"];
   }
   return [];
+}
+
+export function chamadaDireta(texto) {
+  const ferramentas = ferramentasProvaveis(texto);
+  if (ferramentas.length !== 1) return null;
+  if (ferramentas[0] === "prazos") {
+    const dias = /\bhoje\b/i.test(String(texto ?? ""))
+      ? 1
+      : Number(String(texto ?? "").match(/\b(\d{1,2})\s+dias?\b/i)?.[1]) || 7;
+    return { nome: "prazos", args: { dias } };
+  }
+  return null;
+}
+
+const TEXTOS_PRONTOS = new Set([
+  "acompanhamentos_processo",
+  "pendencias",
+  "o_que_mudou",
+  "proposta_processo",
+  "comissao_periodo",
+  "processos_abertos_cliente",
+  "prazos",
+  "processos_parados",
+  "documental_ce",
+  "atividades_pendentes",
+  "divergencias_viagem",
+  "rota_processo",
+  "fila_setor",
+  "painel_ti",
+  "painel_financeiro",
+  "taxas_processo",
+  "log_recente",
+  "monitoramentos_alterados",
+  "explicar_itens_carga",
+  "explicar_campo_livre",
+  "andamento_atividade",
+]);
+
+export function respostaDeFerramentaPronta(mensagens) {
+  const ultima = [...(mensagens ?? [])].reverse().find((item) => item?.role === "tool");
+  if (!ultima?.tool_call_id || String(ultima.content ?? "").startsWith("Erro:")) return "";
+  const chamada = [...mensagens]
+    .reverse()
+    .filter((item) => item?.role === "assistant")
+    .flatMap((item) => item.tool_calls ?? [])
+    .find((item) => item.id === ultima.tool_call_id);
+  if (!chamada || !TEXTOS_PRONTOS.has(chamada.function?.name)) return "";
+  try {
+    const dados = JSON.parse(String(ultima.content ?? ""));
+    return typeof dados?.texto === "string" ? dados.texto.trim() : "";
+  } catch {
+    return "";
+  }
 }
 
 export function lerFiltro(texto, ferramentasValidas) {

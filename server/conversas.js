@@ -164,11 +164,21 @@ export function chavesParaUso(email) {
   return db
     .prepare(
       `SELECT provedor, segredo, extra FROM chaves
-       WHERE email = ? AND ativa = 1 AND provedor IN ('gemini', 'openrouter', 'ollama')
-       ORDER BY ordem, rotulo`,
+       WHERE ativa = 1 AND provedor IN ('gemini', 'openrouter', 'ollama')
+       ORDER BY CASE WHEN email = ? THEN 0 ELSE 1 END, ordem, rotulo`,
     )
     .all(email)
     .map((linha) => ({ provedor: linha.provedor, chave: linha.segredo, extra: linha.extra }));
+}
+
+export function provedoresCompartilhados() {
+  return db
+    .prepare(
+      `SELECT DISTINCT provedor FROM chaves
+       WHERE ativa = 1 AND provedor IN ('gemini', 'openrouter', 'ollama')`,
+    )
+    .all()
+    .map((linha) => String(linha.provedor));
 }
 
 export function criarChave(email, dados) {

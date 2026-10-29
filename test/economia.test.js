@@ -2,10 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   conversaSimples,
+  chamadaDireta,
   ferramentasProvaveis,
   lerFiltro,
   pedidoInformativo,
   pedidoSimples,
+  respostaDeFerramentaPronta,
   respostaImediata,
 } from "../server/economia.js";
 import { textoConsultasRelevantes } from "../server/consultas.js";
@@ -46,6 +48,25 @@ test("seleciona ferramentas comuns sem gastar uma chamada de IA", () => {
   assert.deepEqual(
     ferramentasProvaveis("qual a rota do processo IM1020-26"),
     ["localizar_processo", "rota_processo"],
+  );
+  assert.deepEqual(chamadaDireta("Quais processos desembarcam hoje?"), {
+    nome: "prazos",
+    args: { dias: 1 },
+  });
+});
+
+test("devolve diretamente o texto de ferramenta já formatado", () => {
+  const id = "direta_1";
+  assert.equal(
+    respostaDeFerramentaPronta([
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [{ id, function: { name: "prazos", arguments: "{\"dias\":1}" } }],
+      },
+      { role: "tool", tool_call_id: id, content: "{\"texto\":\"Processos de hoje\"}" },
+    ]),
+    "Processos de hoje",
   );
 });
 
