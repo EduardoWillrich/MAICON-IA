@@ -136,6 +136,9 @@ export function ferramentasProvaveis(texto) {
 
 export function chamadaDireta(texto) {
   const pedido = String(texto ?? "");
+  if (/\bprocessos?\s+abertos?\b/i.test(pedido) && !/fila dos setores|clientes|ficha do cliente/i.test(pedido) && !/(?:IM|IA|EA|EM)\d{2,6}-\d{2}/i.test(pedido)) {
+    return { nome: "processos_abertos", args: { quando: /\bhoje\b/i.test(pedido) ? "hoje" : "abertos" } };
+  }
   const numero = pedido.match(/(?:^|\s)((?:IM|IA|EA|EM)\d{2,6}-\d{2})\b/i)?.[1]?.toUpperCase();
   const historico = /quem (?:inclu|alter|excl|mud)|hist[oó]rico|\blog\b|antes e depois/i.test(pedido);
   if (numero && !historico) {

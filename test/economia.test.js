@@ -149,6 +149,10 @@ test("seleciona ferramentas comuns sem gastar uma chamada de IA", () => {
     nome: "taxas_processo",
     args: { numero: "IM1020-26" },
   });
+  assert.deepEqual(chamadaDireta("traga os processos abertos hoje"), {
+    nome: "processos_abertos",
+    args: { quando: "hoje" },
+  });
   assert.deepEqual(chamadaDireta("qual o cliente do processo IM1020-26"), {
     nome: "resumo_processo",
     args: { numero: "IM1020-26" },

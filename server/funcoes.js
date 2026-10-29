@@ -33,6 +33,7 @@ export function consultaFresca(item) {
 const FUNCOES = new Set([
   "resumo_processo",
   "buscar_processos",
+  "processos_abertos",
   "acompanhamentos_processo",
   "pendencias",
   "o_que_mudou",
@@ -339,6 +340,38 @@ async function buscarProcessos(pool, args, recorte) {
     r.recordset,
     { t: `%${termo}%` },
   );
+}
+
+async function processosAbertos(pool, args, recorte) {
+  const hoje = String(args.quando ?? "") === "hoje" || args.hoje === true;
+  const titulo = hoje ? "Processos abertos hoje" : "Processos abertos nos últimos 6 meses";
+  const periodo = hoje
+    ? "CAST(Lhs.Data_Abertura_Processo AS date) = CAST(GETDATE() AS date)"
+    : "Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))";
+  const comando = `
+    SELECT TOP 40
+      Lhs.Numero_Processo,
+      Cli.Nome AS Cliente,
+      Sta.Descricao AS Situacao,
+      Lhs.Data_Abertura_Processo
+    FROM mov_Logistica_House Lhs
+    LEFT JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
+    LEFT JOIN cad_Status_Processo_Logistico Sta ON Sta.IdStatus_Processo_Logistico = Lhs.IdStatus_Processo_Logistico
+    WHERE Lhs.Data_Cancelamento IS NULL
+      AND Lhs.Data_Fechamento_Processo IS NULL
+      AND Lhs.Numero_Processo NOT LIKE '%TESTE%'
+      AND Lhs.Numero_Processo NOT LIKE 'DEMU%'
+      AND ${periodo}
+      ${filtroModalidadeSql(recorte)}
+    ORDER BY Lhs.Data_Abertura_Processo DESC`;
+  const r = await pool.request().query(comando);
+  const linhas = r.recordset.map((linha) =>
+    [linha.Numero_Processo, String(linha.Cliente ?? "").trim(), String(linha.Situacao ?? "").trim(), dataCurta(linha.Data_Abertura_Processo)]
+      .filter(Boolean)
+      .join(" · "),
+  );
+  const aviso = r.recordset.length === 40 ? "\n\nMostrei 40 registros." : "";
+  return consultaPronta(`${titulo}\n${lista(linhas, "Nenhum processo aberto nesse recorte.")}${aviso}`, comando, r.recordset);
 }
 
 async function acompanhamentosProcesso(pool, args) {
@@ -2484,6 +2517,7 @@ export function ferramentaDaVisao(nome, setor) {
       "consultar_dados",
       "localizar_processo",
       "processos_abertos_cliente",
+      "processos_abertos",
       "buscar_tabelas",
       "listar_colunas",
     ].includes(nome);
@@ -2586,6 +2620,7 @@ export async function executarFuncao(pool, nome, args, ctx) {
   const recorte = ctx.recorte ?? {};
   if (nome === "resumo_processo") return embalagem(await resumoProcesso(pool, dados, recorte));
   if (nome === "buscar_processos") return embalagem(await buscarProcessos(pool, dados, recorte));
+  if (nome === "processos_abertos") return embalagem(await processosAbertos(pool, dados, recorte));
   if (nome === "acompanhamentos_processo") return embalagem(await acompanhamentosProcesso(pool, dados));
   if (nome === "pendencias") return embalagem(await pendencias(pool, dados, ctx));
   if (nome === "o_que_mudou") return embalagem(await oQueMudou(pool, dados, ctx));

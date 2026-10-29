@@ -127,6 +127,7 @@ export async function executarFerramentaIa(
   const funcoesProntas = new Set([
     "resumo_processo",
     "buscar_processos",
+    "processos_abertos",
     "acompanhamentos_processo",
     "pendencias",
     "o_que_mudou",

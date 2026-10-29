@@ -70,7 +70,14 @@ export function podeTrocarChave(erro) {
   return /unauthorized|unauthenticated|invalid(?:\s+api)?\s*key|api key not valid|user not found|quota|rate limit|usage limit|billing|credit|modelo (?:inexistente|indispon[ií]vel|configurado)|model(?:o)?\s+(?:not found|unavailable)|does not exist|do not have access|unsupported|invalid_request|temporar|service unavailable|overload|sobrecarreg|timeout|fetch failed|econn(?:refused|reset)|socket hang up/i.test(texto);
 }
 
-function erroIndisponivel() {
+function semCredito(erro) {
+  const status = statusDoErro(erro);
+  const texto = String(erro?.message ?? erro ?? "");
+  return status === 402 || /insufficient credits|out of credits|créditos?|quota exceeded|billing|payment required/i.test(texto);
+}
+
+function erroIndisponivel(erro) {
+  if (semCredito(erro)) return new Error("Os créditos da IA acabaram. Recarregue a chave do OpenRouter para continuar.");
   return new Error(MENSAGEM_INDISPONIVEL);
 }
 
@@ -85,7 +92,10 @@ export async function executarFilaComFallback(fila, chamar, aoFalhar = () => {})
       if (abortado(erro)) throw erro;
       aoFalhar({ provedor: item.provedor, status: statusDoErro(erro) || null });
       const temReserva = indice < fila.length - 1;
-      if (!temReserva || !podeTrocarChave(erro)) throw erroIndisponivel();
+      if (!temReserva || !podeTrocarChave(erro)) {
+        if (semCredito(erro)) throw erroIndisponivel(erro);
+        throw erro;
+      }
     }
   }
 

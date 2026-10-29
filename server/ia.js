@@ -1139,6 +1139,7 @@ async function chamarOpenRouter(chave, corpo, aoTexto, maxTokens = 1200) {
           stream: true,
           max_tokens: maxTokens,
           temperature: corpo.temperature ?? 0.2,
+          reasoning: corpo.tool_choice === "required" ? { enabled: false } : { effort: "low" },
           provider: { sort: "latency" },
         }),
       });
@@ -1180,6 +1181,28 @@ async function chamarOpenRouter(chave, corpo, aoTexto, maxTokens = 1200) {
         if (mensagem) {
           if (guardado) aoTexto?.(guardado);
           return mensagem;
+        }
+        const deNovo = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${chave}`,
+            "HTTP-Referer": "https://maicon.conlinebr.com.br",
+            "X-Title": "Maicon AI",
+          },
+          body: JSON.stringify({
+            ...corpo,
+            model,
+            stream: true,
+            max_tokens: Math.max(maxTokens, 4000),
+            temperature: corpo.temperature ?? 0.2,
+            reasoning: { enabled: false },
+            provider: { sort: "latency" },
+          }),
+        });
+        if (deNovo.ok && deNovo.body) {
+          const segunda = await lerStream(deNovo.body, aoTexto);
+          if (segunda) return segunda;
         }
       } catch (erro) {
         ultimoErro = erroDoProvedor(erro?.message || "A resposta do OpenRouter foi interrompida.", 503);
@@ -1376,8 +1399,8 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
   const corpo = {
     modelo: modeloDaPergunta(),
     temperature: roteando ? 0 : 0.3,
-    num_predict: roteando || informativo ? 300 : opcoes.completo ? 6000 : 900,
-    limiteTokens: roteando || informativo ? 300 : 900,
+    num_predict: roteando ? 2500 : opcoes.completo ? 6000 : 2000,
+    limiteTokens: roteando ? 2500 : 2000,
     modelosGemini: roteando || informativo || opcoes.apresentacao ? MODELOS_LEVES : MODELOS_RESPOSTA,
     tools: opcoes.apresentacao ? [] : ferramentas,
     ...(roteando && ferramentas.length ? { tool_choice: "required" } : {}),

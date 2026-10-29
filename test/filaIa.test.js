@@ -99,24 +99,34 @@ test("erro de programação não troca de chave", async () => {
         throw new TypeError("valor inesperado");
       },
     ),
-    /A IA não respondeu agora/,
+    /valor inesperado/,
   );
   assert.equal(tentativas, 1);
 });
 
-test("fila esgotada devolve mensagem segura em português", async () => {
+test("erro que não é falta de crédito não vira mensagem genérica", async () => {
   await assert.rejects(
     executarFilaComFallback(
-      [{ provedor: "ollama", chave: "teste-ollama" }],
+      [{ provedor: "openrouter", chave: "teste-openrouter" }],
       async () => {
         throw new Error("Unauthorized");
       },
     ),
-    (erro) => {
-      assert.match(erro.message, /A IA não respondeu agora/);
-      assert.doesNotMatch(erro.message, /Unauthorized/i);
-      return true;
-    },
+    /Unauthorized/,
+  );
+});
+
+test("falta de crédito avisa para recarregar a chave", async () => {
+  await assert.rejects(
+    executarFilaComFallback(
+      [{ provedor: "openrouter", chave: "teste-openrouter" }],
+      async () => {
+        const erro = new Error("insufficient credits");
+        erro.status = 402;
+        throw erro;
+      },
+    ),
+    /créditos da IA acabaram/,
   );
 });
 
