@@ -145,7 +145,14 @@ test("seleciona ferramentas comuns sem gastar uma chamada de IA", () => {
     nome: "processos_abertos_cliente",
     args: { cliente: "ACME Ltda" },
   });
-  assert.equal(chamadaDireta("quais taxas do processo IM1020-26"), null);
+  assert.deepEqual(chamadaDireta("quais taxas do processo IM1020-26"), {
+    nome: "taxas_processo",
+    args: { numero: "IM1020-26" },
+  });
+  assert.deepEqual(chamadaDireta("qual o cliente do processo IM1020-26"), {
+    nome: "resumo_processo",
+    args: { numero: "IM1020-26" },
+  });
   assert.deepEqual(
     chamadaDireta("Ficha do cliente MASTER AGROINDUSTRIAL S/A: processos abertos, vendedor, quantos estão sem proposta, o último processo e a comissão deste mês."),
     {

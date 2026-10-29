@@ -770,6 +770,7 @@ const FERRAMENTAS_PRONTAS = new Set([
   "proposta_processo",
   "comissao_periodo",
   "processos_abertos_cliente",
+  "resumo_processo",
   "prazos",
   "processos_parados",
   "documental_ce",
@@ -2605,6 +2606,8 @@ export function ChatIa({
   const [editando, setEditando] = useState<number | null>(null);
   const [rascunho, setRascunho] = useState({ termo: "", tabela: "", campo: "", observacao: "" });
   const [erroMemoria, setErroMemoria] = useState("");
+  const [avisoMemoria, setAvisoMemoria] = useState("");
+  const arquivoMemoriaRef = useRef<HTMLInputElement>(null);
 
   function limparRascunho() {
     setEditando(null);
@@ -2638,6 +2641,49 @@ export function ChatIa({
     const dados = await resp.json();
     setPreferencias(Array.isArray(dados.preferencias) ? dados.preferencias : []);
     setGlossario(Array.isArray(dados.glossario) ? dados.glossario : []);
+  }
+
+  function exportarMemoria() {
+    const pacote = {
+      tipo: "maicon-memoria",
+      preferencias: preferencias.map(({ termo, tabela, campo, observacao }) => ({ termo, tabela, campo, observacao })),
+      glossario,
+    };
+    const arquivo = new Blob([JSON.stringify(pacote, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(arquivo);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "maicon-memoria.json";
+    link.click();
+    URL.revokeObjectURL(url);
+    setAvisoMemoria("Arquivo baixado. Importe esse JSON no Maicon da rede.");
+    setErroMemoria("");
+  }
+
+  async function importarMemoria(arquivo: File) {
+    setErroMemoria("");
+    setAvisoMemoria("");
+    let pacote: unknown;
+    try {
+      pacote = JSON.parse(await arquivo.text());
+    } catch {
+      setErroMemoria("O arquivo não é um JSON válido.");
+      return;
+    }
+    const resp = await fetch(`${api}/api/memoria/importar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(pacote),
+    });
+    const dados = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      setErroMemoria(dados.erro || "Não importei a memória.");
+      return;
+    }
+    await carregarMemoria();
+    const prefs = Number(dados.preferencias) || 0;
+    const termos = Number(dados.glossario) || 0;
+    setAvisoMemoria(`Importei ${prefs} preferência${prefs === 1 ? "" : "s"} e ${termos} termo${termos === 1 ? "" : "s"}.`);
   }
 
   async function esquecer(p: Preferencia) {
@@ -3476,6 +3522,19 @@ export function ChatIa({
             {
               role: "user",
               content: "Não liste nomes de tabela. Consulte os registros do processo e responda com os dados.",
+            },
+          ];
+          continue;
+        }
+        const pedeDado = /\b(?:processos?|clientes?|taxas?|atividades?|prazos?|embarques?|desembarques?|propostas?|comiss[oõ]es?)\b/i.test(pergunta);
+        const jaConsultou = historico.some((item) => item.role === "tool");
+        if (!resposta.tool_calls?.length && pedeDado && !jaConsultou && passo < MAX_PASSOS - 1) {
+          historico = [
+            ...historico,
+            { ...resposta, content: "" },
+            {
+              role: "user",
+              content: "Consulte o banco com uma ferramenta agora e traga os dados reais. Não invente cliente, processo, prazo ou valor.",
             },
           ];
           continue;
@@ -4598,9 +4657,10 @@ export function ChatIa({
               <div className="chat-memoria-topo">
                 <h3>Memória do assistente</h3>
                 <p>
-                  Preferências que a IA segue em todas as conversas. Só o administrador grava. Para ensinar algo novo, diga no chat, por exemplo:
+                  Preferências que a IA segue em todas as conversas. Exporte o arquivo e importe no Maicon da rede. Para ensinar algo novo, diga no chat, por exemplo:
                   <em> "quando eu falar house, use a mov_Logistica_House"</em>.
                 </p>
+                {avisoMemoria ? <p className="chat-memoria-aviso">{avisoMemoria}</p> : null}
               </div>
               <form
                 className="chat-memoria-form"
@@ -4633,6 +4693,7 @@ export function ChatIa({
                     onChange={(e) => setRascunho({ ...rascunho, campo: e.target.value })}
                   />
                 </label>
+                <div className="chat-memoria-rodape">
                 <label className="chat-memoria-obs">
                   <span>Observação</span>
                   <input
@@ -4642,6 +4703,23 @@ export function ChatIa({
                   />
                 </label>
                 <div className="chat-memoria-form-acoes">
+                  <button type="button" className="chat-memoria-io" onClick={exportarMemoria}>
+                    Exportar
+                  </button>
+                  <button type="button" className="chat-memoria-io" onClick={() => arquivoMemoriaRef.current?.click()}>
+                    Importar
+                  </button>
+                  <input
+                    ref={arquivoMemoriaRef}
+                    type="file"
+                    accept="application/json,.json"
+                    hidden
+                    onChange={(e) => {
+                      const arquivo = e.target.files?.[0];
+                      e.target.value = "";
+                      if (arquivo) void importarMemoria(arquivo);
+                    }}
+                  />
                   <button type="submit">
                     {editando == null ? "Adicionar" : "Salvar"}
                   </button>
@@ -4650,6 +4728,7 @@ export function ChatIa({
                       Cancelar
                     </button>
                   ) : null}
+                </div>
                 </div>
                 {erroMemoria ? <p className="chat-erro">{erroMemoria}</p> : null}
               </form>

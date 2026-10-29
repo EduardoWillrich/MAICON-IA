@@ -115,6 +115,18 @@ const VARIAVEIS: { re: RegExp; montar: (m: RegExpMatchArray) => Receita[] }[] = 
     re: new RegExp(`^no processo ${PROCESSO}, quais atividades estão com o documental ce`, "i"),
     montar: (m) => [{ nome: "documental_ce", args: { foco: "processo", caso: "ambos", numero: m[1].toUpperCase() } }],
   },
+  {
+    re: /^(?!.*(?:hist[oó]rico|\blog\b|quem alter|quem inclu|quem excl|quem mud)).*\b((?:im|ia|ea|em)\d{2,6}-\d{2})\b/i,
+    montar: (m) => {
+      const numero = m[1].toUpperCase();
+      const pedido = m.input ?? "";
+      if (/\btaxas?\b/i.test(pedido)) return [{ nome: "taxas_processo", args: { numero } }];
+      if (/rota|navio|rastre/i.test(pedido)) return [{ nome: "rota_processo", args: { numero } }];
+      if (/acompanhament/i.test(pedido)) return [{ nome: "acompanhamentos_processo", args: { numero } }];
+      if (/proposta|oferta/i.test(pedido)) return [{ nome: "proposta_processo", args: { numero } }];
+      return [{ nome: "resumo_processo", args: { numero } }];
+    },
+  },
 ];
 
 function chaveDa(pergunta: string) {

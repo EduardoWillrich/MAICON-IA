@@ -135,10 +135,19 @@ export function ferramentasProvaveis(texto) {
 }
 
 export function chamadaDireta(texto) {
-  const ferramentas = ferramentasProvaveis(texto);
+  const pedido = String(texto ?? "");
+  const numero = pedido.match(/(?:^|\s)((?:IM|IA|EA|EM)\d{2,6}-\d{2})\b/i)?.[1]?.toUpperCase();
+  const historico = /quem (?:inclu|alter|excl|mud)|hist[oó]rico|\blog\b|antes e depois/i.test(pedido);
+  if (numero && !historico) {
+    if (/\btaxas?\b/i.test(pedido)) return { nome: "taxas_processo", args: { numero } };
+    if (/rota|navio|rastre/i.test(pedido)) return { nome: "rota_processo", args: { numero } };
+    if (/acompanhament/i.test(pedido)) return { nome: "acompanhamentos_processo", args: { numero } };
+    if (/proposta|oferta/i.test(pedido)) return { nome: "proposta_processo", args: { numero } };
+    return { nome: "resumo_processo", args: { numero } };
+  }
+  const ferramentas = ferramentasProvaveis(pedido);
   if (ferramentas.length !== 1) return null;
   const nome = ferramentas[0];
-  const pedido = String(texto ?? "");
   if (nome === "prazos") return { nome, args: argsPrazos(pedido) };
   if (nome === "pendencias") return { nome, args: argsPendencias(pedido) };
   if (nome === "atividades_pendentes") return { nome, args: { setor: setorDaPergunta(pedido) } };
@@ -175,6 +184,7 @@ const TEXTOS_PRONTOS = new Set([
   "proposta_processo",
   "comissao_periodo",
   "processos_abertos_cliente",
+  "resumo_processo",
   "prazos",
   "processos_parados",
   "documental_ce",

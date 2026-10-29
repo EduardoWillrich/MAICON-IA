@@ -1518,6 +1518,45 @@ app.post("/api/memoria", (req, res) => {
   }
 });
 
+app.post("/api/memoria/importar", (req, res) => {
+  try {
+    const email = emailDaSessao(req);
+    if (!soAdmin(email)) return res.status(403).json({ erro: "Só o administrador grava memória." });
+    const corpo = req.body ?? {};
+    const preferencias = Array.isArray(corpo.preferencias) ? corpo.preferencias.slice(0, 500) : [];
+    const glossario = Array.isArray(corpo.glossario) ? corpo.glossario.slice(0, 500) : [];
+    if (!preferencias.length && !glossario.length) {
+      return res.status(400).json({ erro: "Esse arquivo não tem preferências nem glossário." });
+    }
+    let gravadas = 0;
+    for (const bruto of preferencias) {
+      const item = {
+        termo: String(bruto?.termo ?? "").trim(),
+        tabela: String(bruto?.tabela ?? "").trim(),
+        campo: String(bruto?.campo ?? "").trim(),
+        observacao: String(bruto?.observacao ?? "").trim(),
+      };
+      if (!item.termo && !item.observacao) continue;
+      lembrarUsuario(email, item);
+      lembrar(item);
+      gravadas += 1;
+    }
+    let termos = 0;
+    for (const bruto of glossario) {
+      const termo = String(bruto?.termo ?? "").trim();
+      const significado = String(bruto?.significado ?? "").trim();
+      if (!termo || !significado) continue;
+      salvarGlossario(termo, significado);
+      termos += 1;
+    }
+    if (!gravadas && !termos) return res.status(400).json({ erro: "Nenhuma memória válida nesse arquivo." });
+    limparCacheAprendizado();
+    res.json({ ok: true, preferencias: gravadas, glossario: termos });
+  } catch (erro) {
+    res.status(400).json({ erro: mensagemErro(erro) });
+  }
+});
+
 app.get("/api/glossario", (_req, res) => res.json({ glossario: listarGlossario() }));
 
 app.post("/api/glossario", (req, res) => {

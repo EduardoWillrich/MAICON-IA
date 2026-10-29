@@ -776,16 +776,19 @@ html.tema-claro .chat-assistant .chat-relatorio-tabela tbody tr:nth-child(even) 
 .chat-memoria-form label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .chat-memoria-form label span { font-size: 11px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: #8b95a7; }
 .chat-memoria-form input { width: 100%; min-width: 0; min-height: 40px; margin: 0; padding: 8px 12px; border-radius: 10px; }
-.chat-memoria-obs { grid-column: span 2; }
+.chat-memoria-rodape { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; }
 .chat-memoria-form-acoes { display: flex; gap: 8px; align-items: center; }
-.chat-memoria-form-acoes button { height: 40px; padding: 0 16px; border: 0; border-radius: 10px; background: #c62828; color: #fff; font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; }
+.chat-memoria-form-acoes button { height: 40px; padding: 0 16px; border: 0; border-radius: 10px; background: #c62828; color: #fff; font: inherit; font-size: 13px; font-weight: 650; white-space: nowrap; cursor: pointer; }
 .chat-memoria-form-acoes button:hover:not(:disabled) { background: #b71c1c; }
+.chat-memoria-form-acoes .chat-memoria-io,
 .chat-memoria-form-acoes .chat-memoria-cancelar { background: transparent; color: #c5cedd; border: 1px solid rgba(255, 255, 255, 0.14); }
+.chat-memoria-form-acoes .chat-memoria-io:hover,
 .chat-memoria-form-acoes .chat-memoria-cancelar:hover { background: rgba(255, 255, 255, 0.06); color: #fff; }
 .chat-memoria-form .chat-erro { grid-column: 1 / -1; }
 @media (max-width: 720px) {
   .chat-memoria-form { grid-template-columns: 1fr; }
-  .chat-memoria-obs { grid-column: auto; }
+  .chat-memoria-rodape { grid-template-columns: 1fr; }
+  .chat-memoria-form-acoes { flex-wrap: wrap; }
 }
 .chat-glossario-form { display: grid; grid-template-columns: 160px minmax(0, 1fr) auto; gap: 10px; align-items: end; margin: 14px 0 16px; }
 .chat-glossario-form label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
@@ -799,8 +802,14 @@ html.tema-claro .chat-assistant .chat-relatorio-tabela tbody tr:nth-child(even) 
   .chat-glossario-form button { width: 100%; }
 }
 .chat-memoria-acoes { display: flex; gap: 6px; flex-shrink: 0; }
+.chat-memoria-aviso { margin-top: 8px; color: #9ccc9c; }
 .chat-memoria-topo h3 { margin: 0 0 4px; font-size: 1.1rem; }
 .chat-memoria-topo p { margin: 0; color: var(--muted); line-height: 1.5; }
+html.tema-claro .chat-memoria-form-acoes .chat-memoria-io,
+html.tema-claro .chat-memoria-form-acoes .chat-memoria-cancelar { color: #3a4254; border-color: rgba(20, 30, 60, 0.16); background: #fff; }
+html.tema-claro .chat-memoria-form-acoes .chat-memoria-io:hover,
+html.tema-claro .chat-memoria-form-acoes .chat-memoria-cancelar:hover { background: #f3f5f8; color: #1a1d27; }
+html.tema-claro .chat-memoria-aviso { color: #2e7d32; }
 .chat-vazio-texto { color: var(--muted); }
 .chat-memoria { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .chat-memoria li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255, 255, 255, 0.02); }

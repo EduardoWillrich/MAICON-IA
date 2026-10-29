@@ -1147,6 +1147,31 @@ async function chamarOpenRouter(chave, corpo, aoTexto, maxTokens = 1200) {
       console.warn(`[IA] OpenRouter indisponível no modelo ${model}; status 503.`);
       continue;
     }
+    if (!resp.ok && corpo.tool_choice && resp.status === 400) {
+      const recusa = await resp.clone().json().catch(() => ({}));
+      const aviso = String(recusa?.error?.message || "");
+      if (/tool_choice|tools/i.test(aviso)) {
+        const deNovo = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${chave}`,
+            "HTTP-Referer": "https://maicon.conlinebr.com.br",
+            "X-Title": "Maicon AI",
+          },
+          body: JSON.stringify({
+            ...corpo,
+            tool_choice: "auto",
+            model,
+            stream: true,
+            max_tokens: maxTokens,
+            temperature: corpo.temperature ?? 0.2,
+            provider: { sort: "latency" },
+          }),
+        });
+        if (deNovo.ok && deNovo.body) resp = deNovo;
+      }
+    }
     if (resp.ok && resp.body) {
       const temReserva = indice < modelos.length - 1;
       let guardado = "";
@@ -1291,8 +1316,14 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
   if (!opcoes.relatorio && !opcoes.apresentacao) {
     const direta = respostaImediata(pedido);
     if (direta) return { role: "assistant", content: direta, uso: { entrada: 0, saida: 0, total: 0 } };
-    const ferramenta = chamadaDireta(pedido);
-    if (ferramenta && ferramentasDoPedido(opcoes, [ferramenta.nome]).length) {
+    let ferramenta = chamadaDireta(pedido);
+    if (ferramenta && !ferramentasDoPedido(opcoes, [ferramenta.nome]).length) {
+      const numero = String(pedido).match(/(?:^|\s)((?:IM|IA|EA|EM)\d{2,6}-\d{2})\b/i)?.[1]?.toUpperCase();
+      ferramenta = numero && ferramentasDoPedido(opcoes, ["resumo_processo"]).length
+        ? { nome: "resumo_processo", args: { numero } }
+        : null;
+    }
+    if (ferramenta) {
       return {
         role: "assistant",
         content: "",
@@ -1349,6 +1380,7 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
     limiteTokens: roteando || informativo ? 300 : 900,
     modelosGemini: roteando || informativo || opcoes.apresentacao ? MODELOS_LEVES : MODELOS_RESPOSTA,
     tools: opcoes.apresentacao ? [] : ferramentas,
+    ...(roteando && ferramentas.length ? { tool_choice: "required" } : {}),
     messages: [
       { role: "system", content: instrucoes },
       ...prepararMensagens(base.map(({ uso: _uso, relatorio: _relatorio, log: _log, ...resto }) => resto)),
