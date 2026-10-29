@@ -8,6 +8,7 @@
     "dev": "concurrently -k \"node server/index.js\" \"node server/entrada.js\" \"vite\"",
     "dev:api": "node --watch server/index.js",
     "dev:ui": "vite",
+    "test": "node --test",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },

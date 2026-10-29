@@ -1,6 +1,7 @@
 import { Ollama } from "ollama";
 import { textoAprendizado } from "./aprendizado.js";
 import { textoConsultasProntas } from "./consultas.js";
+import { executarFilaComFallback, filaDeChaves, statusDoErro } from "./filaIa.js";
 import { ferramentaDaVisao } from "./funcoes.js";
 
 const FERRAMENTAS = [
@@ -815,10 +816,20 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
 const TENTATIVAS_POR_MODELO = 3;
 
 function modelos() {
-  return ["google/gemma-4-31b-it:free"];
+  return [...new Set([
+    process.env.OPENROUTER_MODEL,
+    "google/gemma-4-31b-it:free",
+  ].filter(Boolean))];
 }
 
 const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function erroDoProvedor(mensagem, status) {
+  const erro = new Error(String(mensagem || "O provedor de IA não respondeu."));
+  const codigo = Number(status);
+  if (Number.isInteger(codigo) && codigo >= 100 && codigo <= 599) erro.status = codigo;
+  return erro;
+}
 
 async function chamarModelo(chave, corpo, aoTexto) {
   let ultimoErro;
@@ -853,9 +864,13 @@ async function chamarModelo(chave, corpo, aoTexto) {
           aoTexto?.(geracao);
           return { content: geracao };
         }
-        ultimoErro = new Error(mensagem);
+        ultimoErro = erroDoProvedor(mensagem, resp.status);
         if (/free-models-per-day/i.test(mensagem)) break;
         if (/rate limit exceeded/i.test(mensagem)) break;
+        const modeloIndisponivel =
+          resp.status === 404 ||
+          /model(?:o)?[\s\S]{0,80}(?:not found|unavailable)|does not exist|do not have access/i.test(mensagem);
+        if (modeloIndisponivel) break;
         const grandeDemais = resp.status === 413 || /request too large|reduce your message size/i.test(mensagem);
         if (grandeDemais) break;
         const ilegivel = /parsing failed|could not be parsed|failed_generation/i.test(mensagem);
@@ -867,6 +882,7 @@ async function chamarModelo(chave, corpo, aoTexto) {
     }
     if (/free-models-per-day/i.test(ultimoErro?.message || "")) break;
     if (/rate limit exceeded/i.test(ultimoErro?.message || "")) continue;
+    if (/model(?:o)?[\s\S]{0,80}(?:not found|unavailable)|does not exist|do not have access/i.test(ultimoErro?.message || "")) continue;
   }
   const texto = ultimoErro?.message || "";
   if (/free-models-per-day/i.test(texto)) {
@@ -912,7 +928,7 @@ async function chamarGroq(chave, corpo, aoTexto) {
     }
     const dados = await resp.json().catch(() => ({}));
     const mensagem = dados?.error?.message || "A Groq não respondeu.";
-    ultimoErro = new Error(mensagem);
+    ultimoErro = erroDoProvedor(mensagem, resp.status);
     const espera = Number(mensagem.match(/try again in ([\d.]+)s/i)?.[1]);
     const limite = resp.status === 429 || /rate limit|tokens per minute/i.test(mensagem);
     if (limite && espera > 0 && espera <= 8) {
@@ -1046,7 +1062,7 @@ async function chamarGemini(chave, corpo, aoTexto) {
       dados?.message ||
       bruto.replace(/\s+/g, " ").slice(0, 400) ||
       `Gemini respondeu ${resp.status}`;
-    ultimoErro = new Error(mensagem);
+    ultimoErro = erroDoProvedor(mensagem, resp.status);
     if (resp.status !== 429 && resp.status < 500 && !/not found|not supported/i.test(mensagem)) throw ultimoErro;
   }
   throw ultimoErro || new Error("O Gemini não respondeu.");
@@ -1154,14 +1170,16 @@ async function chamarOllama(corpo, aoTexto, sinal, chaveInformada, baseInformada
       abortado.name = "AbortError";
       throw abortado;
     }
-    const falha = erro?.error || erro?.message || "Não foi possível falar com o Ollama.";
+    const falha = typeof erro?.error === "string"
+      ? erro.error
+      : erro?.message || "Não foi possível falar com o Ollama.";
     if (/closing '\}'|can't find closing/i.test(falha) && !corpo._repetida) {
       return chamarOllama({ ...corpo, _repetida: true }, aoTexto, sinal, chaveInformada, baseInformada);
     }
     if (/fetch failed|ECONNREFUSED|Failed to fetch/i.test(falha)) {
       throw new Error("Não foi possível falar com o Ollama. Perguntas de acompanhamento e taxa já respondem sem ele.");
     }
-    throw new Error(falha);
+    throw erroDoProvedor(falha, statusDoErro(erro));
   }
   if (sinal) {
     const cancelar = () => fluxo.abort();
@@ -1196,29 +1214,6 @@ async function chamarOllama(corpo, aoTexto, sinal, chaveInformada, baseInformada
   tools = tools.filter((item) => item?.function?.name);
   if (!content.trim() && !tools.length) throw new Error("O modelo não devolveu texto.");
   return { content, ...(uso?.total ? { uso } : {}), ...(tools.length ? { tool_calls: tools } : {}) };
-}
-
-function podeTrocarChave(erro) {
-  const texto = erro?.message || "";
-  return /limite|usage limit|quota|rate limit|429|402|401|403|498|free-models|sobrecarreg|credit|billing|api key|unauthorized|invalid/i.test(texto);
-}
-
-function acrescentarChave(fila, item) {
-  if (!item?.chave || !item?.provedor) return;
-  if (fila.some((atual) => atual.provedor === item.provedor && atual.chave === item.chave)) return;
-  fila.push(item);
-}
-
-function filaDeChaves(chaves) {
-  const lista = Array.isArray(chaves) ? chaves.filter((item) => item?.chave && item?.provedor) : [];
-  const fila = [];
-  for (const item of lista.filter((atual) => atual.provedor === "gemini")) acrescentarChave(fila, item);
-  acrescentarChave(fila, { provedor: "gemini", chave: process.env.GEMINI_API_KEY, extra: "" });
-  for (const item of lista.filter((atual) => atual.provedor === "ollama")) acrescentarChave(fila, item);
-  acrescentarChave(fila, { provedor: "ollama", chave: process.env.OLLAMA_API_KEY, extra: process.env.OLLAMA_URL || "" });
-  for (const item of lista.filter((atual) => atual.provedor !== "gemini" && atual.provedor !== "ollama")) acrescentarChave(fila, item);
-  if (!fila.length) fila.push({ provedor: "ollama", chave: "", extra: "" });
-  return fila;
 }
 
 async function chamarProvedor(item, corpo, aoTexto, sinal) {
@@ -1273,32 +1268,29 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
     ],
   };
   const fila = filaDeChaves(opcoes.chaves);
-  let ultimo;
-  for (let i = 0; i < fila.length; i += 1) {
-    const item = fila[i];
-    const reserva = item.provedor === "gemini" && i < fila.length - 1;
-    let guardado = "";
-    try {
-      const dados = await chamarProvedor(
+  const dados = await executarFilaComFallback(
+    fila,
+    async (item, { indice, total }) => {
+      const temReserva = indice < total - 1;
+      let guardado = "";
+      const dadosDoProvedor = await chamarProvedor(
         item,
         corpo,
-        reserva ? (pedaco) => { guardado += pedaco; } : aoTexto,
+        temReserva ? (pedaco) => { guardado += pedaco; } : aoTexto,
         opcoes.sinal,
       );
-      if (reserva && guardado) aoTexto?.(guardado);
-      const msg = dados ?? {};
-      return {
-        role: "assistant",
-        content: msg.content ?? "",
-        ...(msg.uso ? { uso: msg.uso } : {}),
-        ...(msg.tool_calls?.length ? { tool_calls: msg.tool_calls } : {}),
-      };
-    } catch (erro) {
-      if (erro?.name === "AbortError") throw erro;
-      ultimo = erro;
-      const segue = i < fila.length - 1 && (item.provedor === "gemini" || podeTrocarChave(erro));
-      if (!segue) throw erro;
-    }
-  }
-  throw ultimo;
+      if (guardado) aoTexto?.(guardado);
+      return dadosDoProvedor;
+    },
+    ({ provedor, status }) => {
+      console.warn(`[IA] Falha no provedor ${provedor}; status ${status ?? "desconhecido"}.`);
+    },
+  );
+  const msg = dados ?? {};
+  return {
+    role: "assistant",
+    content: msg.content ?? "",
+    ...(msg.uso ? { uso: msg.uso } : {}),
+    ...(msg.tool_calls?.length ? { tool_calls: msg.tool_calls } : {}),
+  };
 }

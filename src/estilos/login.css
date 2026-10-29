@@ -3,7 +3,13 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: #140406 url("../assets/fundo-login.jpg") center / cover no-repeat fixed;
+  background-color: #170507;
+  background-image:
+    radial-gradient(ellipse 82% 105% at 102% 48%, rgba(255, 30, 48, 0.98) 0%, rgba(226, 18, 34, 0.78) 28%, rgba(130, 17, 27, 0.34) 58%, transparent 76%),
+    radial-gradient(ellipse 70% 62% at 54% -12%, rgba(134, 41, 45, 0.62) 0%, rgba(70, 18, 21, 0.3) 48%, transparent 78%),
+    radial-gradient(ellipse 68% 58% at 55% 112%, rgba(100, 24, 29, 0.58) 0%, rgba(54, 13, 17, 0.28) 52%, transparent 80%),
+    linear-gradient(105deg, #100304 0%, #210709 27%, #3a0c10 52%, #721018 76%, #bd111f 100%);
+  background-attachment: fixed;
 }
 
 .login-card {
