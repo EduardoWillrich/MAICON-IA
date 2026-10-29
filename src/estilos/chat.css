@@ -90,6 +90,57 @@
 .chat-historico button { width: 100%; text-align: left; border: 0; border-radius: 8px; padding: 8px 10px; background: transparent; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chat-historico .chat-excluir { width: 28px; flex: 0 0 28px; padding: 4px 0; text-align: center; color: var(--muted); font-size: 16px; }
 .chat-secao { display: flex; flex-direction: column; gap: 12px; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255, 255, 255, 0.02); }
+.chat-config-abas { display: flex; gap: 8px; margin-bottom: 4px; }
+.chat-config-abas button { height: 36px; padding: 0 14px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
+.chat-config-abas button.ativo { color: var(--text); border-color: transparent; background: rgba(255, 255, 255, 0.08); }
+.chat-coluna-larga { max-width: none; width: 100%; }
+.chat-mensagens-sqlite { display: flex; flex-direction: column; padding: 10px 12px 12px; overflow: hidden; }
+.chat-mensagens-sqlite .chat-coluna { flex: 1; min-height: 0; height: 100%; gap: 10px; }
+.chat-sqlite { flex: 1; min-height: 0; height: auto; }
+.chat-mensagens-sqlite .chat-sqlite-corpo { flex: 1; min-height: 0; height: 100%; grid-template-columns: 220px minmax(0, 1fr); }
+.chat-mensagens-sqlite .chat-sqlite-lista,
+.chat-mensagens-sqlite .chat-sqlite-detalhe { max-height: none; height: 100%; }
+.chat-mensagens-sqlite .chat-sqlite-painel,
+.chat-mensagens-sqlite .chat-sqlite-principal { min-height: 0; height: 100%; }
+.chat-mensagens-sqlite .chat-sqlite-rolagem { flex: 1; height: auto; min-height: 0; }
+.chat-sqlite-arquivos { display: flex; flex-wrap: wrap; gap: 8px; }
+.chat-sqlite-arquivos button { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border: 1px solid var(--line); border-radius: 12px; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
+.chat-sqlite-arquivos button.ativo { color: var(--text); background: rgba(255, 255, 255, 0.08); border-color: transparent; }
+.chat-sqlite-arquivos small { min-width: 22px; padding: 2px 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); font-size: 11px; }
+.chat-sqlite-corpo { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 14px; min-height: 0; flex: 1; }
+.chat-sqlite-lista { display: flex; flex-direction: column; gap: 4px; max-height: calc(100vh - 280px); overflow: auto; padding: 6px; border: 1px solid var(--line); border-radius: 14px; background: rgba(0, 0, 0, 0.18); }
+.chat-sqlite-lista button { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 38px; padding: 8px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.chat-sqlite-lista button:hover { background: rgba(255, 255, 255, 0.05); }
+.chat-sqlite-lista button.ativo { background: rgba(229, 57, 53, 0.16); color: #fff; }
+.chat-sqlite-lista span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-sqlite-lista em { flex: 0 0 auto; color: var(--muted); font-style: normal; font-size: 12px; }
+.chat-sqlite-lista button.ativo em { color: #ffcdd2; }
+.chat-sqlite-painel { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.chat-sqlite-painel.com-detalhe { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 460px); align-items: stretch; }
+.chat-sqlite-principal { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.chat-sqlite-tabela tbody tr { cursor: pointer; }
+.chat-sqlite-tabela tbody tr.ativa { background: rgba(229, 57, 53, 0.14); }
+.chat-sqlite-detalhe { display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 280px); overflow: auto; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: rgba(0, 0, 0, 0.22); }
+.chat-sqlite-detalhe header { display: flex; align-items: center; justify-content: space-between; gap: 12px; position: sticky; top: -16px; margin: -16px -16px 0; padding: 14px 16px; background: #1b1e25; }
+.chat-sqlite-detalhe header button { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font-size: 22px; cursor: pointer; }
+.chat-sqlite-detalhe h4 { margin: 0 0 6px; color: var(--muted); font-size: 12px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
+.chat-sqlite-detalhe pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.45; }
+.chat-sqlite-detalhe .chat-consulta { max-height: none; }
+.chat-sqlite-rolagem { overflow: auto; height: calc(100vh - 320px); min-height: 420px; border: 1px solid var(--line); border-radius: 14px; background: rgba(0, 0, 0, 0.16); }
+.chat-sqlite-tabela { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 14px; }
+.chat-sqlite-tabela th, .chat-sqlite-tabela td { min-width: 140px; max-width: 360px; padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-sqlite-tabela tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.025); }
+.chat-sqlite-tabela tbody tr:hover { background: rgba(255, 255, 255, 0.05); }
+.chat-sqlite-tabela th { position: sticky; top: 0; z-index: 1; background: #1b1e25; color: #c5cedb; font-size: 12px; font-weight: 650; letter-spacing: 0.02em; }
+.chat-sqlite-paginas { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 14px; }
+.chat-sqlite-paginas span { white-space: nowrap; }
+.chat-sqlite-erro { margin: 0; color: #ff8d8d; }
+@media (max-width: 860px) {
+  .chat-sqlite-painel.com-detalhe { grid-template-columns: 1fr; }
+  .chat-sqlite-corpo { grid-template-columns: 1fr; }
+  .chat-sqlite-lista { max-height: 180px; }
+  .chat-sqlite-rolagem { height: 58vh; min-height: 320px; }
+}
 .chat-secao + .chat-secao { margin-top: 4px; }
 .chat-contas-busca { display: flex; flex-direction: row; align-items: center; gap: 8px; height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, 0.2); color: #8b95a7; }
 .chat-contas-busca svg { flex: 0 0 16px; }
@@ -211,6 +262,8 @@ html.tema-claro .chat-busca-lista { background: #fff; }
 .chat-cancelar { border: 1px solid rgba(229, 57, 53, 0.55); border-radius: 999px; padding: 6px 12px; background: #2a1212; color: #ff8a80; font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
 
 .chat-mensagens { flex: 1; overflow-y: auto; padding: 24px 18px; scroll-behavior: smooth; }
+.chat-mensagens.chat-mensagens-sqlite { display: flex; flex-direction: column; padding: 8px 10px 10px; overflow: hidden; }
+.chat-mensagens.chat-mensagens-sqlite .chat-secao { padding: 12px 14px; }
 .chat-coluna { width: 100%; max-width: 920px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 
 .chat-boas-vindas { width: min(860px, 100%); margin: 0 auto; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 5vh 0 2vh; }
@@ -798,8 +851,16 @@ html.tema-claro .chat-lateral.recolhida .chat-lateral-config.ativo { background:
 html.tema-claro .chat-lateral.recolhida .chat-lateral-menu li:has(button.ativo)::after { width: 2px; background: #e53935; }
 html.tema-claro .chat-janela { background: #f7f8fb; color: #1c2430; }
 html.tema-claro .chat-user { background: #e53935; color: #fff; }
-html.tema-claro .chat-assistant,
-html.tema-claro .chat-secao,
+html.tema-claro .chat-sqlite-tabela th { background: #f7f8fb; color: #5c6b80; }
+html.tema-claro .chat-sqlite-detalhe,
+html.tema-claro .chat-sqlite-lista,
+html.tema-claro .chat-sqlite-rolagem { background: #fff; }
+html.tema-claro .chat-sqlite-detalhe header { background: #f7f8fb; }
+html.tema-claro .chat-sqlite-tabela tbody tr.ativa { background: #fdecea; }
+html.tema-claro .chat-sqlite-lista button.ativo { color: #b71c1c; background: #fdecea; }
+html.tema-claro .chat-sqlite-lista button.ativo em { color: #b71c1c; }
+html.tema-claro .chat-sqlite-tabela tbody tr:nth-child(even) { background: #f7f8fb; }
+html.tema-claro .chat-sqlite-tabela tbody tr:hover { background: #f3f5f8; }
 html.tema-claro .chat-memoria li { background: #fff; color: #1c2430; border-color: #e6ebf2; }
 html.tema-claro .chat-inicio .chat-assistant,
 html.tema-claro .chat-inicio .chat-saudacao,
@@ -1233,4 +1294,53 @@ html.tema-claro .resposta {
 @media (max-width: 480px) {
   .inicio-kpi strong { font-size: 34px; }
   .inicio-kpis { gap: 10px; }
+}
+
+.chat-mensagens.chat-mensagens-sqlite {
+  display: flex !important;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  padding: 8px 10px 10px !important;
+  overflow: hidden !important;
+}
+.chat-mensagens.chat-mensagens-sqlite > .chat-coluna {
+  max-width: none !important;
+  width: 100% !important;
+  margin: 0 !important;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+.chat-mensagens.chat-mensagens-sqlite .chat-sqlite {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.chat-mensagens.chat-mensagens-sqlite .chat-sqlite-corpo {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+.chat-mensagens.chat-mensagens-sqlite .chat-sqlite-painel,
+.chat-mensagens.chat-mensagens-sqlite .chat-sqlite-principal {
+  min-height: 0;
+  height: 100%;
+}
+.chat-mensagens.chat-mensagens-sqlite .chat-sqlite-rolagem {
+  flex: 1 1 auto;
+  height: 100% !important;
+  min-height: 0 !important;
+}
+.chat-mensagens.chat-mensagens-sqlite .chat-sqlite-lista,
+.chat-mensagens.chat-mensagens-sqlite .chat-sqlite-detalhe {
+  max-height: none !important;
+  height: 100%;
 }

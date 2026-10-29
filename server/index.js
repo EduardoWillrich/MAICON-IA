@@ -1,4 +1,5 @@
 import { emailsAdmin } from "./env.js";
+import { listarSqlite, lerLinhaSqlite, lerTabelaSqlite } from "./sqliteVisao.js";
 import { adotarTokenGoogle, apagarSessao, contaDoToken } from "./identidade.js";
 import express from "express";
 import os from "os";
@@ -1379,6 +1380,29 @@ app.delete("/api/chaves/:id", (req, res) => {
   if (permissaoDe(email).papel !== "admin") return res.status(403).json({ erro: "Só o administrador gerencia as chaves." });
   if (!apagarChave(req.params.id, email)) return res.status(404).json({ erro: "Chave não encontrada." });
   res.json({ chaves: listarChaves(email) });
+});
+
+app.get("/api/sqlite", (req, res) => {
+  if (permissaoDe(emailDaSessao(req)).papel !== "admin") return res.status(403).json({ erro: "Só o administrador vê o SQLite." });
+  res.json({ bancos: listarSqlite() });
+});
+
+app.get("/api/sqlite/linhas", (req, res) => {
+  if (permissaoDe(emailDaSessao(req)).papel !== "admin") return res.status(403).json({ erro: "Só o administrador vê o SQLite." });
+  try {
+    res.json(lerTabelaSqlite(req.query.arquivo, req.query.tabela, req.query.pagina));
+  } catch (erro) {
+    res.status(400).json({ erro: mensagemErro(erro) });
+  }
+});
+
+app.get("/api/sqlite/linha", (req, res) => {
+  if (permissaoDe(emailDaSessao(req)).papel !== "admin") return res.status(403).json({ erro: "Só o administrador vê o SQLite." });
+  try {
+    res.json(lerLinhaSqlite(req.query.arquivo, req.query.tabela, req.query.linha));
+  } catch (erro) {
+    res.status(400).json({ erro: mensagemErro(erro) });
+  }
 });
 
 function gravarPreferenciaDita(email, texto, pergunta) {

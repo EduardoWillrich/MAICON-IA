@@ -2538,6 +2538,20 @@ export function ChatIa({
   const entradaRef = useRef<HTMLTextAreaElement>(null);
   const [memoriaAberta, setMemoriaAberta] = useState(false);
   const [configAberta, setConfigAberta] = useState(false);
+  const [abaConfig, setAbaConfig] = useState<"contas" | "sqlite">("contas");
+  const [bancosSqlite, setBancosSqlite] = useState<{ arquivo: string; tabelas: { nome: string; total: number }[] }[]>([]);
+  const [arquivoSqlite, setArquivoSqlite] = useState("");
+  const [tabelaSqlite, setTabelaSqlite] = useState("");
+  const [gradeSqlite, setGradeSqlite] = useState<{
+    colunas: string[];
+    linhas: Array<Record<string, string> & { _linha?: number }>;
+    total: number;
+    pagina: number;
+    paginas: number;
+  } | null>(null);
+  const [linhaSqlite, setLinhaSqlite] = useState<{ id: number; colunas: string[]; valores: Record<string, string> } | null>(null);
+  const [erroSqlite, setErroSqlite] = useState("");
+  const [carregandoSqlite, setCarregandoSqlite] = useState(false);
   const [inicioAberto, setInicioAberto] = useState(true);
   const [abaAbertura, setAbaAbertura] = useState<"consultas" | "relatorios">("consultas");
   const [lateralRecolhida, setLateralRecolhida] = useState(() => sessionStorage.getItem("maicon-lateral") === "1");
@@ -3028,6 +3042,60 @@ export function ChatIa({
     const resp = await fetch(`${api}/api/chaves?email=${encodeURIComponent(email)}`);
     const dados = await resp.json();
     if (resp.ok && Array.isArray(dados.chaves)) setChaves(dados.chaves);
+  }
+
+  async function carregarSqlite(arquivo = arquivoSqlite, tabela = tabelaSqlite, pagina = 1) {
+    if (!email || !admin) return;
+    setCarregandoSqlite(true);
+    setErroSqlite("");
+    setLinhaSqlite(null);
+    const catalogo = await fetch(`${api}/api/sqlite`);
+    const lista = await catalogo.json().catch(() => ({}));
+    if (!catalogo.ok) {
+      setErroSqlite(lista.erro || "Não consegui ler o SQLite.");
+      setCarregandoSqlite(false);
+      return;
+    }
+    const bancos = Array.isArray(lista.bancos) ? lista.bancos : [];
+    setBancosSqlite(bancos);
+    const arquivoAtual = bancos.some((banco: { arquivo: string }) => banco.arquivo === arquivo) ? arquivo : bancos[0]?.arquivo || "";
+    const tabelas = bancos.find((banco: { arquivo: string }) => banco.arquivo === arquivoAtual)?.tabelas ?? [];
+    const tabelaAtual = tabelas.some((item: { nome: string }) => item.nome === tabela) ? tabela : tabelas[0]?.nome || "";
+    setArquivoSqlite(arquivoAtual);
+    setTabelaSqlite(tabelaAtual);
+    if (!arquivoAtual || !tabelaAtual) {
+      setGradeSqlite(null);
+      setCarregandoSqlite(false);
+      return;
+    }
+    const resp = await fetch(
+      `${api}/api/sqlite/linhas?arquivo=${encodeURIComponent(arquivoAtual)}&tabela=${encodeURIComponent(tabelaAtual)}&pagina=${pagina}`,
+    );
+    const dados = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      setErroSqlite(dados.erro || "Não consegui ler a tabela.");
+      setGradeSqlite(null);
+    } else {
+      setGradeSqlite(dados);
+    }
+    setCarregandoSqlite(false);
+  }
+
+  async function abrirLinhaSqlite(id: number) {
+    if (!id || !arquivoSqlite || !tabelaSqlite) return;
+    if (linhaSqlite?.id === id) {
+      setLinhaSqlite(null);
+      return;
+    }
+    const resp = await fetch(
+      `${api}/api/sqlite/linha?arquivo=${encodeURIComponent(arquivoSqlite)}&tabela=${encodeURIComponent(tabelaSqlite)}&linha=${id}`,
+    );
+    const dados = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      setErroSqlite(dados.erro || "Não consegui abrir o registro.");
+      return;
+    }
+    setLinhaSqlite({ id, colunas: dados.colunas ?? [], valores: dados.valores ?? {} });
   }
 
   async function salvarChave() {
@@ -4257,8 +4325,131 @@ export function ChatIa({
         ) : null}
 
         {configAberta ? (
-          <div className="chat-mensagens">
-            <div className="chat-coluna">
+          <div className={`chat-mensagens${abaConfig === "sqlite" ? " chat-mensagens-sqlite" : ""}`}>
+            <div className={`chat-coluna${abaConfig === "sqlite" ? " chat-coluna-larga" : ""}`}>
+              <div className="chat-config-abas" role="tablist" aria-label="Configurações">
+                <button type="button" className={abaConfig === "contas" ? "ativo" : ""} onClick={() => setAbaConfig("contas")}>
+                  Contas
+                </button>
+                <button
+                  type="button"
+                  className={abaConfig === "sqlite" ? "ativo" : ""}
+                  onClick={() => {
+                    setAbaConfig("sqlite");
+                    void carregarSqlite();
+                  }}
+                >
+                  SQLite
+                </button>
+              </div>
+              {abaConfig === "sqlite" ? (
+                <section className="chat-secao chat-sqlite">
+                  <div className="chat-memoria-topo">
+                    <h3>SQLite do servidor</h3>
+                    <p>Tabelas gravadas neste servidor. Chaves, tokens e sessões aparecem mascarados.</p>
+                  </div>
+                  <div className="chat-sqlite-arquivos" role="tablist" aria-label="Arquivos do SQLite">
+                    {bancosSqlite.map((banco) => (
+                      <button
+                        key={banco.arquivo}
+                        type="button"
+                        className={arquivoSqlite === banco.arquivo ? "ativo" : ""}
+                        onClick={() => void carregarSqlite(banco.arquivo, banco.tabelas[0]?.nome || "", 1)}
+                      >
+                        {banco.arquivo.replace(".sqlite", "")}
+                        <small>{banco.tabelas.reduce((soma, item) => soma + item.total, 0)}</small>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="chat-sqlite-corpo">
+                    <aside className="chat-sqlite-lista" aria-label="Tabelas">
+                      {(bancosSqlite.find((banco) => banco.arquivo === arquivoSqlite)?.tabelas ?? []).map((item) => (
+                        <button
+                          key={item.nome}
+                          type="button"
+                          className={tabelaSqlite === item.nome ? "ativo" : ""}
+                          onClick={() => void carregarSqlite(arquivoSqlite, item.nome, 1)}
+                        >
+                          <span>{item.nome}</span>
+                          <em>{item.total}</em>
+                        </button>
+                      ))}
+                    </aside>
+                    <div className={`chat-sqlite-painel${linhaSqlite ? " com-detalhe" : ""}`}>
+                      {erroSqlite ? <p className="chat-sqlite-erro">{erroSqlite}</p> : null}
+                      {carregandoSqlite ? <p className="chat-historico-vazio">Lendo o banco…</p> : null}
+                      {!carregandoSqlite && gradeSqlite ? (
+                        <div className="chat-sqlite-principal">
+                          <div className="chat-sqlite-rolagem">
+                            <table className="chat-sqlite-tabela">
+                              <thead>
+                                <tr>
+                                  {gradeSqlite.colunas.map((coluna) => <th key={coluna}>{coluna}</th>)}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {gradeSqlite.linhas.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={Math.max(1, gradeSqlite.colunas.length)}>Nenhum registro.</td>
+                                  </tr>
+                                ) : gradeSqlite.linhas.map((linha) => (
+                                  <tr
+                                    key={linha._linha}
+                                    className={linhaSqlite?.id === Number(linha._linha) ? "ativa" : ""}
+                                    onClick={() => void abrirLinhaSqlite(Number(linha._linha))}
+                                  >
+                                    {gradeSqlite.colunas.map((coluna) => (
+                                      <td key={coluna} title={linha[coluna]}>{linha[coluna] || "—"}</td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          <div className="chat-sqlite-paginas">
+                            <button
+                              type="button"
+                              className="chat-acao"
+                              disabled={gradeSqlite.pagina <= 1 || carregandoSqlite}
+                              onClick={() => void carregarSqlite(arquivoSqlite, tabelaSqlite, gradeSqlite.pagina - 1)}
+                            >
+                              Anterior
+                            </button>
+                            <span>{gradeSqlite.total.toLocaleString("pt-BR")} registros · página {gradeSqlite.pagina} de {gradeSqlite.paginas}</span>
+                            <button
+                              type="button"
+                              className="chat-acao"
+                              disabled={gradeSqlite.pagina >= gradeSqlite.paginas || carregandoSqlite}
+                              onClick={() => void carregarSqlite(arquivoSqlite, tabelaSqlite, gradeSqlite.pagina + 1)}
+                            >
+                              Próxima
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                      {linhaSqlite ? (
+                        <aside className="chat-sqlite-detalhe" aria-label="Conteúdo do registro">
+                          <header>
+                            <strong>{tabelaSqlite}</strong>
+                            <button type="button" onClick={() => setLinhaSqlite(null)} aria-label="Fechar">×</button>
+                          </header>
+                          {[...linhaSqlite.colunas].sort((a, b) => Number(/^sql$/i.test(b)) - Number(/^sql$/i.test(a))).map((coluna) => {
+                            const texto = linhaSqlite.valores[coluna] || "";
+                            const consulta = /^sql$/i.test(coluna) || /^\s*(select|with|insert|update|delete)\b/i.test(texto);
+                            return (
+                              <section key={coluna}>
+                                <h4>{coluna}</h4>
+                                {consulta && texto ? <SqlDestaque texto={texto} /> : <pre>{texto || "—"}</pre>}
+                              </section>
+                            );
+                          })}
+                        </aside>
+                      ) : null}
+                    </div>
+                  </div>
+                </section>
+              ) : (
+              <>
               <section className="chat-secao">
                 <div className="chat-memoria-topo">
                   <h3>Gerenciar permissões e usuários</h3>
@@ -4397,6 +4588,8 @@ export function ChatIa({
                 ))}
               </ul>
               </section>
+              </>
+              )}
             </div>
           </div>
         ) : memoriaAberta ? (
@@ -4845,7 +5038,7 @@ export function ChatIa({
           </div>
         )}
 
-        {inicioAberto ? null : <form
+        {inicioAberto || configAberta ? null : <form
           className="chat-entrada"
           onSubmit={(e) => {
             e.preventDefault();
