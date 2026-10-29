@@ -87,6 +87,20 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: "4mb" }));
+app.get("/api/ia/saude", (_req, res) => {
+  res.json({
+    ok: true,
+    commit: process.env.MAICON_GIT_SHA || "",
+    compactacaoGroq: true,
+    provedores: {
+      groq: Boolean(String(process.env.GROQ_API_KEY || "").trim()),
+      gemini: Boolean(String(process.env.GEMINI_API_KEY || "").trim()),
+      openrouter: Boolean(String(process.env.OPENROUTER_API_KEY || "").trim()),
+      ollama: Boolean(String(process.env.OLLAMA_API_KEY || "").trim()),
+    },
+  });
+});
+
 app.use("/api", async (req, res, next) => {
   const header = String(req.headers.authorization ?? "");
   const token = /^Bearer\s+\S+/i.test(header) ? header.replace(/^Bearer\s+/i, "").trim() : "";
@@ -193,17 +207,6 @@ app.delete("/api/sessao", (req, res) => {
 
 app.get("/api/conexao/teste", testar);
 
-app.get("/api/ia/saude", (_req, res) => {
-  res.json({
-    ok: true,
-    commit: process.env.MAICON_GIT_SHA || "",
-    provedores: {
-      groq: Boolean(String(process.env.GROQ_API_KEY || "").trim()),
-      gemini: Boolean(String(process.env.GEMINI_API_KEY || "").trim()),
-      openrouter: Boolean(String(process.env.OPENROUTER_API_KEY || "").trim()),
-      ollama: Boolean(String(process.env.OLLAMA_API_KEY || "").trim()),
-    },
-  });
 });
 app.post("/api/conexao/teste", testar);
 
