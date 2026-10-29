@@ -207,7 +207,6 @@ app.delete("/api/sessao", (req, res) => {
 
 app.get("/api/conexao/teste", testar);
 
-});
 app.post("/api/conexao/teste", testar);
 
 app.get("/api/inicio", async (req, res) => {
