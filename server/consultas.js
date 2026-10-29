@@ -69,6 +69,44 @@ export function textoConsultasProntas() {
   return `CONSULTAS PRONTAS (já validadas; reuse uma destas se servir à pergunta, trocando só o filtro):\n${blocos.join("\n\n")}\n`;
 }
 
+function palavrasDoPedido(termo) {
+  return [...new Set(
+    String(termo ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .split(/[^a-z0-9_-]+/)
+      .filter((palavra) => palavra.length >= 4 && !["para", "como", "qual", "quais", "sobre", "pelo", "pela", "esse", "essa", "este", "esta", "mais", "menos", "processo", "processos", "numero", "data", "nome", "consulta"].includes(palavra)),
+  )];
+}
+
+export function textoConsultasRelevantes(termo, limite = 3) {
+  const palavras = palavrasDoPedido(termo);
+  if (!palavras.length) return "";
+  const ranqueadas = listarSql()
+    .map((arquivo) => {
+      const corpo = readFileSync(path.join(PASTA, arquivo), "utf8").replace(/^--.*\n/gm, "").trim();
+      const base = `${arquivo}\n${corpo}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+      const arquivoNormal = arquivo.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+      const pontos = palavras.reduce((total, palavra) => {
+        const radical = palavra.replace(/s$/, "");
+        const noArquivo = arquivoNormal.includes(palavra) || arquivoNormal.includes(radical);
+        const noCorpo = base.includes(palavra) || base.includes(radical);
+        return total + (noArquivo ? 5 : 0) + (noCorpo ? 1 : 0);
+      }, 0);
+      return { arquivo, corpo, pontos };
+    })
+    .filter((item) => item.pontos > 0)
+    .sort((a, b) => b.pontos - a.pontos || a.arquivo.localeCompare(b.arquivo))
+    .slice(0, limite);
+  if (!ranqueadas.length) return "";
+  const blocos = ranqueadas.map((item) => {
+    const semExemplo = item.corpo.replace(/\b(?:IM|IA|EM|EA)\d{3,5}-\d{2}(?:\s+TESTE)?\b/gi, "{processo}");
+    return `/* ${item.arquivo} */\n${semExemplo.slice(0, 1600)}`;
+  });
+  return `CONSULTAS PRONTAS RELACIONADAS AO PEDIDO:\n${blocos.join("\n\n")}\n`;
+}
+
 export function salvarConsulta(sqlTexto, origem) {
   const sql = String(sqlTexto ?? "").trim().replace(/;\s*$/, "");
   if (!/^select\b/i.test(sql)) return "";

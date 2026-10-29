@@ -91,9 +91,7 @@ app.get("/api/ia/saude", (_req, res) => {
   res.json({
     ok: true,
     commit: process.env.MAICON_GIT_SHA || "",
-    compactacaoGroq: true,
     provedores: {
-      groq: Boolean(String(process.env.GROQ_API_KEY || "").trim()),
       gemini: Boolean(String(process.env.GEMINI_API_KEY || "").trim()),
       openrouter: Boolean(String(process.env.OPENROUTER_API_KEY || "").trim()),
       ollama: Boolean(String(process.env.OLLAMA_API_KEY || "").trim()),

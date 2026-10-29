@@ -43,7 +43,7 @@ try {
   /* a coluna já existe */
 }
 
-const PROVEDORES = new Set(["openrouter", "groq", "gemini", "ollama"]);
+const PROVEDORES = new Set(["gemini", "openrouter", "ollama"]);
 
 function agora() {
   return new Date().toISOString();
@@ -144,7 +144,9 @@ export function listarChaves(email) {
   return db
     .prepare(
       `SELECT id, provedor, rotulo, extra, ordem, ativa, segredo
-       FROM chaves WHERE email = ? ORDER BY ordem, rotulo`,
+       FROM chaves
+       WHERE email = ? AND provedor IN ('gemini', 'openrouter', 'ollama')
+       ORDER BY ordem, rotulo`,
     )
     .all(email)
     .map((linha) => ({
@@ -162,7 +164,8 @@ export function chavesParaUso(email) {
   return db
     .prepare(
       `SELECT provedor, segredo, extra FROM chaves
-       WHERE email = ? AND ativa = 1 ORDER BY ordem, rotulo`,
+       WHERE email = ? AND ativa = 1 AND provedor IN ('gemini', 'openrouter', 'ollama')
+       ORDER BY ordem, rotulo`,
     )
     .all(email)
     .map((linha) => ({ provedor: linha.provedor, chave: linha.segredo, extra: linha.extra }));

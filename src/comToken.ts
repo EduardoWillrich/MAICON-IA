@@ -24,10 +24,19 @@ export function instalarTokenNaApi() {
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = urlDe(input);
     if (!daApi(url)) return original(input, init);
-    const token = lerSessao() || lerTokenGmail();
+    const sessaoAtual = lerSessao();
+    const gmail = lerTokenGmail();
+    const token = sessaoAtual || gmail;
     const headers = new Headers(init?.headers);
     if (token) headers.set("Authorization", `Bearer ${token}`);
-    const resp = await original(input, { ...init, headers });
+    const primeiraEntrada = input instanceof Request ? input.clone() : input;
+    let resp = await original(primeiraEntrada, { ...init, headers });
+    if (resp.status === 401 && sessaoAtual && gmail && gmail !== sessaoAtual) {
+      const headersGoogle = new Headers(init?.headers);
+      headersGoogle.set("Authorization", `Bearer ${gmail}`);
+      const segundaEntrada = input instanceof Request ? input.clone() : input;
+      resp = await original(segundaEntrada, { ...init, headers: headersGoogle });
+    }
     const sessao = resp.headers.get("X-Sessao");
     if (sessao) gravarSessao(sessao);
     return resp;

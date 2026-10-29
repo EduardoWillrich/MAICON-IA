@@ -1,7 +1,6 @@
-const PROVEDORES = ["groq", "gemini", "openrouter", "ollama"];
+const PROVEDORES = ["gemini", "openrouter", "ollama"];
 
 const AMBIENTE_POR_PROVEDOR = {
-  groq: "GROQ_API_KEY",
   gemini: "GEMINI_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
   ollama: "OLLAMA_API_KEY",
@@ -68,7 +67,7 @@ function abortado(erro) {
 export function podeTrocarChave(erro) {
   if (abortado(erro)) return false;
   const status = statusDoErro(erro);
-  if ([401, 402, 403, 413, 429, 498].includes(status) || status >= 500) return true;
+  if ([401, 402, 403, 404, 413, 429, 498].includes(status) || status >= 500) return true;
   const texto = String(erro?.message ?? erro?.error ?? erro ?? "");
   return /unauthorized|unauthenticated|invalid(?:\s+api)?\s*key|api key not valid|user not found|quota|rate limit|usage limit|billing|credit|modelo (?:inexistente|indispon[ií]vel|configurado)|model(?:o)?\s+(?:not found|unavailable)|does not exist|do not have access|unsupported|invalid_request|temporar|service unavailable|overload|sobrecarreg|timeout|fetch failed|econn(?:refused|reset)|socket hang up/i.test(texto);
 }

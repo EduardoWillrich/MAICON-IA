@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { abrirSqlite } from "./sqlite.js";
+import { criarSessaoAssinada, lerSessaoAssinada } from "./sessaoAssinada.js";
 
 const db = abrirSqlite("sessoes.sqlite");
 db.exec(`
@@ -21,11 +22,11 @@ function guardarSessao(email, nome, google) {
   const atual = db.prepare("SELECT id FROM sessoes WHERE email = ?").get(email);
   if (atual) {
     db.prepare("UPDATE sessoes SET nome = ?, google = ? WHERE email = ?").run(nome, google, email);
-    return atual.id;
+    return criarSessaoAssinada(email, nome);
   }
   const id = `maicon.${randomBytes(32).toString("base64url")}`;
   db.prepare("INSERT INTO sessoes (id, email, nome, google) VALUES (?, ?, ?, ?)").run(id, email, nome, google);
-  return id;
+  return criarSessaoAssinada(email, nome);
 }
 
 export async function adotarTokenGoogle(emailConta, acesso) {
@@ -82,6 +83,17 @@ export async function contaDoToken(token) {
   const acesso = String(token ?? "").trim();
   if (!acesso || acesso.length > 4096) {
     throw new Error("Entre de novo com o Google.");
+  }
+  if (acesso.startsWith("maicon.v2.")) {
+    const assinada = lerSessaoAssinada(acesso);
+    if (!assinada) throw new Error("Entre de novo com o Google.");
+    const salva = db.prepare("SELECT google FROM sessoes WHERE email = ?").get(assinada.email);
+    return {
+      email: assinada.email,
+      nome: assinada.nome,
+      token: String(salva?.google || ""),
+      entregarSessao: assinada.renovar ? criarSessaoAssinada(assinada.email, assinada.nome) : "",
+    };
   }
   if (acesso.startsWith("maicon.")) {
     const salva = lerSessao(acesso);

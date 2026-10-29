@@ -1,8 +1,18 @@
 import { Ollama } from "ollama";
 import { textoAprendizado } from "./aprendizado.js";
-import { textoConsultasProntas } from "./consultas.js";
+import { textoConsultasRelevantes } from "./consultas.js";
 import { executarFilaComFallback, filaDeChaves, statusDoErro } from "./filaIa.js";
 import { ferramentaDaVisao } from "./funcoes.js";
+import { registrarResultadoGemini } from "./gemini.js";
+import {
+  MODELOS_LEVES,
+  MODELOS_RESPOSTA,
+  ferramentasProvaveis,
+  lerFiltro,
+  pedidoInformativo,
+  respostaImediata,
+} from "./economia.js";
+import { modelosOpenRouter } from "./openrouter.js";
 
 const FERRAMENTAS = [
   {
@@ -634,7 +644,7 @@ function textoModalidade(modalidade) {
   );
 }
 
-function sistema(relatorio = false, limitado = false, setor = "geral", modalidade = "", extra = "", apresentacao = false) {
+function sistema(relatorio = false, limitado = false, setor = "geral", modalidade = "", extra = "", apresentacao = false, consultas = "") {
   const hoje = new Date().toLocaleDateString("pt-BR");
   return (
     `Você é o Maicon, a inteligência artificial da Conline no sistema HeadCargo. Hoje é ${hoje}.\n` +
@@ -809,168 +819,15 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "\n" +
     (extra || "") +
     "\n" +
-    textoConsultasProntas()
+    (consultas || "")
   );
 }
-
-const TENTATIVAS_POR_MODELO = 3;
-
-function modelos() {
-  return [...new Set([
-    process.env.OPENROUTER_MODEL,
-    "google/gemma-4-31b-it:free",
-  ].filter(Boolean))];
-}
-
-const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function erroDoProvedor(mensagem, status) {
   const erro = new Error(String(mensagem || "O provedor de IA não respondeu."));
   const codigo = Number(status);
   if (Number.isInteger(codigo) && codigo >= 100 && codigo <= 599) erro.status = codigo;
   return erro;
-}
-
-async function chamarModelo(chave, corpo, aoTexto) {
-  let ultimoErro;
-  for (const model of modelos()) {
-    for (let tentativa = 0; tentativa < TENTATIVAS_POR_MODELO; tentativa++) {
-      const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${chave}`,
-          "HTTP-Referer": "http://localhost:5173",
-          "X-Title": "Consulta log",
-        },
-        body: JSON.stringify({
-          ...corpo,
-          model,
-          stream: true,
-          max_tokens: 900,
-          reasoning: { enabled: false, exclude: true },
-          provider: { sort: "latency" },
-        }),
-      });
-      if (resp.ok && resp.body) {
-        const mensagem = await lerStream(resp.body, aoTexto);
-        if (mensagem) return mensagem;
-        ultimoErro = new Error("A IA não devolveu texto.");
-      } else {
-        const dados = await resp.json().catch(() => ({}));
-        const mensagem = dados?.error?.message || `OpenRouter respondeu ${resp.status}`;
-        const geracao = typeof dados?.error?.failed_generation === "string" ? dados.error.failed_generation.trim() : "";
-        if (geracao && !geracao.startsWith("{") && !geracao.startsWith("[")) {
-          aoTexto?.(geracao);
-          return { content: geracao };
-        }
-        ultimoErro = erroDoProvedor(mensagem, resp.status);
-        if (/free-models-per-day/i.test(mensagem)) break;
-        if (/rate limit exceeded/i.test(mensagem)) break;
-        const modeloIndisponivel =
-          resp.status === 404 ||
-          /model(?:o)?[\s\S]{0,80}(?:not found|unavailable)|does not exist|do not have access/i.test(mensagem);
-        if (modeloIndisponivel) break;
-        const grandeDemais = resp.status === 413 || /request too large|reduce your message size/i.test(mensagem);
-        if (grandeDemais) break;
-        const ilegivel = /parsing failed|could not be parsed|failed_generation/i.test(mensagem);
-        const temporario = ilegivel || resp.status === 429 || resp.status === 498 || resp.status >= 500;
-        if (!temporario) throw ultimoErro;
-      }
-      const aguardar = 1000 * 2 ** tentativa;
-      await esperar(Math.min(aguardar, 8000));
-    }
-    if (/free-models-per-day/i.test(ultimoErro?.message || "")) break;
-    if (/rate limit exceeded/i.test(ultimoErro?.message || "")) continue;
-    if (/model(?:o)?[\s\S]{0,80}(?:not found|unavailable)|does not exist|do not have access/i.test(ultimoErro?.message || "")) continue;
-  }
-  const texto = ultimoErro?.message || "";
-  if (/free-models-per-day/i.test(texto)) {
-    throw new Error("O limite diário do modelo gratuito acabou. Tente de novo amanhã ou adicione créditos no OpenRouter.");
-  }
-  if (/request too large|reduce your message size/i.test(texto)) {
-    throw new Error("A consulta ficou grande demais para a IA neste momento. Tente de novo em instantes.");
-  }
-  if (/parsing failed|could not be parsed/i.test(texto)) {
-    throw new Error("A IA não conseguiu montar a consulta. Tente de novo.");
-  }
-  throw new Error(`A IA está sobrecarregada no momento. Tente de novo em instantes. (${texto})`);
-}
-
-async function chamarGroq(chave, corpo, aoTexto) {
-  const modelos = [
-    ...new Set([
-      process.env.GROQ_MODEL || "qwen/qwen3.8-27b",
-      "qwen/qwen3.8-27b",
-      "openai/gpt-oss-20b",
-    ].filter(Boolean)),
-  ];
-  let ultimoErro;
-  for (const model of modelos) {
-    const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${chave}` },
-      body: JSON.stringify({
-        ...corpo,
-        model,
-        stream: true,
-        stream_options: { include_usage: true },
-        max_tokens: 1200,
-        ...(model.includes("gpt-oss") ? { reasoning_effort: "low" } : {}),
-        temperature: corpo.temperature ?? 0.2,
-      }),
-    });
-    if (resp.ok && resp.body) {
-      const mensagem = await lerStream(resp.body, aoTexto);
-      if (mensagem) return mensagem;
-      ultimoErro = new Error("A IA não devolveu texto.");
-      continue;
-    }
-    const dados = await resp.json().catch(() => ({}));
-    const mensagem = dados?.error?.message || "A Groq não respondeu.";
-    ultimoErro = erroDoProvedor(mensagem, resp.status);
-    const espera = Number(mensagem.match(/try again in ([\d.]+)s/i)?.[1]);
-    const limite = resp.status === 429 || /rate limit|tokens per minute/i.test(mensagem);
-    if (limite && espera > 0 && espera <= 8) {
-      await esperar(Math.ceil(espera * 1000) + 300);
-      const deNovo = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${chave}` },
-        body: JSON.stringify({
-          ...corpo,
-          model,
-          stream: true,
-          stream_options: { include_usage: true },
-          max_tokens: 1200,
-          ...(model.includes("gpt-oss") ? { reasoning_effort: "low" } : {}),
-          temperature: corpo.temperature ?? 0.2,
-        }),
-      });
-      if (deNovo.ok && deNovo.body) {
-        const mensagemNova = await lerStream(deNovo.body, aoTexto);
-        if (mensagemNova) return mensagemNova;
-      }
-    }
-    const pular = limite || resp.status >= 500 || /parsing failed|request too large|does not exist|do not have access/i.test(mensagem);
-    if (!pular) throw ultimoErro;
-  }
-  const texto = ultimoErro?.message || "";
-  if (/does not exist|do not have access/i.test(texto)) {
-    throw erroDoProvedor(
-      "O modelo configurado não está disponível nesta conta. A consulta não foi feita.",
-      statusDoErro(ultimoErro) || 404,
-    );
-  }
-  if (/request too large|reduce your message size/i.test(texto)) {
-    throw erroDoProvedor(
-      "A consulta ficou grande demais para a IA neste momento. Tente de novo em instantes.",
-      statusDoErro(ultimoErro) || 413,
-    );
-  }
-  throw erroDoProvedor(
-    "A IA está sobrecarregada no momento. Tente de novo em instantes.",
-    statusDoErro(ultimoErro) || 503,
-  );
 }
 
 function textoDe(valor) {
@@ -1004,7 +861,7 @@ async function lerStream(body, aoTexto) {
       const escolha = pedaco.choices?.[0] ?? {};
       const delta = escolha.delta ?? {};
       const pedacoTexto = textoDe(delta.content) || textoDe(escolha.message?.content);
-      const usoBruto = pedaco.usage || pedaco.x_groq?.usage;
+      const usoBruto = pedaco.usage;
       if (usoBruto) {
         acc.uso = {
           entrada: Number(usoBruto.prompt_tokens) || 0,
@@ -1037,28 +894,49 @@ async function lerStream(body, aoTexto) {
   };
 }
 
-async function chamarGemini(chave, corpo, aoTexto) {
-  const modelos = [
-    ...new Set([process.env.GEMINI_MODEL || "gemini-3.5-flash", "gemini-3.5-flash"].filter(Boolean)),
-  ];
+async function chamarGemini(chave, corpo, aoTexto, modelosFixos, maxTokens = 1200) {
+  const modelos = Array.isArray(modelosFixos) && modelosFixos.length
+    ? modelosFixos
+    : MODELOS_RESPOSTA;
   let ultimoErro;
-  for (const model of modelos) {
-    const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${chave}` },
-      body: JSON.stringify({
-        ...corpo,
-        model,
-        stream: true,
-        max_tokens: 1200,
-        reasoning_effort: "none",
-        temperature: corpo.temperature ?? 0.2,
-      }),
-    });
+  for (let indice = 0; indice < modelos.length; indice += 1) {
+    const model = modelos[indice];
+    let resp;
+    try {
+      resp = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${chave}` },
+        body: JSON.stringify({
+          ...corpo,
+          model,
+          stream: true,
+          max_tokens: maxTokens,
+          ...(model.includes("lite") ? {} : { reasoning_effort: "none" }),
+          temperature: corpo.temperature ?? 0.2,
+        }),
+      });
+    } catch (erro) {
+      ultimoErro = erroDoProvedor(erro?.message || "O Gemini não respondeu.", 503);
+      registrarResultadoGemini(chave, model, { status: 503 });
+      continue;
+    }
     if (resp.ok && resp.body) {
-      const mensagem = await lerStream(resp.body, aoTexto);
-      if (mensagem) return mensagem;
-      ultimoErro = new Error("A IA não devolveu texto.");
+      const temReserva = indice < modelos.length - 1;
+      let guardado = "";
+      try {
+        const mensagem = await lerStream(resp.body, temReserva ? (texto) => { guardado += texto; } : aoTexto);
+        if (mensagem) {
+          registrarResultadoGemini(chave, model, { ok: true, status: resp.status, headers: resp.headers });
+          if (guardado) aoTexto?.(guardado);
+          return mensagem;
+        }
+      } catch (erro) {
+        ultimoErro = erroDoProvedor(erro?.message || "A resposta do Gemini foi interrompida.", 503);
+        registrarResultadoGemini(chave, model, { status: 503, headers: resp.headers });
+        continue;
+      }
+      ultimoErro = erroDoProvedor("A IA não devolveu texto.", 503);
+      registrarResultadoGemini(chave, model, { status: 503, headers: resp.headers });
       continue;
     }
     const bruto = await resp.text();
@@ -1075,7 +953,12 @@ async function chamarGemini(chave, corpo, aoTexto) {
       bruto.replace(/\s+/g, " ").slice(0, 400) ||
       `Gemini respondeu ${resp.status}`;
     ultimoErro = erroDoProvedor(mensagem, resp.status);
-    if (resp.status !== 429 && resp.status < 500 && !/not found|not supported/i.test(mensagem)) throw ultimoErro;
+    registrarResultadoGemini(chave, model, { status: resp.status, headers: resp.headers });
+    if ([401, 403].includes(resp.status)) throw ultimoErro;
+    const falhaDoModelo =
+      resp.status === 404 ||
+      /not found|not supported|unsupported|invalid_request|model(?:o)?[\s\S]{0,80}(?:unavailable|does not exist)/i.test(mensagem);
+    if (resp.status !== 429 && resp.status < 500 && !falhaDoModelo) throw ultimoErro;
   }
   throw ultimoErro || new Error("O Gemini não respondeu.");
 }
@@ -1229,89 +1112,237 @@ async function chamarOllama(corpo, aoTexto, sinal, chaveInformada, baseInformada
 }
 
 function corpoAberto(corpo) {
-  const { num_predict: _num, modelo: _modelo, ...aberto } = corpo;
+  const { num_predict: _num, modelo: _modelo, modelosGemini: _modelos, limiteTokens: _limite, ...aberto } = corpo;
   return aberto;
 }
 
-function compactarCorpoParaGroq(corpo) {
-  const LIMITE = Number(process.env.GROQ_SYSTEM_MAX_CHARS) || 14000;
-  const messages = (corpo.messages || []).map((mensagem, indice) => {
-    if (indice !== 0 || mensagem?.role !== "system") return mensagem;
-    let content = String(mensagem.content ?? "");
-    const marca = content.indexOf("CONSULTAS PRONTAS (já validadas");
-    if (marca >= 0) {
-      content =
-        content.slice(0, marca).trimEnd() +
-        "\n\nCONSULTAS PRONTAS: o dump SQL completo foi omitido para caber no limite da Groq. " +
-        "Prefira as ferramentas tipadas. Se precisar de SQL novo, use buscar_tabelas e listar_colunas.\n";
+async function chamarOpenRouter(chave, corpo, aoTexto, maxTokens = 1200) {
+  const modelos = modelosOpenRouter();
+  let ultimoErro;
+  for (let indice = 0; indice < modelos.length; indice += 1) {
+    const model = modelos[indice];
+    let resp;
+    try {
+      resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${chave}`,
+          "HTTP-Referer": "https://maicon.conlinebr.com.br",
+          "X-Title": "Maicon AI",
+        },
+        body: JSON.stringify({
+          ...corpo,
+          model,
+          stream: true,
+          max_tokens: maxTokens,
+          temperature: corpo.temperature ?? 0.2,
+          provider: { sort: "latency" },
+        }),
+      });
+    } catch (erro) {
+      ultimoErro = erroDoProvedor(erro?.message || "O OpenRouter não respondeu.", 503);
+      console.warn(`[IA] OpenRouter indisponível no modelo ${model}; status 503.`);
+      continue;
     }
-    if (content.length > LIMITE) {
-      content =
-        content.slice(0, LIMITE).trimEnd() +
-        "\n\n[Instruções enxutas para o limite da Groq. Responda em português com as ferramentas disponíveis.]\n";
+    if (resp.ok && resp.body) {
+      const temReserva = indice < modelos.length - 1;
+      let guardado = "";
+      try {
+        const mensagem = await lerStream(resp.body, temReserva ? (texto) => { guardado += texto; } : aoTexto);
+        if (mensagem) {
+          if (guardado) aoTexto?.(guardado);
+          return mensagem;
+        }
+      } catch (erro) {
+        ultimoErro = erroDoProvedor(erro?.message || "A resposta do OpenRouter foi interrompida.", 503);
+        console.warn(`[IA] OpenRouter interrompeu o modelo ${model}; status 503.`);
+        continue;
+      }
+      ultimoErro = erroDoProvedor("A IA não devolveu texto.", 503);
+      continue;
     }
-    return { ...mensagem, content };
-  });
-  const { tools, ...resto } = corpo;
-  return {
-    ...resto,
-    messages,
-    ...(Array.isArray(tools) && tools.length ? { tools } : {}),
-  };
+    const dados = await resp.json().catch(() => ({}));
+    const mensagem = dados?.error?.message || `OpenRouter respondeu ${resp.status}`;
+    ultimoErro = erroDoProvedor(mensagem, resp.status);
+    console.warn(`[IA] OpenRouter recusou o modelo ${model}; status ${resp.status}.`);
+    if ([401, 403].includes(resp.status)) throw ultimoErro;
+  }
+  throw ultimoErro || new Error("O OpenRouter não respondeu.");
 }
 
 async function chamarProvedor(item, corpo, aoTexto, sinal) {
+  const modelos = corpo.modelosGemini;
+  const limite = corpo.limiteTokens;
   const aberto = corpoAberto(corpo);
-  if (item.provedor === "groq") return chamarGroq(item.chave, compactarCorpoParaGroq(aberto), aoTexto);
-  if (item.provedor === "gemini") return chamarGemini(item.chave, aberto, aoTexto);
-  if (item.provedor === "openrouter") return chamarModelo(item.chave, aberto, aoTexto);
-  return chamarOllama({ ...corpo, modelo: process.env.OLLAMA_MODEL || "beam" }, aoTexto, sinal, item.chave, item.extra);
+  if (item.provedor === "gemini") return chamarGemini(item.chave, aberto, aoTexto, modelos, limite);
+  if (item.provedor === "openrouter") return chamarOpenRouter(item.chave, aberto, aoTexto, limite);
+  if (item.provedor === "ollama") {
+    return chamarOllama({ ...corpo, modelo: process.env.OLLAMA_MODEL || "beam" }, aoTexto, sinal, item.chave, item.extra);
+  }
+  throw new Error(`Provedor de IA não suportado: ${item.provedor}`);
 }
 
 function modeloDaPergunta() {
   return process.env.OLLAMA_MODEL || "beam";
 }
 
+function chaveGemini(chaves) {
+  return String(chaves?.find((item) => item?.provedor === "gemini")?.chave || process.env.GEMINI_API_KEY || "").trim();
+}
+
+async function completarCurto(chave, modelo, sistemaTexto, usuario, maxTokens) {
+  const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${chave}` },
+    body: JSON.stringify({
+      model: modelo,
+      messages: [
+        { role: "system", content: sistemaTexto },
+        { role: "user", content: usuario },
+      ],
+      max_tokens: maxTokens,
+      temperature: 0,
+      stream: false,
+    }),
+  });
+  const dados = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw erroDoProvedor(dados?.error?.message || `Gemini respondeu ${resp.status}`, resp.status);
+  return String(dados?.choices?.[0]?.message?.content || "");
+}
+
+async function comModeloLeve(chave, sistemaTexto, usuario, maxTokens) {
+  let ultimo;
+  for (const modelo of MODELOS_LEVES) {
+    try {
+      return await completarCurto(chave, modelo, sistemaTexto, usuario, maxTokens);
+    } catch (erro) {
+      ultimo = erro;
+      if ([401, 403].includes(Number(erro?.status))) throw erro;
+    }
+  }
+  throw ultimo || new Error("O modelo leve não respondeu.");
+}
+
+async function filtrarPedido(chave, pergunta, nomes) {
+  if (!chave) return { ferramentas: [], termos: "" };
+  try {
+    const texto = await comModeloLeve(
+      chave,
+      "Você só filtra pedidos. Responda um JSON {\"ferramentas\":[],\"termos\":\"\"}. " +
+        "Escolha no máximo 4 nomes desta lista: " + nomes.join(", ") + ". " +
+        "termos são as palavras do pedido úteis para achar a consulta. Sem explicação.",
+      String(pergunta || "").slice(0, 1200),
+      160,
+    );
+    return lerFiltro(texto, nomes);
+  } catch (erro) {
+    console.warn(`[IA] Filtro leve indisponível; status ${erro?.status || "desconhecido"}.`);
+    return { ferramentas: [], termos: "" };
+  }
+}
+
+async function enxugarRetornos(chave, pergunta, mensagens) {
+  const copia = mensagens.map((item) => ({ ...item }));
+  const longos = copia.filter((item) => item?.role === "tool" && String(item.content || "").length > 1800);
+  if (!chave || !longos.length) return copia;
+  const pacote = longos.map((item) => String(item.content).slice(0, 3500)).join("\n\n---\n\n").slice(0, 8000);
+  try {
+    const resumo = await comModeloLeve(
+      chave,
+      "Extraia somente os fatos que respondem a pergunta. No máximo 12 linhas. Sem SQL, sem tabela interna e sem repetir instruções.",
+      `Pergunta: ${String(pergunta || "").slice(0, 500)}\n\nDados:\n${pacote}`,
+      450,
+    );
+    if (resumo.trim().length > 40) {
+      longos.forEach((item, indice) => {
+        item.content = indice === longos.length - 1 ? resumo.trim() : "Resumo incluído no último retorno.";
+      });
+      return copia;
+    }
+  } catch (erro) {
+    console.warn(`[IA] Resumo leve indisponível; status ${erro?.status || "desconhecido"}.`);
+  }
+  for (const item of longos) item.content = String(item.content).slice(0, 1800);
+  return copia;
+}
+
+function ferramentasDoPedido(opcoes, nomes) {
+  const limite = nomes?.length ? new Set(nomes) : null;
+  return FERRAMENTAS.filter((item) => {
+    const nome = item.function.name;
+    if (limite && !limite.has(nome)) return false;
+    const acesso = opcoes.acesso ?? {};
+    const setor = opcoes.setor || "geral";
+    if (!ferramentaDaVisao(nome, setor)) return false;
+    if (opcoes.papel === "admin") return true;
+    if (nome === "executar_sql" && !acesso.fazerSql) return false;
+    if ((nome === "consultar_log" || nome === "resultado_atual" || nome === "o_que_mudou" || nome === "explicar_itens_carga" || nome === "explicar_campo_livre") && acesso.fazerLog === false) return false;
+    return true;
+  });
+}
+
 export async function conversar(mensagens, aoTexto, opcoes = {}) {
+  const pedido = [...mensagens].reverse().find((item) => item?.role === "user")?.content ?? "";
+  if (!opcoes.relatorio && !opcoes.apresentacao) {
+    const direta = respostaImediata(pedido);
+    if (direta) return { role: "assistant", content: direta, uso: { entrada: 0, saida: 0, total: 0 } };
+  }
+  const temRetorno = mensagens.some((item) => item?.role === "tool");
+  const informativo = !opcoes.relatorio && !opcoes.apresentacao && !temRetorno && pedidoInformativo(pedido);
+  const nomes = FERRAMENTAS.map((item) => item.function.name);
+  const chaveLeve = chaveGemini(opcoes.chaves);
+  const provaveis = ferramentasProvaveis(pedido);
+  const filtro = temRetorno || informativo || provaveis.length || opcoes.apresentacao
+    ? { ferramentas: provaveis, termos: "" }
+    : await filtrarPedido(chaveLeve, pedido, nomes);
+  const base = temRetorno ? await enxugarRetornos(chaveLeve, pedido, mensagens) : mensagens;
+  const escolhidas = filtro.ferramentas.length ? ferramentasDoPedido(opcoes, filtro.ferramentas) : [];
+  const ferramentas = informativo ? [] : escolhidas.length ? escolhidas : ferramentasDoPedido(opcoes);
+  const roteando = !temRetorno && !opcoes.relatorio && !opcoes.apresentacao && ferramentas.length > 0;
+  const instrucoes = informativo
+    ? "Você é o Maicon, a IA da Conline. Responda a pergunta geral em português, com clareza e no máximo cinco frases. " +
+      "Não consulte o banco, não escreva SQL e não invente dados da empresa."
+    : roteando
+    ? "Você é o roteador do Maicon. Escolha e chame imediatamente a ferramenta que inicia a consulta. " +
+      "Não responda com dados, não explique e não invente. Se houver número de processo, comece localizando-o. " +
+      "Use somente as ferramentas disponíveis."
+    : sistema(
+      Boolean(opcoes.relatorio),
+      opcoes.papel !== "admin" && opcoes.acesso?.fazerLog === false,
+      opcoes.setor || "geral",
+      opcoes.modalidade || "",
+      textoAprendizado({
+        email: opcoes.email,
+        visao: opcoes.setor || "geral",
+        mensagens,
+      }) +
+        textoCarteira(opcoes) +
+        (opcoes.papel === "admin"
+          ? ""
+          : "\nSQL NO CHAT: é proibido escrever SELECT, bloco de código SQL ou o texto da consulta. " +
+            "Se pedirem a consulta ou o SQL, responda só que isso fica disponível para o administrador. Não mostre a consulta."),
+      Boolean(opcoes.apresentacao),
+      opcoes.apresentacao ? "" : textoConsultasRelevantes(`${pedido}\n${filtro.termos}`),
+    );
   const corpo = {
     modelo: modeloDaPergunta(),
-    temperature: 0.3,
-    num_predict: opcoes.completo ? 6000 : 2000,
-    tools: opcoes.apresentacao ? [] : FERRAMENTAS.filter((item) => {
-      const nome = item.function.name;
-      const acesso = opcoes.acesso ?? {};
-      const setor = opcoes.setor || "geral";
-      if (!ferramentaDaVisao(nome, setor)) return false;
-      if (opcoes.papel === "admin") return true;
-      if (nome === "executar_sql" && !acesso.fazerSql) return false;
-      if ((nome === "consultar_log" || nome === "resultado_atual" || nome === "o_que_mudou" || nome === "explicar_itens_carga" || nome === "explicar_campo_livre") && acesso.fazerLog === false) return false;
-      return true;
-    }),
+    temperature: roteando ? 0 : 0.3,
+    num_predict: roteando || informativo ? 300 : opcoes.completo ? 6000 : 900,
+    limiteTokens: roteando || informativo ? 300 : 900,
+    modelosGemini: roteando || informativo || opcoes.apresentacao ? MODELOS_LEVES : MODELOS_RESPOSTA,
+    tools: opcoes.apresentacao ? [] : ferramentas,
     messages: [
-      {
-        role: "system",
-        content: sistema(
-          Boolean(opcoes.relatorio),
-          opcoes.papel !== "admin" && opcoes.acesso?.fazerLog === false,
-          opcoes.setor || "geral",
-          opcoes.modalidade || "",
-          textoAprendizado({
-            email: opcoes.email,
-            visao: opcoes.setor || "geral",
-            mensagens,
-          }) +
-            textoCarteira(opcoes) +
-            (opcoes.papel === "admin"
-              ? ""
-              : "\nSQL NO CHAT: é proibido escrever SELECT, bloco de código SQL ou o texto da consulta. " +
-                "Se pedirem a consulta ou o SQL, responda só que isso fica disponível para o administrador. Não mostre a consulta."),
-          Boolean(opcoes.apresentacao),
-        ),
-      },
-      ...prepararMensagens(mensagens.map(({ uso: _uso, relatorio: _relatorio, log: _log, ...resto }) => resto)),
+      { role: "system", content: instrucoes },
+      ...prepararMensagens(base.map(({ uso: _uso, relatorio: _relatorio, log: _log, ...resto }) => resto)),
     ],
   };
-  const fila = filaDeChaves(opcoes.chaves);
+  console.warn(`[IA] rota ${roteando ? "leve" : informativo ? "informativa" : "resposta"}; instrucoes ${instrucoes.length} caracteres; ferramentas ${corpo.tools.length}.`);
+  const filaBase = filaDeChaves(opcoes.chaves);
+  const prioridadeLeve = { openrouter: 0, gemini: 1, ollama: 2 };
+  const fila = roteando || informativo
+    ? [...filaBase].sort((a, b) => prioridadeLeve[a.provedor] - prioridadeLeve[b.provedor])
+    : filaBase;
   const dados = await executarFilaComFallback(
     fila,
     async (item, { indice, total }) => {

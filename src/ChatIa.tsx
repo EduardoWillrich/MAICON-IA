@@ -2504,7 +2504,7 @@ export function ChatIa({
   const [visoesAbertas, setVisoesAbertas] = useState(false);
   const [telaLateral, setTelaLateral] = useState<"menu" | "conversas">("menu");
   const [chaves, setChaves] = useState<{ id: string; provedor: string; rotulo: string; final: string }[]>([]);
-  const [novaChave, setNovaChave] = useState({ provedor: "openrouter", rotulo: "", chave: "" });
+  const [novaChave, setNovaChave] = useState({ provedor: "gemini", rotulo: "", chave: "" });
   const [filtroContas, setFiltroContas] = useState("");
   const [contas, setContas] = useState<
     {
@@ -4274,10 +4274,9 @@ export function ChatIa({
                 }}
               >
                 <select value={novaChave.provedor} onChange={(e) => setNovaChave({ ...novaChave, provedor: e.target.value })}>
-                  <option value="openrouter">OpenRouter</option>
-                  <option value="groq">Groq</option>
                   <option value="gemini">Gemini</option>
-                  <option value="ollama">Ollama</option>
+                  <option value="openrouter">OpenRouter</option>
+                  <option value="ollama">Beam</option>
                 </select>
                 <input
                   value={novaChave.rotulo}

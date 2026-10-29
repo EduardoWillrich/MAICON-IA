@@ -14,7 +14,6 @@ const CHAVE_SESSAO = "consulta-log-sessao";
 function lerChave(chave: string) {
   const daAba = sessionStorage.getItem(chave);
   if (daAba) return daAba;
-  if (sessionStorage.getItem(CHAVE)) return "";
   return localStorage.getItem(chave) || "";
 }
 
