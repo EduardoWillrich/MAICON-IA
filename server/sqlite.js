@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { DatabaseSync } from "node:sqlite";
 
-const pasta = path.join(process.cwd(), "data");
+const pasta = path.resolve(process.env.MAICON_DATA_DIR || path.join(process.cwd(), "data"));
 fs.mkdirSync(pasta, { recursive: true });
 
 const abertas = new Map();

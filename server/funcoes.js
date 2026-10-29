@@ -56,6 +56,16 @@ const FUNCOES = new Set([
   "andamento_atividade",
 ]);
 
+function dataDoPeriodo(valor) {
+  const data = valor instanceof Date ? valor : new Date(valor);
+  if (Number.isNaN(data.getTime())) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  if (data.getUTCHours() === 0 && data.getUTCMinutes() === 0 && data.getUTCSeconds() === 0) {
+    return `${p(data.getUTCDate())}/${p(data.getUTCMonth() + 1)}/${data.getUTCFullYear()}`;
+  }
+  return `${p(data.getDate())}/${p(data.getMonth() + 1)}/${data.getFullYear()}`;
+}
+
 function dataCurta(valor) {
   if (valor == null || valor === "") return "";
   const data = valor instanceof Date ? valor : new Date(valor);
@@ -359,13 +369,15 @@ async function acompanhamentosProcesso(pool, args) {
 async function pendencias(pool, args, ctx) {
   const pessoa = await pessoaDaConta(pool, ctx.email, ctx.nome);
   if (!pessoa) return "Não localizei seu cadastro de pessoa para listar as pendências.";
-  const escopo = ["hoje", "atrasadas", "semana"].includes(args.escopo) ? args.escopo : "semana";
+  const escopo = ["hoje", "atrasadas", "semana", "abertas"].includes(args.escopo) ? args.escopo : "semana";
   const filtro =
     escopo === "hoje"
       ? "CAST(Ati.Previsao_Termino AS date) = CAST(GETDATE() AS date)"
       : escopo === "atrasadas"
         ? "CAST(Ati.Previsao_Termino AS date) < CAST(GETDATE() AS date)"
-        : "CAST(Ati.Previsao_Termino AS date) >= CAST(GETDATE() AS date) AND CAST(Ati.Previsao_Termino AS date) < DATEADD(day, 8, CAST(GETDATE() AS date))";
+        : escopo === "abertas"
+          ? "CAST(Ati.Previsao_Termino AS date) < DATEADD(day, 8, CAST(GETDATE() AS date))"
+          : "CAST(Ati.Previsao_Termino AS date) >= CAST(GETDATE() AS date) AND CAST(Ati.Previsao_Termino AS date) < DATEADD(day, 8, CAST(GETDATE() AS date))";
   const r = await pool.request().input("id", sql.Int, pessoa.IdPessoa).query(`
     SELECT TOP 30
       Tar.Descricao AS Atividade,
@@ -380,7 +392,14 @@ async function pendencias(pool, args, ctx) {
       AND Ati.Previsao_Termino IS NOT NULL
       AND ${filtro}
     ORDER BY Ati.Previsao_Termino`);
-  const titulo = escopo === "hoje" ? "Pendências de hoje" : escopo === "atrasadas" ? "Pendências atrasadas" : "Pendências dos próximos 7 dias";
+  const titulo =
+    escopo === "hoje"
+      ? "Pendências de hoje"
+      : escopo === "atrasadas"
+        ? "Pendências atrasadas"
+        : escopo === "abertas"
+          ? "Pendências atrasadas, de hoje e da semana"
+          : "Pendências dos próximos 7 dias";
   const linhas = r.recordset.map(
     (linha) =>
       `${dataCurta(linha.Previsao_Termino)} · ${String(linha.Numero_Processo ?? "sem processo").trim()} · ${String(linha.Atividade ?? "Atividade").trim()}`,
@@ -500,7 +519,7 @@ async function comissaoPeriodo(pool, args, recorte, ctx) {
     (linha) =>
       `${linha.Numero_Processo} · ${String(linha.Cliente ?? "").trim()} · ${String(linha.Comissionado ?? "comissionado").trim()} · ${dinheiro(linha.Valor_Comissao) || "R$ 0,00"}`,
   );
-  return `Comissões de processos abertos entre ${dataCurta(inicio)} e ${dataCurta(fim)}\n${lista(linhas, "Nenhuma comissão nesse período.")}${linhas.length === 20 ? "\n\nMostrei 20 registros." : ""}`;
+  return `Comissões de processos abertos entre ${dataDoPeriodo(inicio)} e ${dataDoPeriodo(fim)}\n${lista(linhas, "Nenhuma comissão nesse período.")}${linhas.length === 20 ? "\n\nMostrei 20 registros." : ""}`;
 }
 
 async function idDaCarteira(pool, recorte, ctx) {
@@ -510,9 +529,71 @@ async function idDaCarteira(pool, recorte, ctx) {
   return pessoa ? Number(pessoa.IdPessoa) || 0 : 0;
 }
 
+async function resumoCarteira(pool, foco, recorte, ctx) {
+  const visao = String(recorte?.visao ?? "");
+  const admin = ctx?.acesso?.papel === "admin" || ["tudo", "gerencia", "admin"].includes(visao);
+  const carteira = await idDaCarteira(pool, recorte, ctx);
+  if (carteira === 0) return "Não localizei seu cadastro para filtrar a carteira.";
+  if (!carteira && !admin && !["comercial", "inside"].includes(visao)) return "A carteira de clientes aparece no comercial.";
+  const filtro = carteira ? "AND Lhs.IdVendedor = @id" : "";
+  const real = "Lhs.Data_Cancelamento IS NULL AND Lhs.Numero_Processo NOT LIKE '%TESTE%' AND Lhs.Numero_Processo NOT LIKE 'DEMU%'";
+  const aberto = `${real} AND Lhs.Data_Fechamento_Processo IS NULL AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))`;
+  const pedido = pool.request();
+  if (carteira) pedido.input("id", sql.Int, carteira);
+  const titulo =
+    foco === "sem_proposta"
+      ? "Clientes com processo aberto sem proposta"
+      : foco === "sem_movimento"
+        ? "Clientes sem abrir processo há 90 dias ou mais"
+        : "Clientes com mais processos abertos";
+  const comando =
+    foco === "sem_movimento"
+      ? `
+    SELECT TOP 20 Nome, Dias AS Qtd
+    FROM (
+      SELECT LTRIM(RTRIM(Cli.Nome)) AS Nome,
+        DATEDIFF(day, MAX(Lhs.Data_Abertura_Processo), CAST(GETDATE() AS date)) AS Dias
+      FROM mov_Logistica_House Lhs
+      JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
+      WHERE ${real} ${filtro}
+      GROUP BY LTRIM(RTRIM(Cli.Nome))
+      HAVING MAX(Lhs.Data_Abertura_Processo) < DATEADD(day, -90, CAST(GETDATE() AS date))
+    ) C
+    WHERE Nome <> ''
+    ORDER BY Dias DESC, Nome`
+      : `
+    SELECT TOP 20 Nome, Qtd
+    FROM (
+      SELECT LTRIM(RTRIM(Cli.Nome)) AS Nome, COUNT(*) AS Qtd
+      FROM mov_Logistica_House Lhs
+      JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
+      WHERE ${aberto} ${foco === "sem_proposta" ? "AND Lhs.IdOferta_Frete IS NULL" : ""} ${filtro}
+      GROUP BY LTRIM(RTRIM(Cli.Nome))
+    ) C
+    WHERE Nome <> ''
+    ORDER BY Qtd DESC, Nome`;
+  const r = await pedido.query(comando);
+  const linhas = r.recordset.map((linha) => {
+    const nome = String(linha.Nome ?? "").trim();
+    const qtd = Number(linha.Qtd) || 0;
+    if (foco === "sem_movimento") return `${nome} · ${qtd} dias sem abrir`;
+    return `${nome} · ${qtd} ${foco === "sem_proposta" ? "sem proposta" : "abertos"}`;
+  });
+  return consultaPronta(`${titulo}\n${lista(linhas, "Nenhum cliente nesse recorte.")}`, comando, r.recordset, carteira ? { id: carteira } : {});
+}
+
 async function processosAbertosCliente(pool, args, recorte, ctx) {
+  const foco = String(args.foco ?? "");
+  if (foco === "abertos" || foco === "sem_proposta" || foco === "sem_movimento") {
+    return resumoCarteira(pool, foco, recorte, ctx);
+  }
   const termo = termoSeguro(args.cliente || args.termo);
   if (termo.length < 2) throw new Error("Informe o nome do cliente.");
+  const termoLivre = termo
+    .replace(/\b(s\s*\/\s*a|s\.a\.?|ltda\.?|eireli|epp)\b/gi, " ")
+    .replace(/[./]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   const carteira = await idDaCarteira(pool, recorte, ctx);
   if (carteira === 0) return "Não localizei seu cadastro para filtrar a carteira.";
   const filtro = carteira ? "AND Lhs.IdVendedor = @id" : "";
@@ -550,7 +631,26 @@ async function processosAbertosCliente(pool, args, recorte, ctx) {
       ORDER BY Lhs.Data_Abertura_Processo DESC`);
     nome = String(achado.recordset[0]?.Nome ?? "").trim();
   }
+  if (!nome && termoLivre && termoLivre.toLowerCase() !== termo.toLowerCase()) {
+    const amplo = await pedido().input("t", sql.NVarChar(80), `%${termoLivre}%`).query(`
+      SELECT TOP 1 LTRIM(RTRIM(Cli.Nome)) AS Nome
+      FROM mov_Logistica_House Lhs
+      JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
+      WHERE Cli.Nome LIKE @t AND ${real} ${filtro} ${modal}
+      ORDER BY Lhs.Data_Abertura_Processo DESC`);
+    nome = String(amplo.recordset[0]?.Nome ?? "").trim();
+  }
   if (!nome) return `Nenhum cliente encontrado para "${termo}".`;
+  if (!abertos) {
+    const contagem = await pedido().input("nome", sql.NVarChar(200), nome).query(`
+      SELECT COUNT(*) AS Abertos,
+        SUM(CASE WHEN Lhs.IdOferta_Frete IS NULL THEN 1 ELSE 0 END) AS SemProposta
+      FROM mov_Logistica_House Lhs
+      JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
+      WHERE LTRIM(RTRIM(Cli.Nome)) = @nome AND ${aberto} ${filtro} ${modal}`);
+    abertos = Number(contagem.recordset[0]?.Abertos) || 0;
+    semProposta = Number(contagem.recordset[0]?.SemProposta) || 0;
+  }
 
   const comando = `
     SELECT TOP 30
@@ -621,9 +721,56 @@ async function processosAbertosCliente(pool, args, recorte, ctx) {
   return consultaPronta(texto, comando, abertosLista.recordset, { nome, ...(carteira ? { id: carteira } : {}) });
 }
 
+function marcosDoPrazo(args) {
+  const bruto = String(args.marco ?? "").toLowerCase().split(",").map((item) => item.trim());
+  const lista = ["embarque", "desembarque", "entrega"].filter((item) => bruto.includes(item));
+  return lista.length ? lista : ["embarque", "desembarque", "entrega"];
+}
+
+function modoDoPrazo(args) {
+  const modo = String(args.modo ?? "").toLowerCase();
+  if (modo === "realizado" || modo === "realizados") return "realizado";
+  if (modo === "hoje") return "hoje";
+  return "janela";
+}
+
+function filtroModalidadePedido(args, recorte) {
+  const doRecorte = filtroModalidadeSql(recorte);
+  if (doRecorte) return doRecorte;
+  const modalidade = String(args.modalidade ?? "").toUpperCase();
+  if (!["IA", "EA", "IM", "EM"].includes(modalidade)) return "";
+  return `AND Lhs.Numero_Processo LIKE '${modalidade}%'`;
+}
+
+function condicaoDoPrazo(marco, modo, dias) {
+  const colunas = {
+    embarque: ["Lms.Data_Embarque", "Lms.Data_Previsao_Embarque"],
+    desembarque: ["Lms.Data_Desembarque", "Lms.Data_Previsao_Desembarque"],
+    entrega: ["Lhs.Data_Entrega", "Lhs.Data_Previsao_Entrega"],
+  };
+  const [real, previsto] = colunas[marco];
+  if (modo === "realizado") {
+    if (dias <= 1) return `CAST(${real} AS date) = CAST(GETDATE() AS date)`;
+    return `CAST(${real} AS date) BETWEEN DATEADD(day, 1 - ${dias}, CAST(GETDATE() AS date)) AND CAST(GETDATE() AS date)`;
+  }
+  if (modo === "hoje") return `CAST(COALESCE(${real}, ${previsto}) AS date) = CAST(GETDATE() AS date)`;
+  return `(${real} IS NULL AND ${previsto} IS NOT NULL AND ${previsto} < DATEADD(day, @dias, CAST(GETDATE() AS date)))`;
+}
+
 async function prazos(pool, args, recorte) {
-  if (recorte?.semOperacional) return "Prazos de embarque, desembarque e entrega são informação do operacional.";
   const dias = diasDe(args.dias, 7);
+  const modo = modoDoPrazo(args);
+  const marcos = marcosDoPrazo(args);
+  const condicoes = marcos.map((marco) => condicaoDoPrazo(marco, modo, dias)).join("\n        OR ");
+  const recorteAberto =
+    modo === "janela"
+      ? `Lhs.Data_Fechamento_Processo IS NULL
+      AND Lhs.Data_Cancelamento IS NULL
+      AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))`
+      : `Lhs.Data_Cancelamento IS NULL
+      AND Lhs.Numero_Processo NOT LIKE '%TESTE%'
+      AND Lhs.Numero_Processo NOT LIKE 'DEMU%'
+      AND Lhs.Data_Abertura_Processo >= DATEADD(month, -18, CAST(GETDATE() AS date))`;
   const comando = `
     SELECT TOP 200
       Lhs.Numero_Processo,
@@ -637,14 +784,10 @@ async function prazos(pool, args, recorte) {
     FROM mov_Logistica_House Lhs
     LEFT JOIN mov_Logistica_Master Lms ON Lms.IdLogistica_Master = Lhs.IdLogistica_Master
     LEFT JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
-    WHERE Lhs.Data_Fechamento_Processo IS NULL
-      AND Lhs.Data_Cancelamento IS NULL
-      AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))
-      ${filtroModalidadeSql(recorte)}
+    WHERE ${recorteAberto}
+      ${filtroModalidadePedido(args, recorte)}
       AND (
-        (Lms.Data_Embarque IS NULL AND Lms.Data_Previsao_Embarque IS NOT NULL AND Lms.Data_Previsao_Embarque < DATEADD(day, @dias, CAST(GETDATE() AS date)))
-        OR (Lms.Data_Desembarque IS NULL AND Lms.Data_Previsao_Desembarque IS NOT NULL AND Lms.Data_Previsao_Desembarque < DATEADD(day, @dias, CAST(GETDATE() AS date)))
-        OR (Lhs.Data_Entrega IS NULL AND Lhs.Data_Previsao_Entrega IS NOT NULL AND Lhs.Data_Previsao_Entrega < DATEADD(day, @dias, CAST(GETDATE() AS date)))
+        ${condicoes}
       )
     ORDER BY ABS(DATEDIFF(day, CAST(GETDATE() AS date), COALESCE(Lms.Data_Previsao_Embarque, Lms.Data_Previsao_Desembarque, Lhs.Data_Previsao_Entrega)))`;
   const r = await pool.request().input("dias", sql.Int, dias).query(comando);
@@ -662,12 +805,17 @@ async function prazos(pool, args, recorte) {
     return `${linha.Numero_Processo} · ${String(linha.Cliente ?? "").trim()} · ${marcas.join(", ")}`;
   });
   const aviso = r.recordset.length === 200 ? "\n\nA lista foi limitada a 200 processos." : "";
-  return consultaPronta(
-    `Prazos vencidos ou nos próximos ${dias} dias (processos dos últimos 6 meses)\n${lista(linhas, "Nenhum prazo nesse recorte.")}${aviso}`,
-    comando,
-    r.recordset,
-    { dias },
-  );
+  const assunto = marcos.join(", ");
+  const titulo =
+    modo === "realizado"
+      ? dias <= 1
+        ? `Processos com ${assunto} realizado hoje`
+        : `Processos com ${assunto} realizado nos últimos ${dias} dias`
+      : modo === "hoje"
+        ? `Processos com ${assunto} hoje`
+        : `Prazos vencidos ou nos próximos ${dias} dias (processos dos últimos 6 meses)`;
+  const vazio = modo === "janela" ? "Nenhum prazo nesse recorte." : "Nenhum processo nesse recorte.";
+  return consultaPronta(`${titulo}\n${lista(linhas, vazio)}${aviso}`, comando, r.recordset, { dias });
 }
 
 async function processosParados(pool, args, recorte) {
@@ -830,9 +978,9 @@ async function documentalCe(pool, args) {
       return `- **${linha.Numero_Processo}**\n${detalhes.map((item) => `  - ${item}`).join("\n")}`;
     });
     const amostra = cartoes.slice(0, 8);
-    const resto = cartoes.length - amostra.length;
-    const texto = `#### ${titulo}\n\n${amostra.length ? amostra.join("\n") : "Nenhuma atividade nesse recorte."}${resto > 0 ? `\n\nMais ${resto} na lista completa, em Ver tudo no chat.` : ""}`;
-    const linhas = r.recordset.map((linha) => ({
+    const total = cartoes.length;
+    const texto = `#### ${titulo}\n\n${amostra.length ? amostra.join("\n") : "Nenhuma atividade nesse recorte."}${total > 8 ? `\n\nMostrei 8 de ${total}. A lista do chat traz até 200.` : ""}`;
+    const linhas = r.recordset.slice(0, 200).map((linha) => ({
       Processo: linha.Numero_Processo,
       Cliente: String(linha.Cliente ?? "").trim(),
       Atividade: String(linha.Atividade ?? "").trim(),
@@ -1032,9 +1180,9 @@ async function atividadesPendentes(pool, args, recorte) {
     return `- **${linha.Numero_Processo}**\n${detalhes.map((item) => `  - ${item}`).join("\n")}`;
   });
   const amostra = cartoes.slice(0, 8);
-  const resto = cartoes.length - amostra.length;
-  const texto = `#### ${titulo}\n\n${amostra.length ? amostra.join("\n") : "Nenhuma atividade pendente em 2026."}${resto > 0 ? `\n\nMais ${resto} na lista completa, em Ver tudo no chat.` : ""}`;
-  const linhas = r.recordset.map((linha) => ({
+  const total = cartoes.length;
+  const texto = `#### ${titulo}\n\n${amostra.length ? amostra.join("\n") : "Nenhuma atividade pendente em 2026."}${total > 8 ? `\n\nMostrei 8 de ${total}. A lista do chat traz até 200.` : ""}`;
+  const linhas = r.recordset.slice(0, 200).map((linha) => ({
     Processo: linha.Numero_Processo,
     Cliente: String(linha.Cliente ?? "").trim(),
     Papel: String(linha.Papel ?? "").trim(),
@@ -1731,7 +1879,7 @@ async function taxasProcesso(pool, args) {
   );
 }
 
-async function painelFinanceiro(pool) {
+async function painelFinanceiro(pool, args = {}) {
   const sqlComissao = `
     SELECT
       SUM(Com.Valor_Comissao) AS Comissao,
@@ -1771,6 +1919,9 @@ async function painelFinanceiro(pool) {
     (linha) =>
       `${String(linha.Taxa ?? "Taxa").trim()} · pagamento ${dinheiro(linha.Pagamento) || "R$ 0,00"} · recebimento ${dinheiro(linha.Recebimento) || "R$ 0,00"}`,
   );
+  if (args?.foco === "taxas") {
+    return consultaPronta(`Taxas deste mês\n${lista(listaTaxas, "Nenhuma taxa neste mês.")}`, sqlTaxas, taxas.recordset, {});
+  }
   const texto = [
     "Painel financeiro deste mês",
     `- Comissões: ${dinheiro(cabeca.Comissao) || "R$ 0,00"} em ${Number(cabeca.Qtd_Comissao) || 0} lançamentos`,
@@ -2332,16 +2483,18 @@ export function ferramentaDaVisao(nome, setor) {
       "executar_sql",
       "consultar_dados",
       "localizar_processo",
+      "processos_abertos_cliente",
       "buscar_tabelas",
       "listar_colunas",
     ].includes(nome);
   }
   if (nome === "painel_ti" || nome === "log_recente" || nome === "monitoramentos_alterados") return setor === "ti";
   if (setor === "ti") {
-    return !["fila_setor", "prazos", "proposta_processo", "comissao_periodo", "processos_parados", "pendencias", "documental_ce", "atividades_pendentes", "divergencias_viagem"].includes(nome);
+    return !["fila_setor", "proposta_processo", "comissao_periodo", "processos_parados", "documental_ce", "atividades_pendentes", "divergencias_viagem"].includes(nome);
   }
   if (nome === "fila_setor") return setor === "admin";
-  if (nome === "prazos" || nome === "divergencias_viagem") return setor === "operacional" || setor === "admin" || setor === "financeiro";
+  if (nome === "prazos") return true;
+  if (nome === "divergencias_viagem") return setor === "operacional" || setor === "admin" || setor === "financeiro";
   if (nome === "documental_ce") return setor === "documental" || setor === "admin";
   if (nome === "atividades_pendentes") return ["operacional", "inside", "comercial", "admin"].includes(setor);
   if (nome === "proposta_processo" || nome === "comissao_periodo") return setor !== "operacional" && setor !== "documental";
@@ -2449,7 +2602,7 @@ export async function executarFuncao(pool, nome, args, ctx) {
   if (nome === "painel_ti") return embalagem(await painelTi(pool, dados, ctx));
   if (nome === "log_recente") return embalagem(await logRecente(pool, dados, ctx));
   if (nome === "monitoramentos_alterados") return embalagem(await monitoramentosAlterados(pool, dados, ctx));
-  if (nome === "painel_financeiro") return embalagem(await painelFinanceiro(pool));
+  if (nome === "painel_financeiro") return embalagem(await painelFinanceiro(pool, dados));
   if (nome === "taxas_processo") return embalagem(await taxasProcesso(pool, dados));
   if (nome === "explicar_itens_carga") return embalagem(await explicarItensCarga(pool, dados));
   if (nome === "explicar_campo_livre") return embalagem(await explicarCampoLivre(pool, dados));

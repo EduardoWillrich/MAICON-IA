@@ -1,9 +1,7 @@
-const PROVEDORES = ["gemini", "openrouter", "ollama"];
+const PROVEDORES = ["openrouter"];
 
 const AMBIENTE_POR_PROVEDOR = {
-  gemini: "GEMINI_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
-  ollama: "OLLAMA_API_KEY",
 };
 
 const MENSAGEM_INDISPONIVEL = "A IA não respondeu agora. Tente novamente em instantes.";
@@ -36,7 +34,7 @@ export function filaDeChaves(chavesPessoais, ambiente = process.env) {
     acrescentarChave(fila, vistos, {
       provedor,
       chave: ambiente[AMBIENTE_POR_PROVEDOR[provedor]],
-      extra: provedor === "ollama" ? ambiente.OLLAMA_URL : "",
+      extra: "",
     });
   }
 

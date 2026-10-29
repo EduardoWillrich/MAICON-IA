@@ -1,11 +1,6 @@
-const MODELOS = [
-  "nvidia/nemotron-3.5-lightning:free",
-  "nvidia/nemotron-3-ultra-550b-a55b:free",
-  "google/gemma-4-31b-it:free",
-  "qwen/qwen3.8-27b",
-];
+const MODELO = "deepseek/deepseek-v4.1-flash-1017";
 
 export function modelosOpenRouter(preferido = process.env.OPENROUTER_MODEL) {
-  const principal = String(preferido ?? "").trim();
-  return [...new Set([principal, ...MODELOS].filter(Boolean))];
+  const principal = String(preferido ?? "").trim() || MODELO;
+  return [principal];
 }

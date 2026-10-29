@@ -39,10 +39,85 @@ export function respostaImediata(texto) {
   return "";
 }
 
+const PROCESSO = /(?:^|\s)(?:IM|IA|EA|EM)\d{2,6}-\d{2}\b/i;
+
+function modalidadeCitada(texto) {
+  return String(texto ?? "").toUpperCase().match(/\b(IA|EA|IM|EM)\b/)?.[1] ?? "";
+}
+
+function argsPrazos(texto) {
+  const pedido = String(texto ?? "");
+  const hoje = /\bhoje\b/i.test(pedido);
+  const dias = hoje ? 1 : Number(pedido.match(/\b(\d{1,2})\s+dias?\b/i)?.[1]) || 7;
+  const marcos = ["embarque", "desembarque", "entrega"].filter((item) => {
+    if (item === "embarque") return /(?<!des)embar[qc]/i.test(pedido);
+    if (item === "desembarque") return /desembar[qc]/i.test(pedido);
+    return /entrega/i.test(pedido);
+  });
+  const realizado = /desembarcaram|entregaram|(?<!des)embarcaram|j[aá]\s+desembar[qc]/i.test(pedido);
+  const modo = realizado ? "realizado" : hoje && marcos.length === 1 ? "hoje" : "janela";
+  const args = { dias };
+  if (marcos.length && marcos.length < 3) args.marco = marcos.join(",");
+  if (modo !== "janela") args.modo = modo;
+  const modalidade = modalidadeCitada(pedido);
+  if (modalidade) args.modalidade = modalidade;
+  return args;
+}
+
+function argsPendencias(texto) {
+  const pedido = String(texto ?? "");
+  const atrasadas = /atras/i.test(pedido);
+  const semana = /semana|pr[oó]xim|\b7\s+dias\b/i.test(pedido);
+  const hoje = /\bhoje\b/i.test(pedido);
+  if ((atrasadas && (semana || hoje)) || (hoje && semana)) return { escopo: "abertas" };
+  if (hoje) return { escopo: "hoje" };
+  if (semana) return { escopo: "semana" };
+  if (atrasadas) return { escopo: "atrasadas" };
+  return { escopo: "semana" };
+}
+
+function argsDocumental(texto) {
+  const pedido = String(texto ?? "");
+  const temCe = /documental\s+ce|\bce\b/i.test(pedido);
+  const temIm = /documental\s+im|\bim\b/i.test(pedido);
+  const caso = temCe && temIm ? "ambos" : temIm ? "im" : "ce";
+  const numero = pedido.match(PROCESSO)?.[0]?.trim().toUpperCase() ?? "";
+  let foco = "fila";
+  if (/campo livre/i.test(pedido)) foco = "campos";
+  else if (numero && /no processo|neste processo|do processo/i.test(pedido)) foco = "processo";
+  else if (/liberad/i.test(pedido)) foco = "sem_liberacao";
+  else if (/falta|pendent/i.test(pedido)) foco = "pendencias";
+  return { foco, caso, ...(numero ? { numero } : {}) };
+}
+
+function setorDaPergunta(texto) {
+  const pedido = String(texto ?? "");
+  if (/inside/i.test(pedido)) return "inside";
+  if (/comercial/i.test(pedido)) return "comercial";
+  return "operacional";
+}
+
 export function ferramentasProvaveis(texto) {
   const pedido = String(texto ?? "");
   const base = ["localizar_processo"];
-  if (/desembarc|embarque|entrega|prazos?/i.test(pedido)) return ["prazos"];
+  if (/diverg|muito diferente da previs|diferente da previs/i.test(pedido)) return ["divergencias_viagem"];
+  if (/fila dos setores/i.test(pedido)) return ["fila_setor"];
+  if (/parad/i.test(pedido) && /processo|acompanh/i.test(pedido)) return ["processos_parados"];
+  if (/documental/i.test(pedido) && /atividade|fila|pend[eê]ncia|liberad|campo livre/i.test(pedido)) return ["documental_ce"];
+  if (/atividad|pend[eê]ncia/i.test(pedido) && /\b(?:do|da|de)\s+(?:operacional|comercial|inside)\b/i.test(pedido)) return ["atividades_pendentes"];
+  if (/(?:\bminha|\bminhas|\bmeu|\bmeus)\b/i.test(pedido) && /atividad|pend[eê]ncia/i.test(pedido)) return ["pendencias"];
+  if (/atividad/i.test(pedido) && /atras/i.test(pedido)) return ["pendencias"];
+  if (/^ficha do cliente\b/i.test(pedido)) return ["processos_abertos_cliente"];
+  if (/quais clientes t[eê]m mais processos abertos/i.test(pedido)) return ["processos_abertos_cliente"];
+  if (/quais clientes t[eê]m processo aberto sem proposta/i.test(pedido)) return ["processos_abertos_cliente"];
+  if (/quais clientes j[aá] abriram processo e n[aã]o abrem/i.test(pedido)) return ["processos_abertos_cliente"];
+  if (/desembar[qc]|(?<!des)embar[qc]|entrega|\bprazos?\b/i.test(pedido) && !PROCESSO.test(pedido)) return ["prazos"];
+  if (/\btaxas?\b/i.test(pedido) && /m[eê]s/i.test(pedido) && !PROCESSO.test(pedido)) return ["painel_financeiro"];
+  if (/painel financeiro/i.test(pedido)) return ["painel_financeiro"];
+  if (/comiss/i.test(pedido) && !PROCESSO.test(pedido)) return ["comissao_periodo"];
+  if (/painel do ti|quem mais gravou log/i.test(pedido)) return ["painel_ti"];
+  if (/exclus|log das [uú]ltimas|log recente/i.test(pedido)) return ["log_recente"];
+  if (/monitorament/i.test(pedido)) return ["monitoramentos_alterados"];
   if (/\btaxas?\b/i.test(pedido)) return [...base, "taxas_processo"];
   if (/rota|navio|rastre/i.test(pedido)) return [...base, "rota_processo"];
   if (/acompanhament/i.test(pedido)) return [...base, "acompanhamentos_processo"];
@@ -62,11 +137,33 @@ export function ferramentasProvaveis(texto) {
 export function chamadaDireta(texto) {
   const ferramentas = ferramentasProvaveis(texto);
   if (ferramentas.length !== 1) return null;
-  if (ferramentas[0] === "prazos") {
-    const dias = /\bhoje\b/i.test(String(texto ?? ""))
-      ? 1
-      : Number(String(texto ?? "").match(/\b(\d{1,2})\s+dias?\b/i)?.[1]) || 7;
-    return { nome: "prazos", args: { dias } };
+  const nome = ferramentas[0];
+  const pedido = String(texto ?? "");
+  if (nome === "prazos") return { nome, args: argsPrazos(pedido) };
+  if (nome === "pendencias") return { nome, args: argsPendencias(pedido) };
+  if (nome === "atividades_pendentes") return { nome, args: { setor: setorDaPergunta(pedido) } };
+  if (nome === "documental_ce") return { nome, args: argsDocumental(pedido) };
+  if (nome === "processos_parados") {
+    return { nome, args: { dias: Number(pedido.match(/\b(\d{1,2})\s+dias?\b/i)?.[1]) || 7 } };
+  }
+  if (nome === "divergencias_viagem") return { nome, args: { dias: 15 } };
+  if (nome === "fila_setor") return { nome, args: {} };
+  if (nome === "comissao_periodo") return { nome, args: {} };
+  if (nome === "painel_financeiro") {
+    return { nome, args: /\btaxas?\b/i.test(pedido) && !/painel/i.test(pedido) ? { foco: "taxas" } : {} };
+  }
+  if (nome === "painel_ti") return { nome, args: { horas: Number(pedido.match(/\b(\d{1,3})\s+horas?\b/i)?.[1]) || 24 } };
+  if (nome === "log_recente") {
+    const horas = Number(pedido.match(/\b(\d{1,3})\s+horas?\b/i)?.[1]) || 24;
+    return { nome, args: /exclus/i.test(pedido) ? { horas, tipo: 2 } : { horas } };
+  }
+  if (nome === "monitoramentos_alterados") return { nome, args: { dias: 7 } };
+  if (nome === "processos_abertos_cliente") {
+    const ficha = pedido.match(/ficha do cliente\s+(.+?)(?::|$)/i)?.[1]?.trim();
+    if (ficha && !/qual cliente/i.test(pedido)) return { nome, args: { cliente: ficha.replace(/\.$/, "") } };
+    if (/sem proposta/i.test(pedido)) return { nome, args: { foco: "sem_proposta" } };
+    if (/n[aã]o abrem|90 dias/i.test(pedido)) return { nome, args: { foco: "sem_movimento" } };
+    if (/mais processos abertos/i.test(pedido)) return { nome, args: { foco: "abertos" } };
   }
   return null;
 }
@@ -104,12 +201,15 @@ export function respostaDeFerramentaPronta(mensagens) {
     .flatMap((item) => item.tool_calls ?? [])
     .find((item) => item.id === ultima.tool_call_id);
   if (!chamada || !TEXTOS_PRONTOS.has(chamada.function?.name)) return "";
+  const bruto = String(ultima.content ?? "").trim();
   try {
-    const dados = JSON.parse(String(ultima.content ?? ""));
-    return typeof dados?.texto === "string" ? dados.texto.trim() : "";
+    const dados = JSON.parse(bruto);
+    if (typeof dados?.texto === "string" && dados.texto.trim()) return dados.texto.trim();
   } catch {
-    return "";
+    /* o chat já enviou o texto pronto, sem o JSON */
   }
+  if (bruto && !bruto.startsWith("{") && !bruto.startsWith("Erro:")) return bruto;
+  return "";
 }
 
 export function lerFiltro(texto, ferramentasValidas) {

@@ -15,7 +15,20 @@ const FIXAS: Record<string, Receita[]> = {
   "qual a comissão de vendedor neste mês, com os valores?": [{ nome: "comissao_periodo", args: {} }],
   "qual a comissão de vendedor neste mês?": [{ nome: "comissao_periodo", args: {} }],
   "qual a comissão neste mês?": [{ nome: "comissao_periodo", args: {} }],
-  "quais são minhas pendências atrasadas e as dos próximos 7 dias?": [{ nome: "pendencias", args: { escopo: "semana" } }],
+  "quais são minhas pendências atrasadas e as dos próximos 7 dias?": [{ nome: "pendencias", args: { escopo: "abertas" } }],
+  "quais são minhas pendências atrasadas, de hoje e da semana?": [{ nome: "pendencias", args: { escopo: "abertas" } }],
+  "quais atividades minhas estão atrasadas?": [{ nome: "pendencias", args: { escopo: "atrasadas" } }],
+  "quais processos desembarcaram hoje?": [{ nome: "prazos", args: { dias: 1, marco: "desembarque", modo: "realizado" } }],
+  "quais processos desembarcam hoje?": [{ nome: "prazos", args: { dias: 1, marco: "desembarque", modo: "hoje" } }],
+  "quais processos embarcaram ou desembarcaram hoje?": [
+    { nome: "prazos", args: { dias: 1, marco: "embarque,desembarque", modo: "realizado" } },
+  ],
+  "quais as taxas deste mês, com nome, pagamento e recebimento?": [{ nome: "painel_financeiro", args: { foco: "taxas" } }],
+  "quais exclusões aconteceram nas últimas 24 horas? diga usuário, tabela e horário.": [{ nome: "log_recente", args: { horas: 24, tipo: 2 } }],
+  "monte o painel do ti das últimas 24 horas, com as tabelas mais alteradas.": [{ nome: "painel_ti", args: { horas: 24 } }],
+  "quais clientes têm mais processos abertos?": [{ nome: "processos_abertos_cliente", args: { foco: "abertos" } }],
+  "quais clientes têm processo aberto sem proposta?": [{ nome: "processos_abertos_cliente", args: { foco: "sem_proposta" } }],
+  "quais clientes já abriram processo e não abrem há 90 dias?": [{ nome: "processos_abertos_cliente", args: { foco: "sem_movimento" } }],
   "quais prazos de embarque, desembarque e entrega vencem nos próximos 7 dias?": [{ nome: "prazos", args: { dias: 7 } }],
   "quais processos estão parados há 7 dias sem acompanhamento?": [{ nome: "processos_parados", args: { dias: 7 } }],
   "quais processos de 2026 têm o desembarque real muito diferente da previsão?": [
@@ -46,6 +59,22 @@ const FIXAS: Record<string, Receita[]> = {
 };
 
 const VARIAVEIS: { re: RegExp; montar: (m: RegExpMatchArray) => Receita[] }[] = [
+  {
+    re: /^quais processos (ia|ea|im|em) (embarcaram|desembarcaram) hoje\??$/i,
+    montar: (m) => [{
+      nome: "prazos",
+      args: {
+        dias: 1,
+        marco: m[2].toLowerCase().startsWith("des") ? "desembarque" : "embarque",
+        modo: "realizado",
+        modalidade: m[1].toUpperCase(),
+      },
+    }],
+  },
+  {
+    re: /^ficha do cliente (.+?):/i,
+    montar: (m) => [{ nome: "processos_abertos_cliente", args: { cliente: m[1].trim() } }],
+  },
   {
     re: /^qual o andamento da atividade (.+?) no processo (.+?)\?$/i,
     montar: (m) => [{ nome: "andamento_atividade", args: { codigo: m[1].trim(), numero: m[2].trim().toUpperCase() } }],

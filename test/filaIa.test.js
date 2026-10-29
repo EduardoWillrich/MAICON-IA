@@ -7,21 +7,26 @@ import {
 } from "../server/filaIa.js";
 
 const ambienteCompleto = {
-  GEMINI_API_KEY: "teste-gemini",
   OPENROUTER_API_KEY: "teste-openrouter",
+  GEMINI_API_KEY: "teste-gemini",
   OLLAMA_API_KEY: "teste-ollama",
-  OLLAMA_URL: "https://ollama.invalid",
 };
 
-test("usuário sem chave própria usa Gemini, OpenRouter e Beam", () => {
-  const fila = filaDeChaves([], ambienteCompleto);
-  assert.deepEqual(fila.map((item) => item.provedor), ["gemini", "openrouter", "ollama"]);
+test("a fila usa somente o OpenRouter", () => {
+  const fila = filaDeChaves(
+    [
+      { provedor: "gemini", chave: "teste-gemini" },
+      { provedor: "ollama", chave: "teste-ollama" },
+    ],
+    ambienteCompleto,
+  );
+  assert.deepEqual(fila.map((item) => item.provedor), ["openrouter"]);
 });
 
 test("chaves vazias não entram na fila", () => {
   const fila = filaDeChaves(
-    [{ provedor: "gemini", chave: "  " }],
-    { ...ambienteCompleto, GEMINI_API_KEY: "", OPENROUTER_API_KEY: "", OLLAMA_API_KEY: "   " },
+    [{ provedor: "openrouter", chave: "  " }],
+    { ...ambienteCompleto, OPENROUTER_API_KEY: "" },
   );
   assert.deepEqual(fila, []);
 });
@@ -29,15 +34,16 @@ test("chaves vazias não entram na fila", () => {
 test("chave pessoal vem antes da chave do ambiente e duplicatas não se repetem", () => {
   const fila = filaDeChaves(
     [
-      { provedor: "gemini", chave: "teste-pessoal" },
-      { provedor: "gemini", chave: "teste-pessoal" },
+      { provedor: "openrouter", chave: "teste-pessoal" },
+      { provedor: "openrouter", chave: "teste-pessoal" },
+      { provedor: "openrouter", chave: "teste-openrouter" },
       { provedor: "gemini", chave: "teste-gemini" },
     ],
     ambienteCompleto,
   );
   assert.deepEqual(
-    fila.filter((item) => item.provedor === "gemini").map((item) => item.chave),
-    ["teste-pessoal", "teste-gemini"],
+    fila.map((item) => item.chave),
+    ["teste-pessoal", "teste-openrouter"],
   );
 });
 

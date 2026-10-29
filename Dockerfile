@@ -23,6 +23,7 @@ const b = `const r=path.resolve(path.dirname(F(import.meta.url)),${q}../dist${q}
 if (!s.includes(m)) process.exit(1);
 fs.writeFileSync(p, s.replace(m, b + m));
 NODE
+ENV MAICON_DATA_DIR=/data
 ENV PORT=3000
 EXPOSE 3000
 CMD ["node", "server/index.js"]

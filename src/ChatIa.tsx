@@ -763,6 +763,46 @@ function textoDocumentalDaRodada(historico: Mensagem[], pergunta: string): strin
   return partes.join("\n\n");
 }
 
+const FERRAMENTAS_PRONTAS = new Set([
+  "acompanhamentos_processo",
+  "pendencias",
+  "o_que_mudou",
+  "proposta_processo",
+  "comissao_periodo",
+  "processos_abertos_cliente",
+  "prazos",
+  "processos_parados",
+  "documental_ce",
+  "atividades_pendentes",
+  "divergencias_viagem",
+  "rota_processo",
+  "fila_setor",
+  "painel_ti",
+  "painel_financeiro",
+  "taxas_processo",
+  "log_recente",
+  "monitoramentos_alterados",
+  "explicar_itens_carga",
+  "explicar_campo_livre",
+  "andamento_atividade",
+]);
+
+function respostaProntaDoHistorico(historico: Mensagem[]): string {
+  const nomes = new Map<string, string>();
+  for (const item of historico) {
+    if (item.role !== "assistant") continue;
+    for (const chamada of item.tool_calls ?? []) nomes.set(chamada.id, chamada.function.name);
+  }
+  for (let i = historico.length - 1; i >= 0; i--) {
+    const item = historico[i];
+    if (item.role !== "tool") continue;
+    if (!FERRAMENTAS_PRONTAS.has(nomes.get(item.tool_call_id) ?? "")) continue;
+    const texto = textoDaConsulta(item.content);
+    if (texto && !texto.startsWith("Erro:")) return texto;
+  }
+  return "";
+}
+
 function textoDosDados(historico: Mensagem[]): string {
   const ferramentas = historico.filter((m) => m.role === "tool").reverse();
   for (const item of ferramentas) {
@@ -2426,7 +2466,7 @@ export function ChatIa({
   acessoConfirmado = true,
   setor = "geral",
   modalidade = "",
-  visao = "tudo",
+  visao = "gerencia",
   onVisao,
   onAcessoRemovido,
   permissoes,
@@ -3062,21 +3102,28 @@ export function ChatIa({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, titulo: titulo.slice(0, 80) }),
     });
-    const dados = await resp.json();
+    const dados = await resp.json().catch(() => ({}));
     if (!resp.ok || !dados.id) return;
     conversaIdRef.current = dados.id;
     sessionStorage.setItem("maicon-conversa-id", dados.id);
     setConversaId(dados.id);
   }
 
-  async function gravarConversa(id: string, lista: Mensagem[]) {
+  async function gravarConversa(id: string, lista: Mensagem[], tentativa = 0) {
     if (!email || !id || !lista.some((item) => item.role === "user")) return;
     const titulo = lista.find((item) => item.role === "user" && "content" in item)?.content?.slice(0, 80) || "Nova conversa";
-    await fetch(`${api}/api/conversas/${id}`, {
+    const resp = await fetch(`${api}/api/conversas/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, titulo, mensagens: mensagensParaArquivo(lista) }),
     });
+    if (resp.status === 404 && tentativa < 1) {
+      conversaIdRef.current = null;
+      setConversaId(null);
+      sessionStorage.removeItem("maicon-conversa-id");
+      await garantirConversa(titulo);
+      if (conversaIdRef.current) await gravarConversa(conversaIdRef.current, lista, tentativa + 1);
+    }
   }
 
   async function enviar(conteudo: string, receitaPronta?: Receita[] | null) {
@@ -3425,6 +3472,15 @@ export function ChatIa({
         );
         historico = [...historico, ...resultados];
         setMensagens(historico);
+        const pronta = respostaProntaDoHistorico(historico);
+        if (pronta) {
+          const content = graficoSePedido(pronta, pergunta);
+          historico = [...historico, { role: "assistant", content, duracaoMs: duracaoConsulta() }];
+          setMensagens(historico);
+          setErro("");
+          avisarConclusao(content, false);
+          return;
+        }
       }
       if (pedeLog(textoVisivel(pergunta)) && !logDaPergunta) {
         const contexto = historico
@@ -3711,7 +3767,11 @@ export function ChatIa({
                     ] as const
                   ).map(([valor, rotulo]) => (
                     <li key={valor}>
-                      <button type="button" className={visao === valor || (valor === "comercial" && visao === "inside") ? "ativo" : ""} onClick={() => onVisao?.(valor)}>
+                      <button
+                        type="button"
+                        className={valor === "comercial" ? (visao === "comercial" || visao === "inside" ? "ativo" : "") : visao === valor ? "ativo" : ""}
+                        onClick={() => onVisao?.(valor)}
+                      >
                         {rotulo}
                       </button>
                     </li>
@@ -4613,22 +4673,14 @@ export function ChatIa({
                         </div>
                       </>
                     ) : (
-                      (admin && visao === "tudo"
-                        ? [
-                            { nome: "Visão geral", itens: SUGESTOES_SETOR.admin },
-                            { nome: "Comercial", itens: SUGESTOES_SETOR.comercial },
-                            { nome: "Operacional", itens: SUGESTOES_SETOR.operacional },
-                            { nome: "Documental", itens: SUGESTOES_SETOR.documental },
-                          ]
-                        : [
-                            {
-                              nome: "",
-                              itens:
-                                SUGESTOES_SETOR[admin ? (visao === "inside" ? "comercial" : visao) : setor] ??
-                                (pode.log ? SUGESTOES : SUGESTOES.filter((s) => s.titulo === "Cliente do processo")),
-                            },
-                          ]
-                      ).map((grupo) => {
+                      [
+                        {
+                          nome: "",
+                          itens:
+                            SUGESTOES_SETOR[admin ? (visao === "inside" ? "comercial" : visao === "tudo" ? "gerencia" : visao) : setor] ??
+                            (pode.log ? SUGESTOES : SUGESTOES.filter((s) => s.titulo === "Cliente do processo")),
+                        },
+                      ].map((grupo) => {
                         const itens = grupo.itens.filter((s) => !permissoes?.semComissao || !/comiss/i.test(s.titulo));
                         if (!itens.length) return null;
                         return (

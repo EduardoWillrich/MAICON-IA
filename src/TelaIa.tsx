@@ -56,7 +56,10 @@ export function TelaIa({ usuario, onSair }: { usuario: UsuarioGoogle; onSair: ()
   const acessoSalvo = lerAcesso(usuario.email);
   const [permissoes, setPermissoes] = useState<Acesso>(acessoSalvo ?? ACESSO_INICIAL);
   const [acessoConfirmado, setAcessoConfirmado] = useState(Boolean(acessoSalvo));
-  const [visao, setVisao] = useState(() => (acessoSalvo && !acessoSalvo.admin && acessoSalvo.setor ? acessoSalvo.setor : "ti"));
+  const [visao, setVisao] = useState(() => {
+    if (acessoSalvo?.admin) return "gerencia";
+    return acessoSalvo?.setor || "geral";
+  });
   const [removido, setRemovido] = useState(false);
 
   useEffect(() => {
@@ -104,7 +107,8 @@ export function TelaIa({ usuario, onSair }: { usuario: UsuarioGoogle; onSair: ()
         setPermissoes(proximas);
         setAcessoConfirmado(true);
         sessionStorage.setItem(chaveAcesso(usuario.email), JSON.stringify(proximas));
-        if (!admin) setVisao(setor);
+        if (admin) setVisao((atual) => (atual === "geral" || atual === "tudo" ? "gerencia" : atual));
+        else setVisao(setor);
       } catch {
         /* falha de rede não tira o papel já confirmado */
       }
@@ -144,6 +148,8 @@ export function TelaIa({ usuario, onSair }: { usuario: UsuarioGoogle; onSair: ()
     );
   }
 
+  const visaoAtual = permissoes.admin && (visao === "tudo" || visao === "geral") ? "gerencia" : visao;
+
   return (
     <>
       <ChatIa
@@ -157,7 +163,7 @@ export function TelaIa({ usuario, onSair }: { usuario: UsuarioGoogle; onSair: ()
         setor={permissoes.setor}
         modalidade={permissoes.modalidade}
         encontrado={permissoes.encontrado}
-        visao={visao}
+        visao={visaoAtual}
         onVisao={setVisao}
         onAcessoRemovido={() => setRemovido(true)}
         permissoes={permissoes}
@@ -179,7 +185,7 @@ export function TelaIa({ usuario, onSair }: { usuario: UsuarioGoogle; onSair: ()
           return executarFerramentaIa(nome, args, sinal, {
             email: usuario.email,
             nome: usuario.nome,
-            visao: permissoes.admin ? visao : permissoes.setor,
+            visao: permissoes.admin ? visaoAtual : permissoes.setor,
           });
         }}
         capturarLog={capturarLogIa}
