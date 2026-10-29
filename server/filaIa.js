@@ -70,7 +70,7 @@ export function podeTrocarChave(erro) {
   const status = statusDoErro(erro);
   if ([401, 402, 403, 429, 498].includes(status) || status >= 500) return true;
   const texto = String(erro?.message ?? erro?.error ?? erro ?? "");
-  return /unauthorized|unauthenticated|invalid(?:\s+api)?\s*key|api key not valid|user not found|quota|rate limit|usage limit|billing|credit|modelo (?:inexistente|indisponível)|model(?:o)?\s+(?:not found|unavailable)|does not exist|do not have access|temporar|service unavailable|overload|sobrecarreg|timeout|fetch failed|econn(?:refused|reset)|socket hang up/i.test(texto);
+  return /unauthorized|unauthenticated|invalid(?:\s+api)?\s*key|api key not valid|user not found|quota|rate limit|usage limit|billing|credit|modelo (?:inexistente|indispon[ií]vel|configurado)|model(?:o)?\s+(?:not found|unavailable)|does not exist|do not have access|unsupported|invalid_request|temporar|service unavailable|overload|sobrecarreg|timeout|fetch failed|econn(?:refused|reset)|socket hang up/i.test(texto);
 }
 
 function erroIndisponivel() {

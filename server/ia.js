@@ -1216,8 +1216,13 @@ async function chamarOllama(corpo, aoTexto, sinal, chaveInformada, baseInformada
   return { content, ...(uso?.total ? { uso } : {}), ...(tools.length ? { tool_calls: tools } : {}) };
 }
 
+function corpoAberto(corpo) {
+  const { num_predict: _num, modelo: _modelo, ...aberto } = corpo;
+  return aberto;
+}
+
 async function chamarProvedor(item, corpo, aoTexto, sinal) {
-  const { num_predict: _num, ...aberto } = corpo;
+  const aberto = corpoAberto(corpo);
   if (item.provedor === "groq") return chamarGroq(item.chave, aberto, aoTexto);
   if (item.provedor === "gemini") return chamarGemini(item.chave, aberto, aoTexto);
   if (item.provedor === "openrouter") return chamarModelo(item.chave, aberto, aoTexto);

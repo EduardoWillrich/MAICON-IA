@@ -137,3 +137,8 @@ test("erros de autenticação, cota e modelo permitem fallback", () => {
     assert.equal(podeTrocarChave(new Error(mensagem)), true, mensagem);
   }
 });
+
+test("erro de propriedade unsupported permite fallback", () => {
+  assert.equal(podeTrocarChave(new Error("property 'modelo' is unsupported")), true);
+  assert.equal(podeTrocarChave(new Error("O modelo configurado não está disponível nesta conta.")), true);
+});
