@@ -102,11 +102,80 @@ function pedeResumoProcesso(pedido) {
 
 const ASSUNTO_GERAL = /parad|fila dos setores|painel |\bprazos?\b|pend[eê]ncias do |processos abertos|quais clientes|comiss[aã]o neste|comiss[aã]o de vendedor neste|deste m[eê]s|neste m[eê]s|log das [uú]ltimas|exclus[oõ]es aconteceram|monitorament|\bminhas?\b.{0,40}pend[eê]n/i;
 const SEGUE_PROCESSO = /desse|deste|dele|dela|nesse|neste|mesmo processo|mudan[cç]a|altera[cç]|hist[oó]rico|\blogs?\b|frete|taxas?|pagamento|recebimento|comiss|atividad|pend[eê]ncia|cliente|vendedor|situa|refer[eê]ncia|embarc|navio|porto|libera|\bce\b|proposta|oferta|acompanhament|quem alter|quem inclu|o que mudou|resumo/i;
+const APONTA_PROCESSO = /desse|deste|dele|dela|dessa|desta|nesse|neste|mesmo processo|do processo/i;
+
+export function textoCalendario(agora = new Date()) {
+  const zona = "America/Sao_Paulo";
+  const partes = new Intl.DateTimeFormat("en-US", {
+    timeZone: zona,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(agora);
+  const numero = (tipo) => Number(partes.find((item) => item.type === tipo)?.value);
+  const ano = numero("year");
+  const mes = numero("month");
+  const dia = numero("day");
+  const hoje = new Date(Date.UTC(ano, mes - 1, dia));
+  const ontem = new Date(hoje);
+  ontem.setUTCDate(ontem.getUTCDate() - 1);
+  const inicioMes = new Date(Date.UTC(ano, mes - 1, 1));
+  const dow = hoje.getUTCDay();
+  const inicioSemana = new Date(hoje);
+  inicioSemana.setUTCDate(inicioSemana.getUTCDate() - (dow === 0 ? 6 : dow - 1));
+  const fmt = (data) => {
+    const p = (valor) => String(valor).padStart(2, "0");
+    return `${p(data.getUTCDate())}/${p(data.getUTCMonth() + 1)}/${data.getUTCFullYear()}`;
+  };
+  const semana = new Intl.DateTimeFormat("pt-BR", { timeZone: zona, weekday: "long" }).format(agora);
+  const hojeBr = fmt(hoje);
+  const ontemBr = fmt(ontem);
+  return {
+    hoje: hojeBr,
+    ontem: ontemBr,
+    inicioMes: fmt(inicioMes),
+    inicioSemana: fmt(inicioSemana),
+    texto:
+      `DATA DE HOJE: ${semana}, ${hojeBr}, fuso America/Sao_Paulo. ` +
+      `Ontem é ${ontemBr}. Este mês vai de ${fmt(inicioMes)} até ${hojeBr}. ` +
+      `Esta semana começa em ${fmt(inicioSemana)}. ` +
+      "hoje, ontem, esse mês, este mês, neste mês e esta semana usam exatamente essas datas. " +
+      "Não pergunte a data de novo. Uma lista por período não reaproveita o processo da mensagem anterior. " +
+      "Referência de cliente, como 136.763, não é número de processo. Número de processo tem letras, hífen e ano, como IM5944-26.",
+  };
+}
+
+export function listaDePropostas(texto) {
+  const pedido = String(texto ?? "");
+  if (!/\bpropostas?\b/i.test(pedido)) return false;
+  if (APONTA_PROCESSO.test(pedido)) return false;
+  const periodo = /\b(?:ontem|hoje|m[eê]s|semana|data|\d{1,2}\/\d{1,2}\/\d{4})\b/i.test(pedido);
+  const lista = /\b(?:liste|listar|lista|todas|todos|abertas?)\b/i.test(pedido);
+  if (PROCESSO.test(pedido) && !periodo) return false;
+  return periodo || (lista && !PROCESSO.test(pedido));
+}
+
+export function argsPropostas(texto) {
+  const pedido = String(texto ?? "");
+  const situacao = /abert/i.test(pedido) ? "abertas" : "todas";
+  const data = pedido.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+  if (data) {
+    const dia = data[1].padStart(2, "0");
+    const mes = data[2].padStart(2, "0");
+    const valor = `${dia}/${mes}/${data[3]}`;
+    return { inicio: valor, fim: valor, situacao };
+  }
+  if (/ontem/i.test(pedido)) return { quando: "ontem", situacao };
+  if (/\bhoje\b/i.test(pedido)) return { quando: "hoje", situacao };
+  if (/semana/i.test(pedido)) return { quando: "semana", situacao };
+  return { quando: "mes", situacao };
+}
 
 export function pedidoDaRodada(mensagens) {
   const lista = Array.isArray(mensagens) ? mensagens : [];
   const atual = String([...lista].reverse().find((item) => item?.role === "user")?.content ?? "");
   if (!atual.trim() || PROCESSO.test(atual)) return atual;
+  if (listaDePropostas(atual)) return atual;
   const aponta = /desse|deste|dele|dela|nesse|neste|mesmo processo/i.test(atual);
   if (ASSUNTO_GERAL.test(atual) && !aponta) return atual;
   if (!SEGUE_PROCESSO.test(atual)) return atual;
@@ -140,6 +209,7 @@ export function ferramentasProvaveis(texto) {
   if (/painel do ti|quem mais gravou log/i.test(pedido)) return ["painel_ti"];
   if (/exclus|log das [uú]ltimas|log recente/i.test(pedido)) return ["log_recente"];
   if (/monitorament/i.test(pedido)) return ["monitoramentos_alterados"];
+  if (listaDePropostas(pedido)) return ["propostas_periodo"];
   if (/\btaxas?\b|\bfrete\b|\bpagamento\b|\brecebimento\b/i.test(pedido)) return [...base, "taxas_processo"];
   if (/rota|navio|rastre|porto|embarc/i.test(pedido)) return [...base, "rota_processo"];
   if (/acompanhament/i.test(pedido)) return [...base, "acompanhamentos_processo"];
@@ -159,6 +229,7 @@ export function ferramentasProvaveis(texto) {
 
 export function chamadaDireta(texto) {
   const pedido = String(texto ?? "");
+  if (listaDePropostas(pedido)) return { nome: "propostas_periodo", args: argsPropostas(pedido) };
   if (/\bprocessos?\s+abertos?\b/i.test(pedido) && !/fila dos setores|clientes|ficha do cliente/i.test(pedido) && !PROCESSO.test(pedido)) {
     return { nome: "processos_abertos", args: { quando: /\bhoje\b/i.test(pedido) ? "hoje" : "abertos" } };
   }
@@ -199,6 +270,7 @@ export function chamadaDireta(texto) {
     return { nome, args: /exclus/i.test(pedido) ? { horas, tipo: 2 } : { horas } };
   }
   if (nome === "monitoramentos_alterados") return { nome, args: { dias: 7 } };
+  if (nome === "propostas_periodo") return { nome, args: argsPropostas(pedido) };
   if (nome === "processos_abertos_cliente") {
     const ficha = pedido.match(/ficha do cliente\s+(.+?)(?::|$)/i)?.[1]?.trim();
     if (ficha && !/qual cliente/i.test(pedido)) return { nome, args: { cliente: ficha.replace(/\.$/, "") } };
@@ -216,6 +288,7 @@ const TEXTOS_PRONTOS = new Set([
   "pendencias",
   "o_que_mudou",
   "proposta_processo",
+  "propostas_periodo",
   "comissao_periodo",
   "processos_abertos_cliente",
   "resumo_processo",

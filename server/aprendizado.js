@@ -423,12 +423,14 @@ const EXEMPLOS = {
   inside: [
     "Pendências da semana → pendencias { escopo: semana }.",
     "Proposta do processo → proposta_processo { numero }.",
+    "Lista de propostas de ontem, de hoje ou deste mês → propostas_periodo { quando, situacao }.",
     "Ficha do cliente → processos_abertos_cliente { cliente }.",
   ],
   comercial: [
     "Ficha do cliente → processos_abertos_cliente { cliente }.",
     "Comissão deste mês → comissao_periodo {}.",
     "Proposta do processo → proposta_processo { numero }.",
+    "Lista de propostas de ontem, de hoje ou deste mês → propostas_periodo { quando, situacao }.",
     "Pendências da semana → pendencias { escopo: semana }.",
     "Pendências do inside → atividades_pendentes { setor: inside }.",
   ],

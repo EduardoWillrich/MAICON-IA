@@ -39,6 +39,7 @@ const FUNCOES = new Set([
   "pendencias",
   "o_que_mudou",
   "proposta_processo",
+  "propostas_periodo",
   "comissao_periodo",
   "processos_abertos_cliente",
   "prazos",
@@ -501,6 +502,124 @@ async function propostaProcesso(pool, args, recorte) {
     linha.Numero_Oferta ? `Oferta: ${linha.Numero_Oferta}` : "Oferta: não ligada.",
     linha.Data_Validade ? `Validade da oferta: ${dataCurta(linha.Data_Validade)}` : "",
   ]);
+}
+
+function calendarioBrasil(agora = new Date()) {
+  const partes = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(agora);
+  const numero = (tipo) => Number(partes.find((item) => item.type === tipo)?.value);
+  const ano = numero("year");
+  const mes = numero("month");
+  const dia = numero("day");
+  return { ano, mes, dia, hoje: new Date(ano, mes - 1, dia) };
+}
+
+function somarDias(data, dias) {
+  const copia = new Date(data.getFullYear(), data.getMonth(), data.getDate());
+  copia.setDate(copia.getDate() + dias);
+  return copia;
+}
+
+function periodoPropostas(args) {
+  const { ano, mes, hoje } = calendarioBrasil();
+  const inicioPedido = parseData(args.inicio);
+  const fimPedido = parseData(args.fim);
+  if (inicioPedido) {
+    const fimBase = fimPedido || inicioPedido;
+    const mesmoDia = dataDoPeriodo(inicioPedido) === dataDoPeriodo(fimBase);
+    return {
+      inicio: inicioPedido,
+      fim: somarDias(fimBase, 1),
+      rotulo: mesmoDia ? dataDoPeriodo(inicioPedido) : `${dataDoPeriodo(inicioPedido)} a ${dataDoPeriodo(fimBase)}`,
+    };
+  }
+  const quando = String(args.quando ?? "mes").toLowerCase();
+  if (quando === "ontem") {
+    const inicio = somarDias(hoje, -1);
+    return { inicio, fim: hoje, rotulo: `ontem (${dataDoPeriodo(inicio)})` };
+  }
+  if (quando === "hoje") {
+    return { inicio: hoje, fim: somarDias(hoje, 1), rotulo: `hoje (${dataDoPeriodo(hoje)})` };
+  }
+  if (quando === "semana") {
+    const dow = hoje.getDay();
+    const inicio = somarDias(hoje, -(dow === 0 ? 6 : dow - 1));
+    return { inicio, fim: somarDias(hoje, 1), rotulo: `esta semana (${dataDoPeriodo(inicio)} a ${dataDoPeriodo(hoje)})` };
+  }
+  const inicio = new Date(ano, mes - 1, 1);
+  return { inicio, fim: new Date(ano, mes, 1), rotulo: `este mês (${dataDoPeriodo(inicio)} a ${dataDoPeriodo(hoje)})` };
+}
+
+async function propostasPeriodo(pool, args, recorte, ctx) {
+  if (recorte?.semComercial) return "Proposta é informação do comercial.";
+  const carteira = await idDaCarteira(pool, recorte, ctx);
+  if (carteira === 0) return "Não localizei seu cadastro para filtrar as propostas.";
+  const { inicio, fim, rotulo } = periodoPropostas(args);
+  const abertas = String(args.situacao ?? "todas") !== "todas";
+  const request = pool.request();
+  request.input("ini", sql.Date, inicio);
+  request.input("fim", sql.Date, fim);
+  if (carteira) request.input("id", sql.Int, carteira);
+  const filtroCarteira = carteira ? "AND Pro.IdVendedor = @id" : "";
+  const filtroSituacao = abertas ? "AND Pro.Situacao IN (1, 4, 5, 6)" : "";
+  const comando = `
+    SELECT TOP 200
+      COUNT(*) OVER() AS Total,
+      Pro.Numero_Proposta,
+      CASE Pro.Situacao
+        WHEN 1 THEN 'Aguardando aprovação'
+        WHEN 2 THEN 'Aprovada'
+        WHEN 3 THEN 'Não aprovada'
+        WHEN 4 THEN 'Não enviada'
+        WHEN 5 THEN 'Pré-proposta'
+        WHEN 6 THEN 'Enviada'
+        ELSE CAST(Pro.Situacao AS varchar(20))
+      END AS Situacao,
+      Pro.Data_Proposta AS Data,
+      Cli.Nome AS Cliente,
+      Ven.Nome AS Vendedor,
+      Hou.Numero_Processo AS Processo
+    FROM mov_Proposta_Frete Pro
+    LEFT JOIN cad_Pessoa Cli ON Cli.IdPessoa = Pro.IdCliente
+    LEFT JOIN cad_Pessoa Ven ON Ven.IdPessoa = Pro.IdVendedor
+    OUTER APPLY (
+      SELECT TOP 1 H.Numero_Processo
+      FROM mov_Logistica_House H
+      WHERE H.IdProjeto_Atividade = Pro.IdProjeto_Atividade
+         OR H.IdOferta_Frete IN (
+           SELECT O.IdOferta_Frete FROM mov_Oferta_Frete O WHERE O.IdProposta_Frete = Pro.IdProposta_Frete
+         )
+      ORDER BY CASE WHEN NULLIF(H.Numero_Processo, '') IS NULL THEN 1 ELSE 0 END, H.IdLogistica_House DESC
+    ) Hou
+    WHERE Pro.Data_Proposta >= @ini AND Pro.Data_Proposta < @fim
+      ${filtroSituacao}
+      ${filtroCarteira}
+    ORDER BY Pro.Data_Proposta DESC, Pro.Numero_Proposta`;
+  const r = await request.query(comando);
+  const titulo = abertas ? `Propostas abertas de ${rotulo}` : `Propostas de ${rotulo}`;
+  if (!r.recordset.length) {
+    return consultaPronta(`${titulo}\nNenhuma proposta nesse período.`, comando, [], { ini: inicio, fim: fim, ...(carteira ? { id: carteira } : {}) });
+  }
+  const total = Number(r.recordset[0].Total) || r.recordset.length;
+  const linhas = r.recordset.map(({ Total: _total, ...resto }) => resto);
+  const tabela = [
+    "| Proposta | Data | Situação | Cliente | Vendedor | Processo |",
+    "| --- | --- | --- | --- | --- | --- |",
+    ...linhas.slice(0, 40).map((linha) =>
+      `| ${celula(linha.Numero_Proposta)} | ${celula(dataCurta(linha.Data))} | ${celula(linha.Situacao)} | ${celula(linha.Cliente)} | ${celula(linha.Vendedor)} | ${celula(linha.Processo)} |`,
+    ),
+  ].join("\n");
+  const aviso = total > linhas.length ? `\n\nMostrei ${linhas.length} de ${total}.` : "";
+  const extra = linhas.length > 40 ? "\n\nA tabela acima traz as 40 primeiras." : "";
+  return consultaPronta(`${titulo}: ${total}\n\n${tabela}${extra}${aviso}`, comando, linhas, {
+    ini: inicio,
+    fim: fim,
+    ...(carteira ? { id: carteira } : {}),
+  });
 }
 
 async function comissaoPeriodo(pool, args, recorte, ctx) {
@@ -2505,6 +2624,7 @@ export function ferramentaDaVisao(nome, setor) {
       "comissao_periodo",
       "prazos",
       "proposta_processo",
+      "propostas_periodo",
       "resumo_processo",
       "rota_processo",
       "buscar_processos",
@@ -2519,14 +2639,14 @@ export function ferramentaDaVisao(nome, setor) {
   }
   if (nome === "painel_ti" || nome === "log_recente" || nome === "monitoramentos_alterados") return setor === "ti";
   if (setor === "ti") {
-    return !["fila_setor", "proposta_processo", "comissao_periodo", "processos_parados", "documental_ce", "atividades_pendentes", "divergencias_viagem"].includes(nome);
+    return !["fila_setor", "proposta_processo", "propostas_periodo", "comissao_periodo", "processos_parados", "documental_ce", "atividades_pendentes", "divergencias_viagem"].includes(nome);
   }
   if (nome === "fila_setor") return setor === "admin";
   if (nome === "prazos") return true;
   if (nome === "divergencias_viagem") return setor === "operacional" || setor === "admin" || setor === "financeiro";
   if (nome === "documental_ce") return setor === "documental" || setor === "admin";
   if (nome === "atividades_pendentes") return ["operacional", "inside", "comercial", "admin"].includes(setor);
-  if (nome === "proposta_processo" || nome === "comissao_periodo") return setor !== "operacional" && setor !== "documental";
+  if (nome === "proposta_processo" || nome === "propostas_periodo" || nome === "comissao_periodo") return setor !== "operacional" && setor !== "documental";
   return true;
 }
 
@@ -2628,6 +2748,7 @@ export async function executarFuncao(pool, nome, args, ctx) {
   if (nome === "pendencias") return embalagem(await pendencias(pool, dados, ctx));
   if (nome === "o_que_mudou") return embalagem(await oQueMudou(pool, dados, ctx));
   if (nome === "proposta_processo") return embalagem(await propostaProcesso(pool, dados, recorte));
+  if (nome === "propostas_periodo") return embalagem(await propostasPeriodo(pool, dados, recorte, ctx));
   if (nome === "comissao_periodo") return embalagem(await comissaoPeriodo(pool, dados, recorte, ctx));
   if (nome === "processos_abertos_cliente") return embalagem(await processosAbertosCliente(pool, dados, recorte, ctx));
   if (nome === "prazos") return embalagem(await prazos(pool, dados, recorte));

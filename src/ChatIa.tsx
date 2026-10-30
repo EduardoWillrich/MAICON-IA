@@ -424,6 +424,7 @@ const ROTULO_FERRAMENTA: Record<string, string> = {
   executar_sql: "Consultando o banco",
   emails_gmail: "Lendo os e-mails",
   localizar_processo: "Localizando o processo",
+  propostas_periodo: "Lendo as propostas do período",
   resultado_atual: "Lendo o resultado da tela",
   lembrar_preferencia: "Guardando na memória",
   esquecer_preferencia: "Removendo da memória",
@@ -797,6 +798,7 @@ const FERRAMENTAS_PRONTAS = new Set([
   "pendencias",
   "o_que_mudou",
   "proposta_processo",
+  "propostas_periodo",
   "comissao_periodo",
   "processos_abertos_cliente",
   "resumo_processo",
@@ -1058,6 +1060,7 @@ function textoConsulta(chamada: ChamadaFerramenta | undefined, resultado: string
       "pendencias",
       "o_que_mudou",
       "proposta_processo",
+  "propostas_periodo",
       "comissao_periodo",
       "processos_abertos_cliente",
       "prazos",
@@ -1665,10 +1668,10 @@ function itemDaLista(bruto: string, filhos: string[]): ItemLista | null {
   const partes = texto.split(/\s·\s/).map((parte) => parte.trim()).filter(Boolean);
   let hora = "";
   const cabeca = partes[0] || "";
-  const relogio = cabeca.match(/^(?:\d{2}\/\d{2}\/\d{4}\s+)?(\d{2}:\d{2})(?::\d{2})?$/);
-  const soData = cabeca.match(/^(\d{2}\/\d{2})\/\d{4}$/);
-  if (relogio || soData || /^\d{2}:\d{2}$/.test(cabeca)) {
-    hora = relogio?.[1] || soData?.[1] || cabeca;
+  const quando = cabeca.match(/^(\d{2}\/\d{2}\/\d{4})(?:\s+(\d{2}:\d{2})(?::\d{2})?)?$/);
+  const soRelogio = cabeca.match(/^(\d{2}:\d{2})(?::\d{2})?$/);
+  if (quando || soRelogio) {
+    hora = quando ? (quando[2] ? `${quando[1]} ${quando[2]}` : quando[1]) : soRelogio?.[1] || cabeca;
     partes.shift();
   }
   const titulo = partes.shift() || extras.shift() || texto;
@@ -2067,7 +2070,14 @@ function ListaCard({ titulo, sub, itens, aviso }: { titulo: string; sub: string;
           const nome = tituloEhCodigo ? item.linhas[0] ?? "" : atividade?.[2] ?? item.titulo;
           const detalhes = tituloEhCodigo ? item.linhas.slice(1) : item.linhas;
           const selo = tituloEhCodigo ? codigo : atividade?.[1] ?? codigo;
-          const tom = item.tipo === "del" ? "hoje" : item.tipo === "upd" ? "semana" : "";
+          const quando = item.hora.match(/^(\d{2}\/\d{2}\/\d{4})(?:\s+(\d{2}:\d{2}))?$/);
+          const data = quando?.[1] ?? item.hora;
+          const hora = quando?.[2] ?? "";
+          const ePendencia = /pend[eê]ncia/i.test(titulo);
+          const dias = quando && ePendencia ? diasAte(quando[1]) : null;
+          const rotulo = quando ? (ePendencia ? "Previsão" : "Data") : "Hora";
+          const tomPrazo = dias == null ? "" : dias <= 0 ? "hoje" : dias <= 7 ? "semana" : "";
+          const tom = item.tipo === "del" ? "hoje" : item.tipo === "upd" ? "semana" : tomPrazo;
           return (
             <li key={`${item.titulo}-${item.hora}-${indice}`} className={`prazo-item${tom ? ` ${tom}` : ""}`} style={{ ["--i" as string]: indice }}>
               <div>
@@ -2081,8 +2091,12 @@ function ListaCard({ titulo, sub, itens, aviso }: { titulo: string; sub: string;
                 <div className="datas-prazo">
                   {item.hora ? (
                     <div className="prazo">
-                      <span className="rotulo">Hora</span>
-                      <span className="data">{item.hora}</span>
+                      <span className="rotulo">{rotulo}</span>
+                      <span className="data">
+                        {data}
+                        {hora ? <span className="hora">{hora}</span> : null}
+                      </span>
+                      {dias != null ? <span className="rel">{rotuloRelativo(dias)}</span> : null}
                     </div>
                   ) : null}
                   {item.tag ? (

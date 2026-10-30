@@ -132,6 +132,7 @@ export async function executarFerramentaIa(
     "pendencias",
     "o_que_mudou",
     "proposta_processo",
+    "propostas_periodo",
     "comissao_periodo",
     "processos_abertos_cliente",
     "prazos",
@@ -196,7 +197,11 @@ export async function executarFerramentaIa(
     return nome === "esquecer_preferencia" ? "Preferência removida." : "Preferência salva.";
   }
   if (nome === "localizar_processo") {
-    const resp = await fetch(`${API}/api/processo?numero=${encodeURIComponent(texto(args.numero))}&email=${encodeURIComponent(conta?.email ?? "")}&nome=${encodeURIComponent(conta?.nome ?? "")}&visao=${encodeURIComponent(conta?.visao ?? "")}&conversaId=${encodeURIComponent(conversaDaConsulta())}`, { signal: sinal });
+    const numero = texto(args.numero).trim();
+    if (!/^[A-Za-z]{1,4}\d{2,6}-\d{2}$/i.test(numero)) {
+      return `${numero} não é número de processo. O número tem letras, hífen e ano, como IM5944-26. Uma referência de cliente, como 136.763, não se busca em mov_Logistica_House.`;
+    }
+    const resp = await fetch(`${API}/api/processo?numero=${encodeURIComponent(numero)}&email=${encodeURIComponent(conta?.email ?? "")}&nome=${encodeURIComponent(conta?.nome ?? "")}&visao=${encodeURIComponent(conta?.visao ?? "")}&conversaId=${encodeURIComponent(conversaDaConsulta())}`, { signal: sinal });
     const dados = await resp.json();
     if (!resp.ok) throw new Error(dados.erro || "Falha ao localizar o processo");
     if (!dados.house?.length && !dados.master?.length) {

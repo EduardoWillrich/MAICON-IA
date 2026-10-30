@@ -55,6 +55,7 @@ const FERRAMENTAS_DADOS = new Set([
   "pendencias",
   "o_que_mudou",
   "proposta_processo",
+  "propostas_periodo",
   "comissao_periodo",
   "processos_abertos_cliente",
   "prazos",

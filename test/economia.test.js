@@ -10,6 +10,7 @@ import {
   pedidoSimples,
   respostaDeFerramentaPronta,
   respostaImediata,
+  textoCalendario,
 } from "../server/economia.js";
 import { textoConsultasRelevantes } from "../server/consultas.js";
 
@@ -295,6 +296,40 @@ test("devolve diretamente o texto de ferramenta já formatado", () => {
     nome: "processos_abertos_cliente",
     args: { foco: "abertos", quando: "hoje" },
   });
+});
+
+test("lista de propostas usa a data e não o processo anterior", () => {
+  const antes = [
+    { role: "user", content: "preciso saber desse aqui IM5944-26" },
+    { role: "assistant", content: "Referência: 136.763" },
+  ];
+  const com = (texto) => [...antes, { role: "user", content: texto }];
+  assert.equal(pedidoDaRodada(com("liste as propostas abertas ontem")), "liste as propostas abertas ontem");
+  assert.equal(pedidoDaRodada(com("todas as propostas com data de 29/10/2026")), "todas as propostas com data de 29/10/2026");
+  assert.equal(pedidoDaRodada(com("Liste as propostas abertas esse mês")), "Liste as propostas abertas esse mês");
+  assert.match(pedidoDaRodada(com("qual a proposta desse processo?")), /IM5944-26$/);
+  assert.match(pedidoDaRodada(com("me lista as mudanças")), /IM5944-26$/);
+  assert.deepEqual(chamadaDireta("liste as propostas abertas ontem"), {
+    nome: "propostas_periodo",
+    args: { quando: "ontem", situacao: "abertas" },
+  });
+  assert.deepEqual(chamadaDireta("todas as propostas com data de 29/10/2026"), {
+    nome: "propostas_periodo",
+    args: { inicio: "29/10/2026", fim: "29/10/2026", situacao: "todas" },
+  });
+  assert.deepEqual(chamadaDireta("Liste as propostas abertas esse mês"), {
+    nome: "propostas_periodo",
+    args: { quando: "mes", situacao: "abertas" },
+  });
+  assert.deepEqual(chamadaDireta("qual a proposta do IM5944-26"), {
+    nome: "proposta_processo",
+    args: { numero: "IM5944-26" },
+  });
+  const calendario = textoCalendario(new Date("2026-10-30T15:00:00Z"));
+  assert.equal(calendario.hoje, "30/10/2026");
+  assert.equal(calendario.ontem, "29/10/2026");
+  assert.equal(calendario.inicioMes, "01/10/2026");
+  assert.equal(calendario.inicioSemana, "26/10/2026");
 });
 
 test("filtro aceita só ferramentas conhecidas", () => {
