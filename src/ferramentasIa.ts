@@ -59,7 +59,7 @@ function completarContainers(args: Record<string, unknown>, pedido: string): Rec
 
 function identificacao(tabela: string, chaves: ChavePrimaria[], eventos: EventoLog[] = []) {
   const ids = chaves.filter((c) => c.valor.trim()).map((c) => nomeDaChave(eventos, c.valor));
-  const nome = tabela.replace(/^(mov|cad|arq|sys|aux)_/i, "").replaceAll("_", " ");
+  const nome = tabela.replace(/^(mov|cad|arq|sys|aux)_/i, "").replaceAll("_", " ").replace(/\bLogistica\b/g, "Logística");
   if (ids.length) return `${nome} ${ids.join(" / ")}`;
   return nome || "registro";
 }

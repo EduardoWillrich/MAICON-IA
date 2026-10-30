@@ -5,7 +5,7 @@ import express from "express";
 import os from "os";
 import sql from "mssql";
 import { nomeProprio } from "./itensCarga.js";
-import { montarSelect, montarXpaths, parseTabelasXml } from "./query.js";
+import { montarSelect, montarXpaths, tabelasDaLinha } from "./query.js";
 import { enriquecerNomes, nomearSql } from "./nomes.js";
 import { compararComCadastro } from "./atual.js";
 import { conversar } from "./ia.js";
@@ -115,16 +115,16 @@ app.use("/api", async (req, res, next) => {
 });
 
 function configSql() {
-  const servidor = process.env.SQL_SERVER || "localhost";
-  const banco = process.env.SQL_DATABASE || "";
-  const usuario = process.env.SQL_USER || "";
-  const senha = process.env.SQL_PASSWORD || "";
-  const instancia = process.env.SQL_INSTANCE || "";
+  const servidor = String(process.env.SQL_SERVER || "").trim();
+  const banco = String(process.env.SQL_DATABASE || "").trim();
+  const usuario = String(process.env.SQL_USER || "").trim();
+  const senha = String(process.env.SQL_PASSWORD || "");
+  const instancia = String(process.env.SQL_INSTANCE || "").trim();
   const server = instancia ? `${servidor}\\${instancia}` : servidor;
 
-  if (!banco || !usuario) {
+  if (!servidor || !banco || !usuario || !senha) {
     throw new Error(
-      "Preencha SQL_DATABASE, SQL_USER e SQL_PASSWORD no arquivo .env e reinicie a API.",
+      "Defina SQL_SERVER, SQL_PORT, SQL_DATABASE, SQL_USER e SQL_PASSWORD nas variáveis de ambiente do Coolify. Sem isso a IA não consulta o banco.",
     );
   }
 
@@ -400,7 +400,7 @@ function fatiarDoFim(inicio, fim) {
 function mapearEventos(recordset) {
   const eventos = [];
   for (const linha of recordset) {
-    for (const tabela of parseTabelasXml(linha.Trecho)) {
+    for (const tabela of tabelasDaLinha(linha)) {
       eventos.push({
         id: String(eventos.length + 1),
         usuario: nomeProprio(linha.Usuario),
@@ -1611,14 +1611,15 @@ function iso(valor) {
 
 function mensagemErro(erro) {
   const texto = erro?.message || String(erro);
+  const destino = `${process.env.SQL_SERVER || "SQL_SERVER"}:${process.env.SQL_PORT || "1433"}/${process.env.SQL_DATABASE || "SQL_DATABASE"}`;
   if (/ELOGIN|Login failed/i.test(texto)) {
-    return "Login recusado. Confira SQL_USER e SQL_PASSWORD no .env.";
+    return `Login recusado em ${destino}. Confira SQL_USER e SQL_PASSWORD nas variáveis do Coolify.`;
   }
   if (/ETIMEOUT|Timeout|failed to complete in/i.test(texto)) {
     return "A consulta demorou demais. Tente um período menor ou menos códigos de uma vez.";
   }
-  if (/ECONNREFUSED|Could not connect|Failed to connect/i.test(texto)) {
-    return "Não conectou no SQL Server. Ajuste SQL_SERVER no .env (IP/hostname). A porta 1433 local está fechada neste PC.";
+  if (/ECONNREFUSED|Could not connect|Failed to connect|ESOCKET|ENOTFOUND|EAI_AGAIN/i.test(texto)) {
+    return `Não conectou no SQL Server ${destino}. Confira SQL_SERVER e SQL_PORT nas variáveis do Coolify.`;
   }
   if (/database is locked|SQLITE_BUSY/i.test(texto)) {
     return "O arquivo local de contas está ocupado. Tente de novo em alguns segundos.";
@@ -1635,7 +1636,8 @@ const server = app.listen(porta, "0.0.0.0", () => {
     .flat()
     .filter((e) => e && e.family === "IPv4" && !e.internal)
     .map((e) => e.address);
-  console.log(`Administradores lidos do .env: ${emailsAdmin().length}`);
+  console.log(`Administradores: ${emailsAdmin().length}`);
+  console.log(`SQL ${process.env.SQL_SERVER || "(SQL_SERVER vazio)"}:${process.env.SQL_PORT || "1433"} / ${process.env.SQL_DATABASE || "(SQL_DATABASE vazio)"}`);
   console.log(`API de log em http://localhost:${porta}`);
   for (const ip of ips) console.log(`API na rede em http://${ip}:${porta}`);
   void aquecerAtalhos();

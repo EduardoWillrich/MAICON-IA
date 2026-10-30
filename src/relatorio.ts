@@ -48,7 +48,7 @@ export function rotuloCampo(nome: string): string {
   return (
     ROTULOS[chave] ??
     ROTULOS[nome] ??
-    chave.replace(/^Id(?=[A-Z])/, "").replaceAll("_", " ")
+    chave.replace(/^Id(?=[A-Z])/, "").replaceAll("_", " ").replace(/\bSituacao\b/g, "Situação").replace(/\bLogistica\b/g, "Logística").replace(/\bAtualizacao\b/g, "Atualização").replace(/\bProntidao\b/g, "Prontidão").replace(/\bNumero\b/g, "Número").replace(/\bDescricao\b/g, "Descrição").replace(/\bObservacao\b/g, "Observação").replace(/\bAcao\b/g, "Ação")
   );
 }
 

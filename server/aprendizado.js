@@ -287,7 +287,10 @@ export function receitaServidor(email, visao, pergunta) {
     .prepare(`SELECT ferramentas, vezes FROM receitas WHERE visao = ? AND chave = ? AND vezes >= 1`)
     .get(area, chave);
   const achada = exata ?? receitaParecida(area, chave);
-  return lerReceita(achada, pergunta);
+  const lista = lerReceita(achada, pergunta);
+  const pedeFicha = /\bresumo\b/i.test(String(pergunta ?? "")) || (/\bresum(?:a|e|ir)\b/i.test(String(pergunta ?? "")) && /\bprocesso\b/i.test(String(pergunta ?? "")));
+  if (Array.isArray(lista) && lista.some((item) => item?.nome === "resumo_processo") && !pedeFicha) return null;
+  return lista;
 }
 
 function receitaParecida(area, chave) {

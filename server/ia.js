@@ -17,6 +17,7 @@ import {
   chamadaDireta,
   ferramentasProvaveis,
   lerFiltro,
+  pedidoDaRodada,
   pedidoInformativo,
   respostaDeFerramentaPronta,
   respostaImediata,
@@ -1362,20 +1363,30 @@ function ferramentasDoPedido(opcoes, nomes) {
   });
 }
 
+function esquecerConsultasAnteriores(mensagens) {
+  let inicio = 0;
+  for (let i = mensagens.length - 1; i >= 0; i--) {
+    if (mensagens[i]?.role === "user") {
+      inicio = i;
+      break;
+    }
+  }
+  return mensagens.map((item, indice) => {
+    if (indice >= inicio || item?.role !== "tool") return item;
+    return { ...item, content: "Consulta já respondida na pergunta anterior." };
+  });
+}
+
 export async function conversar(mensagens, aoTexto, opcoes = {}) {
   const pedido = [...mensagens].reverse().find((item) => item?.role === "user")?.content ?? "";
+  const roteiro = opcoes.relatorio || opcoes.apresentacao ? pedido : pedidoDaRodada(mensagens);
   const pronta = respostaDeFerramentaPronta(mensagens);
   if (pronta) return { role: "assistant", content: pronta, uso: { entrada: 0, saida: 0, total: 0 } };
   if (!opcoes.relatorio && !opcoes.apresentacao) {
     const direta = respostaImediata(pedido);
     if (direta) return { role: "assistant", content: direta, uso: { entrada: 0, saida: 0, total: 0 } };
-    let ferramenta = chamadaDireta(pedido);
-    if (ferramenta && !ferramentasDoPedido(opcoes, [ferramenta.nome]).length) {
-      const numero = String(pedido).match(/(?:^|\s)((?:IM|IA|EA|EM)\d{2,6}-\d{2})\b/i)?.[1]?.toUpperCase();
-      ferramenta = numero && ferramentasDoPedido(opcoes, ["resumo_processo"]).length
-        ? { nome: "resumo_processo", args: { numero } }
-        : null;
-    }
+    let ferramenta = chamadaDireta(roteiro);
+    if (ferramenta && !ferramentasDoPedido(opcoes, [ferramenta.nome]).length) ferramenta = null;
     if (ferramenta) {
       return {
         role: "assistant",
@@ -1389,15 +1400,22 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
       };
     }
   }
-  const temRetorno = mensagens.some((item) => item?.role === "tool");
+  let inicioRodada = 0;
+  for (let i = mensagens.length - 1; i >= 0; i--) {
+    if (mensagens[i]?.role === "user") {
+      inicioRodada = i;
+      break;
+    }
+  }
+  const temRetorno = mensagens.slice(inicioRodada).some((item) => item?.role === "tool");
   const informativo = !opcoes.relatorio && !opcoes.apresentacao && !temRetorno && pedidoInformativo(pedido);
   const nomes = FERRAMENTAS.map((item) => item.function.name);
   const chaveLeve = chaveGemini(opcoes.chaves);
-  const provaveis = ferramentasProvaveis(pedido);
+  const provaveis = ferramentasProvaveis(roteiro);
   const filtro = temRetorno || informativo || provaveis.length || opcoes.apresentacao
     ? { ferramentas: provaveis, termos: "" }
     : await filtrarPedido(chaveLeve, pedido, nomes);
-  const base = temRetorno ? cortarRetornos(mensagens) : mensagens;
+  const base = cortarRetornos(esquecerConsultasAnteriores(mensagens));
   const escolhidas = filtro.ferramentas.length ? ferramentasDoPedido(opcoes, filtro.ferramentas) : [];
   const ferramentas = informativo ? [] : escolhidas.length ? escolhidas : ferramentasDoPedido(opcoes);
   const roteando = !temRetorno && !opcoes.relatorio && !opcoes.apresentacao && ferramentas.length > 0;
@@ -1427,8 +1445,13 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
           : "\nSQL NO CHAT: é proibido escrever SELECT, bloco de código SQL ou o texto da consulta. " +
             "Se pedirem a consulta ou o SQL, responda só que isso fica disponível para o administrador. Não mostre a consulta."),
       Boolean(opcoes.apresentacao),
-      opcoes.apresentacao ? "" : textoConsultasRelevantes(`${pedido}\n${filtro.termos}`),
+      opcoes.apresentacao ? "" : textoConsultasRelevantes(`${roteiro}\n${filtro.termos}`),
     );
+  if (!roteando && !informativo && mensagens.filter((item) => item?.role === "user").length > 1) {
+    instrucoes +=
+      "\nA última mensagem do usuário é a única pergunta a responder. Não repita a resposta anterior. " +
+      "Se pediram um dado, responda esse dado. Não monte de novo a ficha do processo, a menos que tenham pedido o resumo.";
+  }
   if (conferencia.aviso && !roteando && !informativo && !corrigindo) instrucoes += `\n${conferencia.aviso}\n`;
   const corpo = {
     modelo: modeloDaPergunta(),

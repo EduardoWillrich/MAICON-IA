@@ -172,7 +172,7 @@ export function LogCard({ log }: { log: LogPainel }) {
       <div className="hl-painel">
         <header className="hl-topo">
           <h2>
-            {titulo || "Log"}
+            <span>{titulo || "Log"}</span>
             {ref ? <span className="hl-ref">{ref}</span> : null}
           </h2>
           <span className="hl-contagem">{log.itens.length} {log.itens.length === 1 ? "alteração" : "alterações"}</span>
@@ -182,8 +182,13 @@ export function LogCard({ log }: { log: LogPainel }) {
             {log.itens.map((item, indice) => {
               const mudancas = (item.mudancas ?? [])
                 .map((mudanca) => ({ ...mudanca, de: textoDoCampo(mudanca.campo, mudanca.de), para: textoDoCampo(mudanca.campo, mudanca.para) }))
-                .filter((mudanca) => !codigoInterno(mudanca.campo));
-              const onde = [item.tabela.replace(/^(mov|cad|sys)_/i, "").replaceAll("_", " "), item.computador].filter(Boolean).join(" · ");
+                .filter((mudanca) => !codigoInterno(mudanca.campo))
+                .filter((mudanca) => {
+                  if (!mudanca.de && !mudanca.para) return false;
+                  if (/^n[uú]mero do processo|^processo$/i.test(mudanca.campo) && ref && (mudanca.para === ref || mudanca.de === ref)) return false;
+                  return true;
+                });
+              const onde = [item.tabela.replace(/^(mov|cad|sys)_/i, "").replaceAll("_", " "), item.computador].filter(Boolean).join(" · ").replace(/\bLogistica\b/g, "Logística");
               return (
                 <li key={`${item.hora}-${item.quem}-${indice}`} className="hl-item">
                   <time>{item.hora}</time>
@@ -201,9 +206,17 @@ export function LogCard({ log }: { log: LogPainel }) {
                           <li key={`${mudanca.campo}-${mudanca.de}-${mudanca.para}`}>
                             <span className="hl-campo">{mudanca.campo}</span>
                             <span className="hl-valores">
-                              <span className={mudanca.de ? "hl-antes" : "hl-antes hl-vazio"}>{mudanca.de || "vazio"}</span>
-                              <span className="hl-seta">→</span>
-                              <span className={mudanca.para ? "hl-depois" : "hl-depois hl-vazio"}>{mudanca.para || "vazio"}</span>
+                              {item.tipo === "add" || !mudanca.de ? (
+                                <span className="hl-depois">{mudanca.para || "vazio"}</span>
+                              ) : item.tipo === "del" || !mudanca.para ? (
+                                <span className="hl-antes">{mudanca.de}</span>
+                              ) : (
+                                <>
+                                  <span className="hl-antes">{mudanca.de}</span>
+                                  <span className="hl-seta">→</span>
+                                  <span className="hl-depois">{mudanca.para}</span>
+                                </>
+                              )}
                             </span>
                           </li>
                         ))}

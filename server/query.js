@@ -108,18 +108,45 @@ function atributoExato(attrs, nome) {
   return m ? m[1] : undefined;
 }
 
+function textoXml(valor) {
+  if (valor == null) return "";
+  if (typeof valor === "string") return valor;
+  const texto = typeof valor?.toString === "function" ? valor.toString() : "";
+  return texto && texto !== "[object Object]" ? texto : "";
+}
+
+export function tabelasDaLinha(linha) {
+  const trecho = textoXml(linha?.Trecho);
+  if (/<Tabela\b/i.test(trecho)) return parseTabelasXml(trecho);
+  const camposXml = textoXml(linha?.Campos);
+  const nome = String(linha?.Tabela ?? "").trim();
+  if (!nome && !/<Campo\b/i.test(camposXml)) return [];
+  const data = linha?.Data instanceof Date ? linha.Data.toISOString() : String(linha?.Data ?? "");
+  return [{
+    nome,
+    tipo: Number(linha?.Tipo) || 0,
+    data,
+    indice: Number(linha?.Indice) || 0,
+    campos: parseCamposXml(camposXml),
+  }];
+}
+
 export function montarSelect(xpaths) {
   const lista = Array.isArray(xpaths) ? xpaths : [xpaths];
   const partes = lista.map(
     (xpath) => `
 Select
-  Coalesce(NullIf(LTrim(RTrim(Pessoa.Nome)), ''), Usr.Nome) as Usuario,
+  Usr.Nome as Usuario,
   Ltb.Data_Inicio as Data_Inicio_Transacao,
   Ltb.Data_Termino as Data_Termino_Transacao,
   DateDiff(second, Ltb.Data_Inicio, Ltb.Data_Termino) as Tempo_Transacao,
-  Ltb.Dados_Log.value('(/Log/@WindowsUser)[1]', 'VarChar(300)') as Usuario_Windows,
-  Ltb.Dados_Log.value('(/Log/@ComputerName)[1]', 'VarChar(300)') as Computador,
-  Convert(nVarChar(Max), Ltb.Dados_Log.query('${xpath}')) as Trecho
+  Dlg.value('../@WindowsUser', 'VarChar(Max)') as Usuario_Windows,
+  Dlg.value('../@ComputerName', 'VarChar(Max)') as Computador,
+  Dlg.value('@Nome', 'VarChar(Max)') as Tabela,
+  Dlg.value('@Tipo', 'smallint') as Tipo,
+  Dlg.value('@Data', 'VarChar(Max)') as Data,
+  Dlg.value('@Indice', 'int') as Indice,
+  Convert(nVarChar(Max), Dlg.query('<Campos>{Campo}</Campos>')) as Campos
 From (
   Select
     Ltb.IdUsuario,
@@ -137,32 +164,27 @@ From (
   And
     Ltb.Dados_Log.exist('${xpath}') = 1
 ) Ltb
+Cross Apply
+  Ltb.Dados_Log.nodes('${xpath}') as DadosLog(Dlg)
 Join
   sys_Usuario Usr on Usr.IdUsuario = Ltb.IdUsuario
-Outer Apply (
-  Select Top 1 Pes.Nome
-  From cad_Funcionario Fun
-  Join cad_Pessoa Pes On Pes.IdPessoa = Fun.IdPessoa
-  Where Fun.IdUsuario_Correspondente = Usr.IdUsuario
-    And Pes.Nome Is Not Null
-    And LTrim(RTrim(Pes.Nome)) <> ''
-  Order By Fun.IdPessoa
-) Pessoa
 `,
   );
 
   if (partes.length === 1) {
     return `${partes[0]}
 Order By
-  Ltb.Data_Inicio Desc`;
+  Ltb.Data_Inicio,
+  Dlg.value('@Indice', 'int')`;
   }
 
   return `
-Select Top 800 *
+Select *
 From (
 ${partes.join("\nUnion All\n")}
 ) as Resultado
 Order By
-  Data_Inicio_Transacao Desc
+  Data_Inicio_Transacao,
+  Indice
 `;
 }

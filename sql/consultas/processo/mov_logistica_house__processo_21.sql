@@ -1,0 +1,18 @@
+-- executar_sql
+-- 2026-10-29
+
+SELECT
+    Lhs.Numero_Processo AS Processo,
+    Pai.Nome AS Cliente,
+    Lhs.Referencia_Cliente AS Referencia_Cliente,
+    CASE Lhs.Tipo_Carga WHEN 1 THEN 'Aéreo' WHEN 2 THEN 'LCL' WHEN 3 THEN 'FCL' WHEN 4 THEN 'Rodoviario' ELSE 'Outro' END AS Tipo_Carga,
+    Lhs.Data_Abertura_Processo AS Data_Abertura,
+    Sta.Descricao AS Situacao
+FROM mov_Logistica_House Lhs
+LEFT OUTER JOIN cad_Pessoa Pai ON Pai.IdPessoa = Lhs.IdCliente
+LEFT OUTER JOIN cad_Status_Processo_Logistico Sta ON Sta.IdStatus_Processo_Logistico = Lhs.IdStatus_Processo_Logistico
+WHERE Lhs.Data_Abertura_Processo >= '2026-10-29' AND Lhs.Data_Abertura_Processo < '2026-10-30'
+    AND Lhs.Ativo = 1
+    AND Lhs.Numero_Processo NOT LIKE '%TESTE%'
+    AND Lhs.Numero_Processo NOT LIKE '%DEMU%'
+ORDER BY Lhs.Numero_Processo;

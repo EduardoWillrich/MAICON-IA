@@ -612,6 +612,36 @@ function processoCitado(texto: string): string {
   return texto.toUpperCase().match(/\b[A-Z]{1,4}\d{2,6}-\d{2}\b/)?.[0] ?? "";
 }
 
+function assuntoGeral(texto: string) {
+  return /parad|fila dos setores|painel |\bprazos?\b|pend[eê]ncias do |processos abertos|quais clientes|comiss[aã]o neste|comiss[aã]o de vendedor neste|deste m[eê]s|neste m[eê]s|log das [uú]ltimas|exclus[oõ]es aconteceram|monitorament|\bminhas?\b.{0,40}pend[eê]n/i.test(texto)
+    && !/desse|deste|dele|dela|nesse|neste|mesmo processo/i.test(texto);
+}
+
+function segueProcesso(texto: string) {
+  return /desse|deste|dele|dela|nesse|neste|mesmo processo|mudan[cç]a|altera[cç]|hist[oó]rico|\blogs?\b|frete|taxas?|pagamento|recebimento|comiss|atividad|pend[eê]ncia|cliente|vendedor|situa|refer[eê]ncia|embarc|navio|porto|libera|\bce\b|proposta|oferta|acompanhament|quem alter|quem inclu|o que mudou|resumo/i.test(texto);
+}
+
+function perguntaComProcesso(pergunta: string, anteriores: Mensagem[]): string {
+  if (processoCitado(pergunta) || assuntoGeral(pergunta) || !segueProcesso(pergunta)) return pergunta;
+  const usuarios = anteriores.filter((item) => item.role === "user");
+  for (let i = usuarios.length - 1; i >= 0; i--) {
+    const numero = processoCitado(usuarios[i].content);
+    if (numero) return `${pergunta} ${numero}`;
+  }
+  return pergunta;
+}
+
+function trechoDaPergunta(historico: Mensagem[]): Mensagem[] {
+  let inicio = 0;
+  for (let i = historico.length - 1; i >= 0; i--) {
+    if (historico[i].role === "user") {
+      inicio = i;
+      break;
+    }
+  }
+  return historico.slice(inicio);
+}
+
 function receitaCampoLivre(pergunta: string): Receita[] | null {
   const fala = textoVisivel(pergunta);
   if (!/campo livre/i.test(fala) || !/quem (?:alter|inclu|mud)|hist[oó]rico|tipo fixo/i.test(fala)) return null;
@@ -630,11 +660,10 @@ function receitaItensCarga(pergunta: string, anteriores: Mensagem[]): Receita[] 
     .map((item) => textoVisivel(item.content))
     .join("\n");
   if (/\btaxas?\b|idlogistica_?taxa|atividade|documento|despesa|fatura/i.test(fala)) return null;
-  const contexto = `${fala}\n${recente}`;
   const sobreCarga =
-    /duplicad|container|item de carga|sem bl|lista de carga/i.test(contexto) ||
-    (/quem inclu/i.test(contexto) && /container|\bcarga\b/i.test(contexto));
-  const resumoDesses = /resumo/i.test(fala) && (sobreCarga || /duplicad|container|item de carga|sem bl/i.test(recente));
+    /duplicad|container|item de carga|sem bl|lista de carga/i.test(fala) ||
+    (/quem inclu/i.test(fala) && /container|\bcarga\b/i.test(fala));
+  const resumoDesses = /resumo/i.test(fala) && /duplicad|container|item de carga|sem bl/i.test(recente);
   const resumoGenerico = /resumo (?:operacional )?(?:do|de um) processo/i.test(fala) && !sobreCarga;
   if (resumoGenerico || (!sobreCarga && !resumoDesses)) return null;
   const processo = processoCitado(pergunta) || processoCitado(recente);
@@ -789,13 +818,14 @@ const FERRAMENTAS_PRONTAS = new Set([
 ]);
 
 function respostaProntaDoHistorico(historico: Mensagem[]): string {
+  const trecho = trechoDaPergunta(historico);
   const nomes = new Map<string, string>();
-  for (const item of historico) {
+  for (const item of trecho) {
     if (item.role !== "assistant") continue;
     for (const chamada of item.tool_calls ?? []) nomes.set(chamada.id, chamada.function.name);
   }
-  for (let i = historico.length - 1; i >= 0; i--) {
-    const item = historico[i];
+  for (let i = trecho.length - 1; i >= 0; i--) {
+    const item = trecho[i];
     if (item.role !== "tool") continue;
     if (!FERRAMENTAS_PRONTAS.has(nomes.get(item.tool_call_id) ?? "")) continue;
     const texto = textoDaConsulta(item.content);
@@ -805,7 +835,7 @@ function respostaProntaDoHistorico(historico: Mensagem[]): string {
 }
 
 function textoDosDados(historico: Mensagem[]): string {
-  const ferramentas = historico.filter((m) => m.role === "tool").reverse();
+  const ferramentas = trechoDaPergunta(historico).filter((m) => m.role === "tool").reverse();
   for (const item of ferramentas) {
     const texto = resumirResultado(item.content);
     if (texto) return texto;
@@ -890,8 +920,31 @@ function sqlComPeriodo(sql: string, pedido: string): string {
   return `${texto}\nWHERE ${filtro}`;
 }
 
+function pedeResumoDaResposta(texto: string) {
+  return /^(?:resuma|resume|resumir)(?:\s+(?:isso|a[ií]|essa|este|a resposta|o texto))?[.!? ]*$/i.test(texto.trim());
+}
+
+function resumoCurto(texto: string) {
+  const limpo = texto
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/^#+\s*/gm, "")
+    .replace(/\*\*/g, "")
+    .trim();
+  const linhas = limpo.split(/\n+/).map((linha) => linha.trim()).filter(Boolean);
+  const uteis = linhas.filter((linha) => !/^último acompanhamento/i.test(linha)).slice(0, 6);
+  return uteis.join("\n") || limpo.slice(0, 700);
+}
+
+function pedeFichaDoProcesso(texto: string) {
+  return /\bresumo\b/i.test(texto) || (/\bresum(?:a|e|ir)\b/i.test(texto) && /\bprocesso\b/i.test(texto));
+}
+
 function pedeLog(texto: string) {
-  return /quem (?:inclu|alter|excl|mud|lan[cç]|cri|apag|cadastr|mexeu)|hist[oó]rico|\blog\b|antes e depois|\bid\s?\d{3,}|\bid_?(?:logistica|projeto|tarefa|atividade|pessoa|acompanhamento)\w*/i.test(texto);
+  return /quem (?:inclu|alter|excl|mud|lan[cç]|cri|apag|cadastr|mexeu)|hist[oó]rico|\blogs?\b|antes e depois|mudan[cç]a|altera[cç]|\bid\s?\d{3,}|\bid_?(?:logistica|projeto|tarefa|atividade|pessoa|acompanhamento)\w*/i.test(texto);
+}
+
+function processosDoTexto(texto: string): string[] {
+  return [...new Set((texto.toUpperCase().match(/\b[A-Z]{1,4}\d{2,6}-\d{2}\b/g) ?? []))].slice(0, 3);
 }
 
 function numerosContainer(texto: string): string[] {
@@ -1569,7 +1622,7 @@ type PecaResposta =
   | { tipo: "lista"; titulo: string; sub: string; itens: ItemLista[]; aviso: string };
 
 function limparMarcacao(texto: string) {
-  return texto.replace(/\*\*/g, "").replace(/`/g, "").replace(/\s+/g, " ").trim();
+  return texto.replace(/^#{1,6}\s+/, "").replace(/\*\*/g, "").replace(/`/g, "").replace(/\s+/g, " ").trim();
 }
 
 function classeTag(rotulo: string) {
@@ -1794,7 +1847,7 @@ function PrazosCard({ titulo, sub, itens, aviso }: { titulo: string; sub: string
                     <span className="rotulo">{data.rotulo}</span>
                     <span className="data">
                       {data.data}
-                      {data.hora ? <span className="hora">{data.hora}</span> : null}
+                      {data.hora ? <span className="hora"> {data.hora}</span> : null}
                     </span>
                     {n === item.datas.length - 1 ? <span className="rel">{rotuloRelativo(data.dias)}</span> : null}
                   </div>
@@ -1925,7 +1978,74 @@ function TextoResposta({ texto }: { texto: string }) {
   );
 }
 
+function chaveCampo(rotulo: string) {
+  return rotulo.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
+function atividadeDoItem(item: ItemLista) {
+  const corte = item.titulo.match(/^(.+?)\s+—\s+(.+)$/);
+  if (!corte) return null;
+  const campos = new Map<string, string>();
+  for (const linha of item.linhas) {
+    const par = linha.match(/^([^:]+):\s*(.*)$/);
+    if (par) campos.set(chaveCampo(par[1]), par[2].trim());
+  }
+  if (!campos.has("situacao")) return null;
+  return {
+    codigo: corte[1].trim(),
+    nome: corte[2].trim(),
+    situacao: campos.get("situacao") || "—",
+    responsavel: campos.get("responsavel") || "—",
+    previsao: campos.get("previsao") || "—",
+    observacao: campos.get("observacao") || "",
+    atrasada: /atrasad/i.test(campos.get("situacao") || ""),
+  };
+}
+
+function AtividadesCard({ titulo, itens, aviso }: { titulo: string; itens: NonNullable<ReturnType<typeof atividadeDoItem>>[]; aviso: string }) {
+  return (
+    <article className="resposta">
+      <header className="prazos-topo">
+        <h2>{titulo || "Atividades"}</h2>
+        <div className="resumo">
+          <span>{itens.length === 1 ? "1 atividade" : `${itens.length} atividades`}</span>
+        </div>
+      </header>
+      <ul className="atividades-lista">
+        {itens.map((item, indice) => (
+          <li key={`${item.codigo}-${indice}`} className={`atividade-linha${item.atrasada ? " atrasada" : ""}`}>
+            <span className="atividade-codigo">{item.codigo}</span>
+            <div className="atividade-corpo">
+              <p className="atividade-nome">{item.nome}</p>
+              <dl className="atividade-meta">
+                <div>
+                  <dt>Situação</dt>
+                  <dd>{item.situacao.replace(/\s*·\s*atrasada/i, "")}</dd>
+                </div>
+                <div>
+                  <dt>Responsável</dt>
+                  <dd>{item.responsavel}</dd>
+                </div>
+                <div>
+                  <dt>Previsão</dt>
+                  <dd>{item.previsao}</dd>
+                </div>
+              </dl>
+              {item.observacao ? <p className="atividade-nota">{item.observacao}</p> : null}
+            </div>
+          </li>
+        ))}
+      </ul>
+      {aviso ? <p className="prazos-aviso">{aviso}</p> : null}
+    </article>
+  );
+}
+
 function ListaCard({ titulo, sub, itens, aviso }: { titulo: string; sub: string; itens: ItemLista[]; aviso: string }) {
+  const atividades = itens.map(atividadeDoItem).filter((item): item is NonNullable<ReturnType<typeof atividadeDoItem>> => item !== null);
+  if (atividades.length > 0 && atividades.length === itens.length) {
+    return <AtividadesCard titulo={titulo} itens={atividades} aviso={aviso} />;
+  }
   return (
     <article className="resposta">
       {titulo || sub ? (
@@ -1943,13 +2063,15 @@ function ListaCard({ titulo, sub, itens, aviso }: { titulo: string; sub: string;
         {itens.map((item, indice) => {
           const codigo = item.titulo.match(/\b[A-Za-z]{1,4}\d{2,6}-\d{2}\b/i)?.[0] ?? "";
           const tituloEhCodigo = codigo && item.titulo.trim().toUpperCase() === codigo.toUpperCase();
-          const nome = tituloEhCodigo ? item.linhas[0] ?? "" : item.titulo;
+          const atividade = !tituloEhCodigo ? item.titulo.match(/^(.+?)\s+—\s+(.+)$/) : null;
+          const nome = tituloEhCodigo ? item.linhas[0] ?? "" : atividade?.[2] ?? item.titulo;
           const detalhes = tituloEhCodigo ? item.linhas.slice(1) : item.linhas;
+          const selo = tituloEhCodigo ? codigo : atividade?.[1] ?? codigo;
           const tom = item.tipo === "del" ? "hoje" : item.tipo === "upd" ? "semana" : "";
           return (
             <li key={`${item.titulo}-${item.hora}-${indice}`} className={`prazo-item${tom ? ` ${tom}` : ""}`} style={{ ["--i" as string]: indice }}>
               <div>
-                {codigo ? <span className="codigo">{codigo}</span> : null}
+                {selo ? <span className="codigo">{selo}</span> : null}
                 {nome ? <p className="empresa">{nome}</p> : null}
                 {detalhes.map((linha) => (
                   <p key={linha} className="resposta-detalhe">{linha}</p>
@@ -2110,7 +2232,66 @@ function MarkdownTexto({ texto }: { texto: string }) {
   );
 }
 
+function atividadesDoTexto(texto: string) {
+  const linhas = texto.replace(/\r/g, "").split("\n");
+  const titulo = limparMarcacao((linhas.find((linha) => /^#{1,6}\s+/.test(linha.trim())) ?? "").replace(/^#{1,6}\s+/, "")) || "Atividades";
+  const itens: NonNullable<ReturnType<typeof atividadeDoItem>>[] = [];
+  let atual: NonNullable<ReturnType<typeof atividadeDoItem>> | null = null;
+  const fechar = () => {
+    if (atual?.situacao) itens.push(atual);
+    atual = null;
+  };
+  const abrir = (codigo: string, nome: string) => {
+    fechar();
+    atual = { codigo, nome, situacao: "", responsavel: "—", previsao: "—", observacao: "", atrasada: false };
+  };
+  const guardarCampo = (rotulo: string, valor: string) => {
+    if (!atual) return;
+    const chave = chaveCampo(rotulo);
+    const limpo = valor.replace(/\*\*/g, "").trim();
+    if (chave === "situacao") {
+      atual.situacao = limpo;
+      atual.atrasada = /atrasad/i.test(limpo);
+    } else if (chave === "responsavel") atual.responsavel = limpo || "—";
+    else if (chave === "previsao") atual.previsao = limpo || "—";
+    else if (chave === "observacao") atual.observacao = limpo;
+  };
+  for (const bruta of linhas) {
+    const linha = bruta.trim();
+    if (!linha || /^#{1,6}\s+/.test(linha)) continue;
+    const aninhado = bruta.match(/^\s+-\s+(.+)$/);
+    const negrito = !aninhado ? linha.match(/^\*\*(.+)\*\*$/) : null;
+    const topo = !aninhado ? linha.match(/^-\s+(.+)$/) : null;
+    if (negrito) {
+      const nome = negrito[1].replace(/\*\*/g, "").split(/\s+[·—–]\s+/);
+      if (nome.length >= 2) abrir(nome[0].trim(), nome.slice(1).join(" ").trim());
+      continue;
+    }
+    if (topo) {
+      const cabeca = topo[1].replace(/\*\*/g, "").trim();
+      const nome = cabeca.split(/\s+[—–]\s+|\s+·\s+/);
+      const rotulo = chaveCampo(nome[0].split(":")[0] || "");
+      if (nome.length >= 2 && !["situacao", "responsavel", "previsao", "observacao"].includes(rotulo)) {
+        abrir(nome[0].trim(), nome.slice(1).join(" ").trim());
+        continue;
+      }
+    }
+    const bullet = (aninhado?.[1] || topo?.[1] || "").replace(/\*\*/g, "").trim();
+    if (!bullet || !atual) continue;
+    if (/^previs/i.test(bullet)) {
+      guardarCampo("Previsão", bullet.replace(/^previs\S*\s*/i, ""));
+      continue;
+    }
+    const par = bullet.match(/^([^:]+):\s*(.*)$/);
+    if (par) guardarCampo(par[1], par[2]);
+  }
+  fechar();
+  return itens.length ? { titulo, itens } : null;
+}
+
 function Fragmento({ texto }: { texto: string }) {
+  const atividades = atividadesDoTexto(texto);
+  if (atividades) return <AtividadesCard titulo={atividades.titulo} itens={atividades.itens} aviso="" />;
   const resumo = resumoDoTexto(texto);
   if (resumo) return <ResumoCard resumo={resumo} />;
   const pecas = partirResposta(texto);
@@ -3281,6 +3462,17 @@ export function ChatIa({
       return true;
     };
     try {
+      if (pedeResumoDaResposta(textoVisivel(pergunta))) {
+        const anterior = [...mensagens].reverse().find((item) => item.role === "assistant" && item.content.trim());
+        const content = anterior
+          ? resumoCurto(anterior.content)
+          : "Não há uma resposta anterior para resumir.";
+        historico = [...historico, { role: "assistant", content, duracaoMs: duracaoConsulta() }];
+        setMensagens(historico);
+        setErro("");
+        avisarConclusao(content, false);
+        return;
+      }
       if (/quais contas acessaram a ia/i.test(pergunta)) {
         setStatus("Lendo as contas…");
         const resp = await fetch(`${api}/api/contas?email=${encodeURIComponent(email)}`);
@@ -3328,13 +3520,20 @@ export function ChatIa({
       const cargaDireta = campoDireto || modoRelatorioRef.current || apresentacaoRef.current ? null : receitaItensCarga(pergunta, mensagens);
       const continuacao = modoRelatorioRef.current || apresentacaoRef.current ? null : receitaContinuacao(pergunta, mensagens);
       const rotaDireta = continuacao || cargaDireta || modoRelatorioRef.current || apresentacaoRef.current ? null : receitaDaRota(pergunta, mensagens);
-      let receita = campoDireto ?? cargaDireta ?? continuacao ?? rotaDireta ?? (modoRelatorioRef.current || apresentacaoRef.current ? null : receitaPronta?.length ? receitaPronta : receitaSalva(pergunta));
+      const roteada = perguntaComProcesso(pergunta, mensagens);
+      let receita = campoDireto ?? cargaDireta ?? continuacao ?? rotaDireta ?? (modoRelatorioRef.current || apresentacaoRef.current ? null : receitaPronta?.length ? receitaPronta : receitaSalva(roteada));
       if (!rotaDireta && !receita && !apresentacaoRef.current) {
         const respReceita = await fetch(
           `${api}/api/receitas?email=${encodeURIComponent(email)}&visao=${encodeURIComponent(admin ? visao : setor)}&pergunta=${encodeURIComponent(pergunta)}`,
         );
         const dadosReceita = await respReceita.json().catch(() => null);
         if (Array.isArray(dadosReceita?.receita) && dadosReceita.receita.length) receita = dadosReceita.receita;
+      }
+      if (receita?.some((passo) => passo.nome === "resumo_processo") && !pedeFichaDoProcesso(textoVisivel(pergunta))) {
+        receita = null;
+      }
+      if (assuntoGeral(textoVisivel(pergunta)) && receita?.some((passo) => passo.args?.numero)) {
+        receita = null;
       }
       if (/\btaxa\b/i.test(textoVisivel(pergunta)) && receita?.some((passo) => passo.nome === "explicar_itens_carga")) receita = null;
       if (
@@ -3371,6 +3570,74 @@ export function ChatIa({
         setMensagens(historico);
         setErro("");
         avisarConclusao(resposta.content, false);
+        return;
+      }
+      const processosDiretos = processosDoTexto(textoVisivel(roteada));
+      if (pedeLog(textoVisivel(pergunta)) && processosDiretos.length && !containersDiretos.length && !idsDiretos.length && !taxasDiretas.length) {
+        setStatus("Consultando o log…");
+        historico = [...historico, { role: "assistant", content: "Estou consultando o log." }];
+        setMensagens(historico);
+        const numero = processosDiretos[0];
+        const localizado = await executar("localizar_processo", { numero }, controle.signal);
+        let houseId = "";
+        let masterId = "";
+        try {
+          const dados = JSON.parse(localizado) as {
+            house?: { IdLogistica_House?: number | string; IdLogistica_Master?: number | string }[];
+            master?: { IdLogistica_Master?: number | string }[];
+          };
+          const house = dados.house?.[0];
+          houseId = house?.IdLogistica_House ? String(house.IdLogistica_House) : "";
+          masterId = house?.IdLogistica_Master
+            ? String(house.IdLogistica_Master)
+            : dados.master?.[0]?.IdLogistica_Master
+              ? String(dados.master[0].IdLogistica_Master)
+              : "";
+        } catch {
+          houseId = "";
+        }
+        if (!houseId && !masterId) {
+          const bruto = localizado.trim();
+          const content = /^erro:/i.test(bruto)
+            ? bruto.replace(/^Erro:\s*/i, "")
+            : bruto.startsWith("{") || bruto.startsWith("[") || !bruto
+              ? `Processo ${numero} não encontrado.`
+              : bruto;
+          const resposta: Extract<Mensagem, { role: "assistant" }> = {
+            role: "assistant",
+            content,
+            duracaoMs: duracaoConsulta(),
+          };
+          historico = [...historico.slice(0, -1), resposta];
+          setMensagens(historico);
+          setErro(content);
+          avisarConclusao(content, true);
+          return;
+        }
+        const id = houseId || masterId;
+        const args = {
+          ...argsLogDosIds([id], pergunta),
+          tabela: houseId ? "mov_Logistica_House" : "mov_Logistica_Master",
+          campo_chave: houseId ? "IdLogistica_House" : "IdLogistica_Master",
+          valores: id,
+          ancorar: !periodoPedido(pergunta),
+          processo: numero,
+        };
+        const resultado = await executar("consultar_log", args, controle.signal);
+        const bruto = capturarLog();
+        const log = bruto ? restringirAoProcesso(bruto, pergunta) : null;
+        const falhou = /^erro:/i.test(resultado) && !log;
+        const content = log ? resumoDoLog(log) : resultado.replace(/^Erro:\s*/i, "");
+        const resposta: Extract<Mensagem, { role: "assistant" }> = {
+          role: "assistant",
+          content,
+          duracaoMs: duracaoConsulta(),
+          ...(log ? { log } : {}),
+        };
+        historico = [...historico.slice(0, -1), resposta];
+        setMensagens(historico);
+        setErro(falhou ? content : "");
+        avisarConclusao(content, falhou);
         return;
       }
       if (receita) {
@@ -3527,8 +3794,8 @@ export function ChatIa({
           ];
           continue;
         }
-        const pedeDado = /\b(?:processos?|clientes?|taxas?|atividades?|prazos?|embarques?|desembarques?|propostas?|comiss[oõ]es?)\b/i.test(pergunta);
-        const jaConsultou = historico.some((item) => item.role === "tool");
+        const pedeDado = /\b(?:processos?|clientes?|taxas?|atividades?|prazos?|embarques?|desembarques?|propostas?|comiss[oõ]es?|frete|mudan[cç]as?|hist[oó]rico|logs?)\b/i.test(pergunta);
+        const jaConsultou = trechoDaPergunta(historico).some((item) => item.role === "tool");
         if (!resposta.tool_calls?.length && pedeDado && !jaConsultou && passo < MAX_PASSOS - 1) {
           historico = [
             ...historico,
@@ -3543,11 +3810,12 @@ export function ChatIa({
         historico = [...historico, { ...resposta, content: conteudo }];
         setMensagens(historico);
         if (!resposta.tool_calls?.length) break;
+        const rodadaAtual = trechoDaPergunta(historico);
         const porId = new Map(
-          historico.flatMap((m) => (m.role === "tool" ? [[m.tool_call_id, m.content] as const] : [])),
+          rodadaAtual.flatMap((m) => (m.role === "tool" ? [[m.tool_call_id, m.content] as const] : [])),
         );
         const jaFeitas = new Map<string, string>(
-          historico.flatMap((m) =>
+          rodadaAtual.flatMap((m) =>
             m.role === "assistant"
               ? (m.tool_calls ?? []).flatMap((chamada) => {
                   const conteudo = porId.get(chamada.id);
@@ -3693,7 +3961,16 @@ export function ChatIa({
         if (cartao) ultima.content = cartao;
         else if (temCartao(ultima.content)) {
           const limpo = normalizarCartoes(ultima.content).trim();
-          ultima.content = limpo || "Não consegui montar o cartão desta consulta. Tente de novo.";
+          if (limpo) ultima.content = limpo;
+          else if (logDaPergunta) ultima.content = resumoDoLog(logDaPergunta);
+          else {
+            const daFerramenta = [...historico.slice(corte + 1)]
+              .reverse()
+              .filter((item) => item.role === "tool")
+              .map((item) => textoDaConsulta(item.content))
+              .find((item) => item && !item.startsWith("Erro:") && !item.startsWith("{"));
+            ultima.content = daFerramenta || "Não consegui montar o histórico. Tente de novo.";
+          }
         }
         if (gasto.total > 0) ultima.uso = gasto;
         ultima.duracaoMs = duracaoConsulta();

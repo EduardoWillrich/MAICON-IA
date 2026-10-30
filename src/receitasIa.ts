@@ -1,7 +1,7 @@
 export type Receita = { nome: string; args: Record<string, unknown> };
 
 const CHAVE = "maicon-receitas";
-const PROCESSO = "([A-Za-z]{1,4}\\d{2,6}-\\d{2})";
+const PROCESSO = "\\b([A-Za-z]{1,4}\\d{2,6}-\\d{2})\\b";
 
 const FIXAS: Record<string, Receita[]> = {
   "monte o painel do ti das últimas 24 horas.": [{ nome: "painel_ti", args: { horas: 24 } }],
@@ -116,16 +116,30 @@ const VARIAVEIS: { re: RegExp; montar: (m: RegExpMatchArray) => Receita[] }[] = 
     montar: (m) => [{ nome: "documental_ce", args: { foco: "processo", caso: "ambos", numero: m[1].toUpperCase() } }],
   },
   {
-    re: /^(?!.*(?:hist[oó]rico|\blog\b|quem alter|quem inclu|quem excl|quem mud)).*\b((?:im|ia|ea|em)\d{2,6}-\d{2})\b/i,
-    montar: (m) => {
-      const numero = m[1].toUpperCase();
-      const pedido = m.input ?? "";
-      if (/\btaxas?\b/i.test(pedido)) return [{ nome: "taxas_processo", args: { numero } }];
-      if (/rota|navio|rastre/i.test(pedido)) return [{ nome: "rota_processo", args: { numero } }];
-      if (/acompanhament/i.test(pedido)) return [{ nome: "acompanhamentos_processo", args: { numero } }];
-      if (/proposta|oferta/i.test(pedido)) return [{ nome: "proposta_processo", args: { numero } }];
-      return [{ nome: "resumo_processo", args: { numero } }];
-    },
+    re: new RegExp(`(?:frete|pagamento|recebimento)[\\s\\S]{0,80}?${PROCESSO}|${PROCESSO}[\\s\\S]{0,80}?(?:frete|pagamento|recebimento)`, "i"),
+    montar: (m) => [{ nome: "taxas_processo", args: { numero: (m[1] || m[2]).toUpperCase() } }],
+  },
+  {
+    re: new RegExp(`comiss[\\s\\S]{0,80}?${PROCESSO}|${PROCESSO}[\\s\\S]{0,80}?comiss`, "i"),
+    montar: (m) => [{ nome: "comissao_periodo", args: { numero: (m[1] || m[2]).toUpperCase() } }],
+  },
+  {
+    re: new RegExp(`(?:\\bce\\b|liberad|documenta)[\\s\\S]{0,80}?${PROCESSO}|${PROCESSO}[\\s\\S]{0,80}?(?:\\bce\\b|liberad|documenta)`, "i"),
+    montar: (m) => [{ nome: "documental_ce", args: { foco: "processo", caso: "ambos", numero: (m[1] || m[2]).toUpperCase() } }],
+  },
+  {
+    re: new RegExp(`(?:embarc|porto|desembarc)[\\s\\S]{0,80}?${PROCESSO}|${PROCESSO}[\\s\\S]{0,80}?(?:embarc|porto|desembarc)`, "i"),
+    montar: (m) => [{ nome: "rota_processo", args: { numero: (m[1] || m[2]).toUpperCase() } }],
+  },
+  {
+    re: new RegExp(`(?:atividad|pend[eê]ncia)[\\s\\S]{0,80}?${PROCESSO}|${PROCESSO}[\\s\\S]{0,80}?(?:atividad|pend[eê]ncia)`, "i"),
+    montar: (m) => [{
+      nome: "andamento_atividade",
+      args: {
+        numero: (m[1] || m[2]).toUpperCase(),
+        pendentes: /pendent/i.test(m.input ?? ""),
+      },
+    }],
   },
 ];
 

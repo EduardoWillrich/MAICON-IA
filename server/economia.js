@@ -1,5 +1,6 @@
 const CUMPRIMENTO = /^(?:oi|ol[aá]|opa|e a[ií]|bom dia|boa tarde|boa noite|obrigad[oa]|valeu|ok|beleza|tudo bem|quem [eé] voc[eê]|o que voc[eê] (?:faz|pode fazer)|como voc[eê] funciona|ajuda|help)[!.?\s]*$/i;
-const DADO = /\b(?:select|sql|relat[oó]rios?|processos?|clientes?|taxas?|faturas?|gr[aá]ficos?|e-?mails?|containers?|comiss[oõ]es?|atividades?|propostas?|embarques?|quantos|quantas|liste|listar|mostre|mostrar)\b|\blogs?(?=\s|[?.!,]|$)|(?:^|\s)(?:IM|IA|EA|EM)\d{2,6}-\d{2}\b/i;
+const PROCESSO = /\b([A-Za-z]{1,4}\d{2,6}-\d{2})\b/i;
+const DADO = /\b(?:select|sql|relat[oó]rios?|processos?|clientes?|taxas?|faturas?|gr[aá]ficos?|e-?mails?|containers?|comiss[oõ]es?|atividades?|propostas?|embarques?|quantos|quantas|liste|listar|mostre|mostrar)\b|\blogs?(?=\s|[?.!,]|$)|\b[A-Za-z]{1,4}\d{2,6}-\d{2}\b/i;
 
 export const MODELOS_LEVES = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
 export const MODELOS_RESPOSTA = ["gemini-3.5-flash", "gemini-3.5-flash-lite"];
@@ -31,15 +32,13 @@ export function respostaImediata(texto) {
     return "Olá! Sou o Maicon. Informe um processo, cliente, assunto ou período e eu consulto para você.";
   }
   const falaProcesso = /\bprocesso\b/i.test(pedido);
-  const temNumero = /(?:^|\s)(?:IM|IA|EA|EM)\d{2,6}-\d{2}\b/i.test(pedido);
+  const temNumero = PROCESSO.test(pedido);
   const temAlvo = /\b(?:cliente|refer[eê]ncia|n[uú]mero)\s+[\w.-]{2,}/i.test(pedido);
   if (falaProcesso && !temNumero && !temAlvo && pedido.length < 180) {
     return "Informe o número do processo, como IM5328-26, ou o nome do cliente/referência para eu localizar as informações.";
   }
   return "";
 }
-
-const PROCESSO = /(?:^|\s)(?:IM|IA|EA|EM)\d{2,6}-\d{2}\b/i;
 
 function modalidadeCitada(texto) {
   return String(texto ?? "").toUpperCase().match(/\b(IA|EA|IM|EM)\b/)?.[1] ?? "";
@@ -81,10 +80,10 @@ function argsDocumental(texto) {
   const temCe = /documental\s+ce|\bce\b/i.test(pedido);
   const temIm = /documental\s+im|\bim\b/i.test(pedido);
   const caso = temCe && temIm ? "ambos" : temIm ? "im" : "ce";
-  const numero = pedido.match(PROCESSO)?.[0]?.trim().toUpperCase() ?? "";
+  const numero = pedido.match(PROCESSO)?.[1]?.toUpperCase() ?? "";
   let foco = "fila";
   if (/campo livre/i.test(pedido)) foco = "campos";
-  else if (numero && /no processo|neste processo|do processo/i.test(pedido)) foco = "processo";
+  else if (numero) foco = "processo";
   else if (/liberad/i.test(pedido)) foco = "sem_liberacao";
   else if (/falta|pendent/i.test(pedido)) foco = "pendencias";
   return { foco, caso, ...(numero ? { numero } : {}) };
@@ -95,6 +94,28 @@ function setorDaPergunta(texto) {
   if (/inside/i.test(pedido)) return "inside";
   if (/comercial/i.test(pedido)) return "comercial";
   return "operacional";
+}
+
+function pedeResumoProcesso(pedido) {
+  return /\bresumo\b/i.test(pedido) || (/\bresum(?:a|e|ir)\b/i.test(pedido) && /\bprocesso\b/i.test(pedido));
+}
+
+const ASSUNTO_GERAL = /parad|fila dos setores|painel |\bprazos?\b|pend[eê]ncias do |processos abertos|quais clientes|comiss[aã]o neste|comiss[aã]o de vendedor neste|deste m[eê]s|neste m[eê]s|log das [uú]ltimas|exclus[oõ]es aconteceram|monitorament|\bminhas?\b.{0,40}pend[eê]n/i;
+const SEGUE_PROCESSO = /desse|deste|dele|dela|nesse|neste|mesmo processo|mudan[cç]a|altera[cç]|hist[oó]rico|\blogs?\b|frete|taxas?|pagamento|recebimento|comiss|atividad|pend[eê]ncia|cliente|vendedor|situa|refer[eê]ncia|embarc|navio|porto|libera|\bce\b|proposta|oferta|acompanhament|quem alter|quem inclu|o que mudou|resumo/i;
+
+export function pedidoDaRodada(mensagens) {
+  const lista = Array.isArray(mensagens) ? mensagens : [];
+  const atual = String([...lista].reverse().find((item) => item?.role === "user")?.content ?? "");
+  if (!atual.trim() || PROCESSO.test(atual)) return atual;
+  const aponta = /desse|deste|dele|dela|nesse|neste|mesmo processo/i.test(atual);
+  if (ASSUNTO_GERAL.test(atual) && !aponta) return atual;
+  if (!SEGUE_PROCESSO.test(atual)) return atual;
+  const usuarios = lista.filter((item) => item?.role === "user");
+  for (let i = usuarios.length - 2; i >= 0; i--) {
+    const numero = String(usuarios[i]?.content ?? "").match(PROCESSO)?.[1];
+    if (numero) return `${atual} ${numero.toUpperCase()}`;
+  }
+  return atual;
 }
 
 export function ferramentasProvaveis(texto) {
@@ -114,39 +135,47 @@ export function ferramentasProvaveis(texto) {
   if (/desembar[qc]|(?<!des)embar[qc]|entrega|\bprazos?\b/i.test(pedido) && !PROCESSO.test(pedido)) return ["prazos"];
   if (/\btaxas?\b/i.test(pedido) && /m[eê]s/i.test(pedido) && !PROCESSO.test(pedido)) return ["painel_financeiro"];
   if (/painel financeiro/i.test(pedido)) return ["painel_financeiro"];
-  if (/comiss/i.test(pedido) && !PROCESSO.test(pedido)) return ["comissao_periodo"];
+  if (/\bcomiss/i.test(pedido)) return ["comissao_periodo"];
+  if (/(?:\bce\b|liberad|documenta)/i.test(pedido) && PROCESSO.test(pedido)) return ["documental_ce"];
   if (/painel do ti|quem mais gravou log/i.test(pedido)) return ["painel_ti"];
   if (/exclus|log das [uú]ltimas|log recente/i.test(pedido)) return ["log_recente"];
   if (/monitorament/i.test(pedido)) return ["monitoramentos_alterados"];
-  if (/\btaxas?\b/i.test(pedido)) return [...base, "taxas_processo"];
-  if (/rota|navio|rastre/i.test(pedido)) return [...base, "rota_processo"];
+  if (/\btaxas?\b|\bfrete\b|\bpagamento\b|\brecebimento\b/i.test(pedido)) return [...base, "taxas_processo"];
+  if (/rota|navio|rastre|porto|embarc/i.test(pedido)) return [...base, "rota_processo"];
   if (/acompanhament/i.test(pedido)) return [...base, "acompanhamentos_processo"];
   if (/proposta|oferta/i.test(pedido)) return [...base, "proposta_processo"];
-  if (/resumo/i.test(pedido) && /\bprocesso\b/i.test(pedido)) return [...base, "resumo_processo"];
-  if (/hist[oó]rico|quem alter|o que mudou/i.test(pedido)) return [...base, "consultar_log", "o_que_mudou"];
+  if (pedeResumoProcesso(pedido) && PROCESSO.test(pedido)) return ["resumo_processo"];
+  if (/atividad|pend[eê]ncia/i.test(pedido) && PROCESSO.test(pedido)) return ["andamento_atividade"];
+  if (/hist[oó]rico|quem alter|o que mudou|\blogs?\b|antes e depois|mudan[cç]a|altera[cç]|mexeu/i.test(pedido)) return [...base, "consultar_log", "o_que_mudou"];
   if (/e-?mail|caixa de entrada/i.test(pedido)) return ["emails_gmail"];
   if (/relat[oó]rio|quantos|quantas|\bliste\b|\blistar\b|\bmostre\b|\bmostrar\b/i.test(pedido)) {
     return ["buscar_tabelas", "listar_colunas", "executar_sql"];
   }
-  if (/(?:^|\s)(?:IM|IA|EA|EM)\d{2,6}-\d{2}\b/i.test(pedido)) {
-    return [...base, "consultar_dados", "resumo_processo"];
+  if (PROCESSO.test(pedido)) {
+    return [...base, "consultar_dados"];
   }
   return [];
 }
 
 export function chamadaDireta(texto) {
   const pedido = String(texto ?? "");
-  if (/\bprocessos?\s+abertos?\b/i.test(pedido) && !/fila dos setores|clientes|ficha do cliente/i.test(pedido) && !/(?:IM|IA|EA|EM)\d{2,6}-\d{2}/i.test(pedido)) {
+  if (/\bprocessos?\s+abertos?\b/i.test(pedido) && !/fila dos setores|clientes|ficha do cliente/i.test(pedido) && !PROCESSO.test(pedido)) {
     return { nome: "processos_abertos", args: { quando: /\bhoje\b/i.test(pedido) ? "hoje" : "abertos" } };
   }
-  const numero = pedido.match(/(?:^|\s)((?:IM|IA|EA|EM)\d{2,6}-\d{2})\b/i)?.[1]?.toUpperCase();
-  const historico = /quem (?:inclu|alter|excl|mud)|hist[oó]rico|\blog\b|antes e depois/i.test(pedido);
+  const numero = pedido.match(PROCESSO)?.[1]?.toUpperCase();
+  const historico = /quem (?:inclu|alter|excl|mud|mexeu)|hist[oó]rico|\blogs?\b|antes e depois|mudan[cç]a|altera[cç]/i.test(pedido);
   if (numero && !historico) {
-    if (/\btaxas?\b/i.test(pedido)) return { nome: "taxas_processo", args: { numero } };
-    if (/rota|navio|rastre/i.test(pedido)) return { nome: "rota_processo", args: { numero } };
+    if (/\btaxas?\b|\bfrete\b|\bpagamento\b|\brecebimento\b/i.test(pedido)) return { nome: "taxas_processo", args: { numero } };
+    if (/rota|navio|rastre|porto|embarc/i.test(pedido)) return { nome: "rota_processo", args: { numero } };
     if (/acompanhament/i.test(pedido)) return { nome: "acompanhamentos_processo", args: { numero } };
     if (/proposta|oferta/i.test(pedido)) return { nome: "proposta_processo", args: { numero } };
-    return { nome: "resumo_processo", args: { numero } };
+    if (/\bcomiss/i.test(pedido)) return { nome: "comissao_periodo", args: { numero } };
+    if (/\bce\b|documenta|libera/i.test(pedido)) return { nome: "documental_ce", args: { numero, foco: "processo", caso: "ambos" } };
+    if (/atividad|pend[eê]ncia/i.test(pedido)) {
+      return { nome: "andamento_atividade", args: { numero, pendentes: /pendent/i.test(pedido) } };
+    }
+    if (pedeResumoProcesso(pedido)) return { nome: "resumo_processo", args: { numero } };
+    return null;
   }
   const ferramentas = ferramentasProvaveis(pedido);
   if (ferramentas.length !== 1) return null;

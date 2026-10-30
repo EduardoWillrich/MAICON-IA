@@ -1,7 +1,7 @@
 import sql from "mssql";
 import { nomeProprio } from "./itensCarga.js";
 import { enriquecerNomes } from "./nomes.js";
-import { montarSelect, montarXpaths, parseTabelasXml } from "./query.js";
+import { montarSelect, montarXpaths, tabelasDaLinha } from "./query.js";
 
 const PROCESSO = /^[A-Z]{1,4}\d{2,6}-\d{2}$/i;
 
@@ -66,7 +66,7 @@ async function lerFatia(pool, xpaths, inicio, fim) {
   const resultado = await pedido.query(montarSelect(xpaths));
   const eventos = [];
   for (const linha of resultado.recordset) {
-    for (const tabela of parseTabelasXml(linha.Trecho)) {
+    for (const tabela of tabelasDaLinha(linha)) {
       eventos.push({
         usuario: nomeProprio(linha.Usuario),
         dataInicioTransacao: iso(linha.Data_Inicio_Transacao),
@@ -76,9 +76,9 @@ async function lerFatia(pool, xpaths, inicio, fim) {
         computador: linha.Computador ?? "",
         tabela: tabela.nome,
         tipo: tabela.tipo,
-        data: iso(linha.Data_Inicio_Transacao),
+        data: iso(tabela.data) || iso(linha.Data_Inicio_Transacao),
         indice: tabela.indice,
-        tempoTransacao: 0,
+        tempoTransacao: Number(linha.Tempo_Transacao) || 0,
         campos: tabela.campos,
       });
     }

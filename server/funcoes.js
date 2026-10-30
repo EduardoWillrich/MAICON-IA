@@ -3,7 +3,7 @@ import { pessoaDaConta } from "./pessoaConta.js";
 import { enriquecerNomes } from "./nomes.js";
 import { nomeDe, pessoasPorLogin, relogioLog } from "./pessoas.js";
 import { nomeProprio } from "./itensCarga.js";
-import { montarSelect, parseCamposXml, parseTabelasXml } from "./query.js";
+import { montarSelect, parseCamposXml, tabelasDaLinha } from "./query.js";
 import { explicarCampoLivre } from "./campoLivre.js";
 import { explicarItensCarga } from "./itensCarga.js";
 
@@ -398,6 +398,24 @@ async function pendencias(pool, args, ctx) {
   return `${titulo} de ${String(pessoa.Nome).trim()}\n${lista(linhas, "Nenhuma pendência nesse recorte.")}`;
 }
 
+function rotuloCampoLog(nome) {
+  return String(nome ?? "")
+    .replace(/^Id(?=[A-Z_])/, "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function valorLegivelLog(valor) {
+  const texto = String(valor ?? "").trim();
+  const americano = texto.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{2}:\d{2})(?::\d{2})?)?$/);
+  if (!americano) return texto || "(vazio)";
+  const mes = americano[1].padStart(2, "0");
+  const dia = americano[2].padStart(2, "0");
+  if (Number(americano[1]) > 12) return texto;
+  return americano[4] ? `${dia}/${mes}/${americano[3]} ${americano[4]}` : `${dia}/${mes}/${americano[3]}`;
+}
+
 async function oQueMudou(pool, args, ctx) {
   if (ctx.acesso?.fazerLog === false && ctx.acesso?.papel !== "admin") {
     return "Este acesso não inclui o histórico de alterações.";
@@ -415,7 +433,7 @@ async function oQueMudou(pool, args, ctx) {
   const resultado = await request.query(montarSelect([xpath]));
   const eventos = [];
   for (const linha of resultado.recordset) {
-    for (const tabela of parseTabelasXml(linha.Trecho)) {
+    for (const tabela of tabelasDaLinha(linha)) {
       eventos.push({
         usuario: linha.Usuario,
         data: linha.Data_Inicio_Transacao,
@@ -433,10 +451,11 @@ async function oQueMudou(pool, args, ctx) {
       return String(item.nome).toLowerCase().replace(/_/g, "").includes(campo);
     });
     for (const item of campos) {
-      const agora = item.valorExibicao || item.valor || "(vazio)";
-      const anterior = item.valorAnteriorExibicao || item.valorAnterior;
-      const antes = anterior != null && anterior !== "" ? `${anterior} → ` : "";
-      mudancas.push(`${dataCurta(evento.data)} · ${nomeProprio(evento.usuario) || "usuário"} · ${item.nome}: ${antes}${agora}`);
+      const agora = valorLegivelLog(item.valorExibicao || item.valor || "(vazio)");
+      const anteriorBruto = item.valorAnteriorExibicao || item.valorAnterior;
+      const anterior = anteriorBruto != null && anteriorBruto !== "" ? valorLegivelLog(anteriorBruto) : "";
+      const antes = anterior ? `${anterior} → ` : "";
+      mudancas.push(`${dataCurta(evento.data)} · ${nomeProprio(evento.usuario) || "usuário"} · ${rotuloCampoLog(item.nome)}: ${antes}${agora}`);
       if (mudancas.length >= 20) break;
     }
     if (mudancas.length >= 20) break;
@@ -455,7 +474,15 @@ async function propostaProcesso(pool, args, recorte) {
       Ofe.Situacao AS Situacao_Oferta,
       Ofe.Data_Validade,
       Pro.Numero_Proposta,
-      Pro.Situacao AS Situacao_Proposta,
+      CASE Pro.Situacao
+        WHEN 1 THEN 'Aguardando aprovação'
+        WHEN 2 THEN 'Aprovada'
+        WHEN 3 THEN 'Não aprovada'
+        WHEN 4 THEN 'Não enviada'
+        WHEN 5 THEN 'Pré-proposta'
+        WHEN 6 THEN 'Enviada'
+        ELSE CAST(Pro.Situacao AS varchar(20))
+      END AS Situacao_Proposta,
       Pro.Data_Proposta,
       Pro.Data_Aprovacao
     FROM mov_Logistica_House Lhs
@@ -470,20 +497,23 @@ async function propostaProcesso(pool, args, recorte) {
     linha.Numero_Proposta ? `Proposta: ${linha.Numero_Proposta}` : "Proposta: não ligada.",
     linha.Data_Proposta ? `Data da proposta: ${dataCurta(linha.Data_Proposta)}` : "",
     linha.Data_Aprovacao ? `Aprovada em: ${dataCurta(linha.Data_Aprovacao)}` : linha.Numero_Proposta ? "Aprovação: ainda não registrada." : "",
-    linha.Situacao_Proposta != null && linha.Situacao_Proposta !== "" ? `Situação da proposta (código): ${linha.Situacao_Proposta}` : "",
+    linha.Situacao_Proposta ? `Situação da proposta: ${linha.Situacao_Proposta}` : "",
     linha.Numero_Oferta ? `Oferta: ${linha.Numero_Oferta}` : "Oferta: não ligada.",
     linha.Data_Validade ? `Validade da oferta: ${dataCurta(linha.Data_Validade)}` : "",
-    linha.Situacao_Oferta != null && linha.Situacao_Oferta !== "" ? `Situação da oferta (código): ${linha.Situacao_Oferta}` : "",
   ]);
 }
 
 async function comissaoPeriodo(pool, args, recorte, ctx) {
   if (recorte?.semComercial || recorte?.semComissao) return "Comissão não faz parte deste acesso.";
+  const numero = String(args.numero ?? "").trim();
   const inicio = parseData(args.inicio) || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
   const fim = parseData(args.fim) || new Date();
   const request = pool.request();
   request.input("ini", sql.Date, inicio);
   request.input("fim", sql.Date, fim);
+  if (numero) {
+    request.input("n", sql.VarChar(30), String(numero).trim());
+  }
   let filtroPessoa = "";
   if (!["tudo", "financeiro", "gerencia"].includes(recorte?.visao)) {
     const pessoa = await pessoaDaConta(pool, ctx.email, ctx.nome);
@@ -502,15 +532,17 @@ async function comissaoPeriodo(pool, args, recorte, ctx) {
     JOIN mov_Oferta_Frete_Comissao Com ON Com.IdOferta_Frete = Lhs.IdOferta_Frete
     LEFT JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
     LEFT JOIN cad_Pessoa Pes ON Pes.IdPessoa = Com.IdPessoa
-    WHERE Lhs.Data_Abertura_Processo >= @ini
-      AND Lhs.Data_Abertura_Processo < DATEADD(day, 1, @fim)
+    WHERE ${numero ? "Lhs.Numero_Processo = @n" : "Lhs.Data_Abertura_Processo >= @ini AND Lhs.Data_Abertura_Processo < DATEADD(day, 1, @fim)"}
       ${filtroPessoa}
     ORDER BY Lhs.Data_Abertura_Processo DESC`);
   const linhas = r.recordset.map(
     (linha) =>
       `${linha.Numero_Processo} · ${String(linha.Cliente ?? "").trim()} · ${String(linha.Comissionado ?? "comissionado").trim()} · ${dinheiro(linha.Valor_Comissao) || "R$ 0,00"}`,
   );
-  return `Comissões de processos abertos entre ${dataDoPeriodo(inicio)} e ${dataDoPeriodo(fim)}\n${lista(linhas, "Nenhuma comissão nesse período.")}${linhas.length === 20 ? "\n\nMostrei 20 registros." : ""}`;
+  const titulo = numero
+    ? `Comissões do processo ${String(numero).trim()}`
+    : `Comissões de processos abertos entre ${dataDoPeriodo(inicio)} e ${dataDoPeriodo(fim)}`;
+  return `${titulo}\n${lista(linhas, "Nenhuma comissão nesse recorte.")}${linhas.length === 20 ? "\n\nMostrei 20 registros." : ""}`;
 }
 
 async function idDaCarteira(pool, recorte, ctx) {
@@ -2499,11 +2531,15 @@ export function ferramentaDaVisao(nome, setor) {
 }
 
 async function andamentoAtividade(pool, args) {
-  const numero = String(args.numero ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
+  const bruto = String(args.numero ?? "");
+  const citado = bruto.match(/\b([A-Za-z]{1,4}\d{2,6}-\d{2})\b/i);
+  const numero = (citado?.[1] ?? bruto).replace(/\s+/g, " ").trim().slice(0, 40).toUpperCase();
   const codigo = String(args.codigo ?? "").trim().slice(0, 60);
+  const pendentes = args.pendentes === true || args.pendentes === "true" || args.pendentes === 1;
   if (!numero) throw new Error("Informe o número do processo, como IM5328-26.");
+  const limite = pendentes ? 40 : 5;
   const r = await pool.request().input("n", sql.VarChar(40), numero).input("c", sql.VarChar(60), codigo).query(`
-    SELECT TOP 5
+    SELECT TOP ${limite}
       Lhs.Numero_Processo,
       Tar.Codigo,
       Tar.Descricao AS Atividade,
@@ -2530,15 +2566,17 @@ async function andamentoAtividade(pool, args) {
     ) Aco
     WHERE Lhs.Numero_Processo = @n
       AND (@c = '' OR CAST(Tar.Codigo AS varchar(60)) = @c OR Tar.Descricao LIKE '%' + @c + '%')
-    ORDER BY CASE WHEN Ati.Situacao IN (4, 5, 6) THEN 1 ELSE 0 END, Ati.Previsao_Termino DESC`);
+      ${pendentes ? "AND Ati.Data_Termino IS NULL AND Ati.Situacao NOT IN (4, 5, 6)" : ""}
+    ORDER BY CASE WHEN Ati.Situacao IN (4, 5, 6) THEN 1 ELSE 0 END, CASE WHEN Ati.Previsao_Termino IS NULL THEN 1 ELSE 0 END, Ati.Previsao_Termino`);
   const linhas = r.recordset;
   if (!linhas.length) {
+    if (pendentes) return `Nenhuma atividade pendente no processo ${numero}.`;
     return codigo
       ? `Não encontrei a atividade ${codigo} no processo ${numero}.`
       : `Não encontrei atividades no processo ${numero}.`;
   }
   const blocos = linhas.map((linha) => {
-    const nome = [String(linha.Codigo ?? "").trim(), String(linha.Atividade ?? "").trim()].filter(Boolean).join(" · ");
+    const nome = [String(linha.Codigo ?? "").trim(), String(linha.Atividade ?? "").trim()].filter(Boolean).join(" — ") || "Atividade";
     const situacao = Number(linha.Situacao);
     const quando = dataCurta(linha.Data_Termino || linha.Data_Inicio);
     const status =
@@ -2556,20 +2594,22 @@ async function andamentoAtividade(pool, args) {
     const inicio = dataCurta(linha.Previsao_Inicio);
     const termino = dataCurta(linha.Previsao_Termino);
     const previsao = inicio && termino && inicio !== termino ? previsaoDe(linha.Previsao_Inicio, linha.Previsao_Termino) : termino || inicio ? `Previsão ${termino || inicio}` : "";
+    const previsaoTexto = previsao.replace(/^Previsão\s+/i, "");
     const atrasada = ![4, 5, 6].includes(situacao) && linha.Previsao_Termino && new Date(linha.Previsao_Termino) < new Date();
     const itens = [
-      `- **Situação:** ${status}${atrasada ? " · **atrasada**" : ""}`,
-      linha.Responsavel ? `- **Responsável:** ${String(linha.Responsavel).trim()}` : "",
-      previsao ? `- **${previsao}**` : "",
-      notaCurta(linha.Observacao) ? `- **Observação:** ${notaCurta(linha.Observacao)}` : "",
+      `  - Situação: ${status}${atrasada ? " · atrasada" : ""}`,
+      linha.Responsavel ? `  - Responsável: ${String(linha.Responsavel).trim()}` : "",
+      previsaoTexto ? `  - Previsão: ${previsaoTexto}` : "",
+      notaCurta(linha.Observacao) ? `  - Observação: ${notaCurta(linha.Observacao)}` : "",
     ].filter(Boolean);
-    return `**${nome || "Atividade"}**\n${itens.join("\n")}`;
+    return `- ${nome}\n${itens.join("\n")}`;
   });
   const ultimo = linhas[0];
-  const acompanhamento = ultimo.Acompanhamento_Data
+  const acompanhamento = codigo && !pendentes && ultimo.Acompanhamento_Data
     ? `\n\n**Último acompanhamento do processo** (${dataCurta(ultimo.Acompanhamento_Data)}${ultimo.Acompanhamento_Responsavel ? `, ${String(ultimo.Acompanhamento_Responsavel).trim()}` : ""}):\n${notaCurta(ultimo.Acompanhamento) || "sem descrição"}`
     : "";
-  return `### Processo ${String(ultimo.Numero_Processo).trim()}\n\n${blocos.join("\n\n")}${acompanhamento}`;
+  const titulo = pendentes ? `Atividades pendentes de ${String(ultimo.Numero_Processo).trim()}` : `Processo ${String(ultimo.Numero_Processo).trim()}`;
+  return `### ${titulo}\n\n${blocos.join("\n\n")}${acompanhamento}`;
 }
 
 function embalagem(resultado) {
