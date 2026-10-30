@@ -36,6 +36,23 @@ function slug(texto) {
     .slice(0, 70);
 }
 
+function semDatasFixas(sql) {
+  return String(sql ?? "")
+    .replace(/'(20\d{2}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?)'/g, "'{data}'")
+    .replace(/\b20\d{2}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?\b/g, "{data}");
+}
+
+function pedeTipoCarga(texto) {
+  return /\b(?:fcl|lcl|a[eé]re[oa]|rodovi[aá]ri[oa]|mar[ií]tim[oa]|tipo\s+de\s+carga|tipo_carga)\b/i.test(texto);
+}
+
+function semTipoCarga(sql) {
+  return String(sql ?? "").replace(
+    /(?:\s+and)?\s+(?:\w+\.)?tipo_carga\s*(?:=|<>|!=|in)\s*(?:\([^)]*\)|'\d+'|\d+)/gi,
+    "",
+  );
+}
+
 function modelo(sql) {
   return sql
     .replace(/;\s*$/g, "")
@@ -63,7 +80,7 @@ export function textoConsultasProntas() {
     const corpo = readFileSync(path.join(PASTA, arquivo), "utf8")
       .replace(/^--.*\n/gm, "")
       .trim();
-    const semExemplo = corpo.replace(/\b(?:IM|IA|EM|EA)\d{3,5}-\d{2}(?:\s+TESTE)?\b/gi, "{processo}");
+    const semExemplo = semDatasFixas(corpo.replace(/\b(?:IM|IA|EM|EA)\d{3,5}-\d{2}(?:\s+TESTE)?\b/gi, "{processo}"));
     return `/* ${arquivo} */\n${semExemplo}`;
   });
   return `CONSULTAS PRONTAS (já validadas; reuse uma destas se servir à pergunta, trocando só o filtro):\n${blocos.join("\n\n")}\n`;
@@ -101,10 +118,11 @@ export function textoConsultasRelevantes(termo, limite = 3) {
     .slice(0, limite);
   if (!ranqueadas.length) return "";
   const blocos = ranqueadas.map((item) => {
-    const semExemplo = item.corpo.replace(/\b(?:IM|IA|EM|EA)\d{3,5}-\d{2}(?:\s+TESTE)?\b/gi, "{processo}");
+    const base = semDatasFixas(item.corpo.replace(/\b(?:IM|IA|EM|EA)\d{3,5}-\d{2}(?:\s+TESTE)?\b/gi, "{processo}"));
+    const semExemplo = pedeTipoCarga(termo) ? base : semTipoCarga(base);
     return `/* ${item.arquivo} */\n${semExemplo.slice(0, 1600)}`;
   });
-  return `CONSULTAS PRONTAS RELACIONADAS AO PEDIDO:\n${blocos.join("\n\n")}\n`;
+  return `CONSULTAS PRONTAS RELACIONADAS AO PEDIDO. Reuse tabelas, JOINs e colunas. Troque {data} pelo período desta pergunta. Se nenhuma servir, escreva um SELECT novo. Não copie a data do exemplo:\n${blocos.join("\n\n")}\n`;
 }
 
 export function salvarConsulta(sqlTexto, origem) {

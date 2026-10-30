@@ -592,6 +592,13 @@ html.tema-claro .painel-ti {
 }
 .chat-assistant p { margin: 0 0 8px; }
 .chat-assistant p:last-child { margin-bottom: 0; }
+.chat-lista-consulta { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 900px; margin: 0 auto 12px; }
+.chat-lista-consulta .chat-relatorio-tabela-wrap { border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 16px; background: #1a1a1f; }
+.chat-assistant .chat-lista-consulta .chat-relatorio-tabela th:last-child,
+.chat-assistant .chat-lista-consulta .chat-relatorio-tabela td:last-child { width: auto; white-space: normal; }
+.chat-lista-consulta .chat-relatorio-tabela th:first-child,
+.chat-lista-consulta .chat-relatorio-tabela td.chat-lista-processo { min-width: 8.5rem; white-space: nowrap; }
+html.tema-claro .chat-lista-consulta .chat-relatorio-tabela-wrap { background: #fff; border-color: #e6ebf2; }
 .chat-tabela { max-width: 100%; margin: 8px 0 10px; overflow-x: auto; }
 .chat-assistant table { width: 100%; margin: 0; border-collapse: collapse; table-layout: fixed; font-size: 0.82rem; }
 .chat-assistant th, .chat-assistant td { padding: 6px 8px; border: 1px solid rgba(255, 255, 255, 0.12); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
@@ -1268,7 +1275,7 @@ html.tema-claro .resposta {
 }
 .prazos-topo { margin-bottom: 20px; }
 .resposta h2 { margin: 0; font-size: 1.3rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.3; }
-.resposta h2 small { display: block; margin-top: 4px; color: var(--muted); font-size: 0.82rem; font-weight: 500; letter-spacing: 0; }
+.resposta h2 small { display: block; margin-top: 6px; color: var(--text); font-size: 1rem; font-weight: 650; letter-spacing: 0; line-height: 1.4; }
 .resposta .resumo { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .resposta .resumo span { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px; border: 1px solid var(--line); border-radius: 50px; background: var(--cell); color: var(--muted); font-size: 0.74rem; font-weight: 600; }
 .resposta .resumo span::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
@@ -1369,7 +1376,7 @@ html.tema-claro .resposta {
 .resposta .prazo .hora { margin-left: 6px; color: var(--muted); font-size: 0.76rem; font-weight: 500; }
 .resposta .prazo .rel { display: inline-block; margin-top: 6px; padding: 1px 8px; border: 1px solid var(--tom-line); border-radius: 50px; color: var(--tom); font-size: 0.64rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 .resposta .prazo.fim { border-color: var(--tom-line); background: var(--tom-bg); }
-.prazos-aviso { margin: 14px 0 0; color: var(--muted); font-size: 0.84rem; line-height: 1.4; }
+.prazos-aviso { margin: 14px 0 0; color: var(--text); font-size: 0.98rem; font-weight: 650; line-height: 1.45; }
 @media (max-width: 680px) {
   .resposta { padding: 18px 14px; }
   .prazo-item { grid-template-columns: 1fr; }

@@ -14,7 +14,7 @@ import {
   type RelatorioChat,
   type SecaoRelatorio,
 } from "./pdfRelatorio";
-import { guardarReceita, receitaSalva, textoDaConsulta, type Receita } from "./receitasIa";
+import { guardarReceita, linhasDaConsulta, receitaSalva, textoDaConsulta, type Receita } from "./receitasIa";
 import { InicioPainel } from "./InicioPainel";
 import { AvaliacaoResposta } from "./AvaliacaoResposta";
 import { renovarTokenGmail } from "./tokenGmail";
@@ -22,7 +22,7 @@ import { SymbolLoader } from "./Loader";
 import { SqlDestaque } from "./SqlDestaque";
 import { LogCard, PainelTiCard, logDoTexto, painelDoTexto } from "./PainelTi";
 import { completarConsultaLog } from "./ferramentasIa";
-import { formatarDataHora } from "./datas";
+import { formatarDataHora, formatarDatasNoTexto } from "./datas";
 import { acoesDoEvento, camposQueMudaram, nomeProprio, rotuloCampo } from "./relatorio";
 import { rotuloTipo } from "./types";
 
@@ -179,23 +179,6 @@ type Mensagem =
   | { role: "tool"; tool_call_id: string; content: string };
 
 const MAX_PASSOS = 12;
-const LIMITE_RESULTADO = 30000;
-
-function enxugarResultado(resultado: string): string {
-  try {
-    const dados = JSON.parse(resultado) as { texto?: unknown; sql?: unknown; linhas?: unknown };
-    const linhas = Array.isArray(dados.linhas) ? dados.linhas.slice(0, 12) : [];
-    return JSON.stringify({
-      texto: typeof dados.texto === "string" ? dados.texto : "",
-      sql: "",
-      linhas,
-    });
-  } catch {
-    const linhas = objetosDaLista(resultado, '"linhas"').slice(0, 12);
-    if (linhas.length) return JSON.stringify({ texto: "", sql: "", linhas });
-    return `${resultado.slice(0, LIMITE_RESULTADO)}\n[... resultado cortado por tamanho]`;
-  }
-}
 
 const SUGESTOES_COMERCIAL: { titulo: string; descricao: string; pergunta: string; icone: keyof typeof ICONES }[] = [
   { titulo: "Pendências", descricao: "Atividades pendentes de 2026 do comercial e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do comercial em 2026 e qual o motivo de cada uma?", icone: "busca" },
@@ -548,7 +531,6 @@ function resumirResultado(conteudo: string): string {
         .join("\n");
     }
     return linhas
-      .slice(0, 5)
       .map((item) =>
         Object.entries(item)
           .filter(([, valor]) => valor != null && String(valor).trim())
@@ -928,8 +910,13 @@ function textoDosDados(historico: Mensagem[]): string {
 }
 
 function soNomesDeTabela(texto: string): boolean {
-  const linhas = texto.split("\n").map((linha) => linha.trim()).filter(Boolean);
-  return linhas.length > 0 && linhas.every((linha) => /^(cad|mov|sys|aux|imp|vis)_[A-Za-z0-9_]+$/.test(linha));
+  const nomes = texto.split(/\s+/).map((nome) => nome.trim()).filter(Boolean);
+  return nomes.length > 0 && nomes.every((nome) => /^(?:cad|mov|sys|aux|imp|vis)_[A-Za-z0-9_]+$/.test(nome));
+}
+
+function catalogoInterno(texto: string): boolean {
+  if (/"Coluna"\s*:/.test(texto) && /"(?:Tabela|Ref_Tabela)"\s*:/.test(texto)) return true;
+  return soNomesDeTabela(texto) || (texto.match(/\b(?:cad|mov|sys|aux|imp|vis)_[A-Za-z0-9_]+\b/g) ?? []).length >= 6;
 }
 
 function diaSeguinte(iso: string): string {
@@ -939,21 +926,92 @@ function diaSeguinte(iso: string): string {
   return data.toISOString().slice(0, 10);
 }
 
+function hojeIsoBrasil(): string {
+  const partes = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const numero = (tipo: string) => partes.find((item) => item.type === tipo)?.value ?? "";
+  return `${numero("year")}-${numero("month")}-${numero("day")}`;
+}
+
+function diaAnterior(iso: string): string {
+  const [ano, mes, dia] = iso.split("-").map(Number);
+  const data = new Date(Date.UTC(ano, mes - 1, dia));
+  data.setUTCDate(data.getUTCDate() - 1);
+  return data.toISOString().slice(0, 10);
+}
+
 function periodoPedido(texto: string): { inicio: string; fimExclusivo?: string } | null {
   const ano = new Date().getFullYear();
   if (/\b(este|esse|neste|no)\s+ano\b|\bano atual\b/i.test(texto)) {
     return { inicio: `${ano}-01-01`, fimExclusivo: `${ano + 1}-01-01` };
   }
-  const achadas = [...texto.matchAll(/\b(\d{1,2})[/\-.](\d{1,2})(?:[/\-.](\d{2,4}))?\b/g)];
-  if (!achadas.length) return null;
-  const iso = achadas.map((parte) => {
-    let y = parte[3] ?? String(ano);
-    if (y.length === 2) y = `20${y}`;
-    return `${y}-${parte[2].padStart(2, "0")}-${parte[1].padStart(2, "0")}`;
-  });
-  const ordenadas = [...iso].sort();
-  const fim = ordenadas.length > 1 ? ordenadas[ordenadas.length - 1] : undefined;
-  return { inicio: ordenadas[0], fimExclusivo: fim ? diaSeguinte(fim) : undefined };
+  const periodoPalavra = /\b(?:semana|m[eê]s|janeiro|fevereiro|março|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b/i.test(texto);
+  const achadas = periodoPalavra ? [] : [...texto.matchAll(/\b(\d{1,2})[/\-.](\d{1,2})(?:[/\-.](\d{2,4}))?\b/g)];
+  if (achadas.length) {
+    const iso = achadas.map((parte) => {
+      let y = parte[3] ?? String(ano);
+      if (y.length === 2) y = `20${y}`;
+      return `${y}-${parte[2].padStart(2, "0")}-${parte[1].padStart(2, "0")}`;
+    });
+    const ordenadas = [...iso].sort();
+    if (ordenadas.length > 1) return { inicio: ordenadas[0], fimExclusivo: diaSeguinte(ordenadas[ordenadas.length - 1]) };
+    if (!/\b(?:a partir|desde|ap[oó]s)\b/i.test(texto)) {
+      return { inicio: ordenadas[0], fimExclusivo: diaSeguinte(ordenadas[0]) };
+    }
+    return { inicio: ordenadas[0] };
+  }
+  if (/\bhoje\b/i.test(texto)) {
+    const inicio = hojeIsoBrasil();
+    return { inicio, fimExclusivo: diaSeguinte(inicio) };
+  }
+  if (/\bontem\b/i.test(texto)) {
+    const fimExclusivo = hojeIsoBrasil();
+    return { inicio: diaAnterior(fimExclusivo), fimExclusivo };
+  }
+  const hoje = hojeIsoBrasil();
+  const [anoHoje, mesHoje] = hoje.split("-").map(Number);
+  if (/\bsemana\s+passada\b/i.test(texto)) {
+    const [ano, mes, dia] = hoje.split("-").map(Number);
+    const data = new Date(Date.UTC(ano, mes - 1, dia));
+    const dow = data.getUTCDay();
+    data.setUTCDate(data.getUTCDate() - (dow === 0 ? 6 : dow - 1));
+    const fimExclusivo = data.toISOString().slice(0, 10);
+    data.setUTCDate(data.getUTCDate() - 7);
+    return { inicio: data.toISOString().slice(0, 10), fimExclusivo };
+  }
+  if (/\b(?:esta|essa|nesta|na|da)\s+semana\b/i.test(texto)) {
+    const [ano, mes, dia] = hoje.split("-").map(Number);
+    const data = new Date(Date.UTC(ano, mes - 1, dia));
+    const dow = data.getUTCDay();
+    data.setUTCDate(data.getUTCDate() - (dow === 0 ? 6 : dow - 1));
+    return { inicio: data.toISOString().slice(0, 10), fimExclusivo: diaSeguinte(hoje) };
+  }
+  if (/\bm[eê]s\s+passad[oa]\b/i.test(texto)) {
+    const mes = mesHoje === 1 ? 12 : mesHoje - 1;
+    const ano = mesHoje === 1 ? anoHoje - 1 : anoHoje;
+    const inicio = `${ano}-${String(mes).padStart(2, "0")}-01`;
+    const fimExclusivo = mes === 12 ? `${ano + 1}-01-01` : `${ano}-${String(mes + 1).padStart(2, "0")}-01`;
+    return { inicio, fimExclusivo };
+  }
+  if (/\b(?:este|esse|neste|no|do|da|o)\s+m[eê]s\b/i.test(texto)) {
+    return { inicio: `${hoje.slice(0, 8)}01`, fimExclusivo: diaSeguinte(hoje) };
+  }
+  const meses = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+  const nomeMes = meses.find((nome) => new RegExp(`\\b${nome}\\b`, "i").test(texto)) ?? (/\bmarco\b/i.test(texto) ? "março" : "");
+  if (nomeMes) {
+    const mesNumero = meses.indexOf(nomeMes) + 1;
+    const anoCitado = texto.match(/\b(20\d{2})\b/)?.[1];
+    const ano = anoCitado ? Number(anoCitado) : mesNumero > mesHoje ? anoHoje - 1 : anoHoje;
+    const inicio = `${ano}-${String(mesNumero).padStart(2, "0")}-01`;
+    const fimCheio = mesNumero === 12 ? `${ano + 1}-01-01` : `${ano}-${String(mesNumero + 1).padStart(2, "0")}-01`;
+    const fimExclusivo = ano === anoHoje && mesNumero === mesHoje && diaSeguinte(hoje) < fimCheio ? diaSeguinte(hoje) : fimCheio;
+    return { inicio, fimExclusivo };
+  }
+  return null;
 }
 
 function indiceNoNivelZero(texto: string, palavra: RegExp): number {
@@ -981,14 +1039,29 @@ function limparFiltroSolto(texto: string): string {
   return atual;
 }
 
+const LITERAL_DATA = "'\\d{4}-\\d{2}-\\d{2}(?:[ T]\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d+)?)?)?'";
+
+function pedeTipoCarga(texto: string) {
+  return /\b(?:fcl|lcl|a[eé]re[oa]|rodovi[aá]ri[oa]|mar[ií]tim[oa]|tipo\s+de\s+carga|tipo_carga)\b/i.test(texto);
+}
+
+function semTipoCarga(sql: string) {
+  return sql.replace(/(?:\s+and)?\s+(?:\w+\.)?tipo_carga\s*(?:=|<>|!=|in)\s*(?:\([^)]*\)|'\d+'|\d+)/gi, "");
+}
+
 function sqlComPeriodo(sql: string, pedido: string): string {
   let texto = sql.replace(/\btop\s+(?!1\b)\d+\s+/gi, "");
   const periodo = periodoPedido(pedido);
   if (!periodo) return texto;
-  const coluna = texto.match(/(\b\w+\.Data(?:_\w+)*)\s*(?:>=|<=|>|<)/i)?.[1];
+  const coluna =
+    texto.match(new RegExp(`(\\b\\w+\\.Data(?:_\\w+)*|\\bData(?:_\\w+)*)\\s*(?:>=|<=|>|<|=)\\s*${LITERAL_DATA}`, "i"))?.[1] ||
+    texto.match(/(?:convert|cast)\s*\(\s*(?:date\s*,\s*)?(\b\w+\.Data(?:_\w+)*)[^)]*\)\s*(?:>=|<=|>|<|=)/i)?.[1] ||
+    texto.match(/\b(\w+\.Data_Abertura_Processo)\b/i)?.[1];
   if (!coluna) return texto;
-  const nome = coluna.replace(".", "\\.");
-  texto = limparFiltroSolto(texto.replace(new RegExp(`${nome}\\s*(?:>=|<=|>|<)\\s*'\\d{4}-\\d{2}-\\d{2}'`, "gi"), ""));
+  const nome = coluna.replace(/\./g, "\\.");
+  const expr = `(?:(?:convert|cast)\\s*\\(\\s*(?:date\\s*,\\s*)?${nome}\\s*(?:as\\s+date\\s*)?\\)|${nome})`;
+  texto = limparFiltroSolto(texto.replace(new RegExp(`${expr}\\s*(?:>=|<=|>|<|=)\\s*${LITERAL_DATA}`, "gi"), ""));
+  if (!pedeTipoCarga(pedido)) texto = limparFiltroSolto(semTipoCarga(texto));
   const filtro = periodo.fimExclusivo
     ? `${coluna} >= '${periodo.inicio}' AND ${coluna} < '${periodo.fimExclusivo}'`
     : `${coluna} >= '${periodo.inicio}'`;
@@ -1008,6 +1081,15 @@ function pedeResumoDaResposta(texto: string) {
   return /^(?:resuma|resume|resumir)(?:\s+(?:isso|a[ií]|essa|este|a resposta|o texto))?[.!? ]*$/i.test(texto.trim());
 }
 
+function pedeDatasFormatadas(texto: string) {
+  const pedido = texto.trim();
+  return pedido.length <= 160 && /format/i.test(pedido) && /\bdatas?\b/i.test(pedido);
+}
+
+function semChamadaCrua(texto: string) {
+  return texto.replace(/<\s*[|｜]\s*DSML[\s\S]*$/i, "").trim();
+}
+
 function resumoCurto(texto: string) {
   const limpo = texto
     .replace(/```[\s\S]*?```/g, "")
@@ -1025,6 +1107,31 @@ function pedeFichaDoProcesso(texto: string) {
 
 function pedeLog(texto: string) {
   return /quem (?:inclu|alter|excl|mud|lan[cç]|cri|apag|cadastr|mexeu)|hist[oó]rico|\blogs?\b|antes e depois|mudan[cç]a|altera[cç]|\bid\s?\d{3,}|\bid_?(?:logistica|projeto|tarefa|atividade|pessoa|acompanhamento)\w*/i.test(texto);
+}
+
+function pedidoSemProcesso(texto: string) {
+  const fala = textoVisivel(texto);
+  if (processosDoTexto(fala).length || numerosContainer(fala).length || idsMaritimos(fala).length || idsTaxa(fala).length) return false;
+  return /pergunte qual processo|n[aã]o informei o n[uú]mero|log t[eé]cnico de um processo/i.test(fala);
+}
+
+function numeroSolto(texto: string): string {
+  const numero = texto.toUpperCase().match(/\b([A-Z]{1,4}\d{2,6}-\d{2})\b/)?.[1] ?? "";
+  if (!numero || texto.trim().length > numero.length + 8) return "";
+  return numero;
+}
+
+function segueLog(pergunta: string, anteriores: Mensagem[]): boolean {
+  if (pedeLog(textoVisivel(pergunta))) return true;
+  if (!numeroSolto(pergunta)) return false;
+  const assunto = perguntaAberta(anteriores);
+  const pediu = Boolean(assunto && (pedeLog(assunto) || pedidoSemProcesso(assunto)));
+  const ultima = [...anteriores].reverse().find((item) => item.role === "assistant" && item.content.trim());
+  return pediu || /qual processo/i.test(ultima?.content ?? "");
+}
+
+function pedidoInterno(texto: string) {
+  return /^(?:Consulte de novo|Consulte o banco|Não liste nomes de tabela|Consulte o log em mov_)/i.test(texto.trim());
 }
 
 function processosDoTexto(texto: string): string[] {
@@ -1106,13 +1213,15 @@ function mensagensParaArquivo(lista: Mensagem[]): Mensagem[] {
     const sql = sqlDoResultado(mensagem.content);
     if (!sql) return { ...mensagem, content: mensagem.content.slice(0, 2000) };
     let texto = "";
+    let linhas: unknown[] | undefined;
     try {
-      const dados = JSON.parse(mensagem.content) as { texto?: unknown };
-      if (typeof dados.texto === "string") texto = dados.texto.slice(0, 4000);
+      const dados = JSON.parse(mensagem.content) as { texto?: unknown; linhas?: unknown };
+      if (typeof dados.texto === "string") texto = dados.texto;
+      if (Array.isArray(dados.linhas)) linhas = dados.linhas;
     } catch {
       /* o resultado não é JSON */
     }
-    return { ...mensagem, content: JSON.stringify({ sql, texto }) };
+    return { ...mensagem, content: JSON.stringify({ sql, ...(texto ? { texto } : {}), ...(linhas ? { linhas } : {}) }) };
   });
 }
 
@@ -1176,8 +1285,9 @@ function textoConsulta(chamada: ChamadaFerramenta | undefined, resultado: string
 
 function blocosDaConversa(mensagens: Mensagem[]) {
   const chamadas = new Map<string, ChamadaFerramenta>();
-  const blocos: { mensagem: Exclude<Mensagem, { role: "tool" }>; consultas: string[] }[] = [];
+  const blocos: { mensagem: Exclude<Mensagem, { role: "tool" }>; consultas: string[]; linhas: Record<string, unknown>[] }[] = [];
   let pendentes: string[] = [];
+  let linhasPendentes: Record<string, unknown>[] = [];
   for (const mensagem of mensagens) {
     if (mensagem.role === "assistant") {
       for (const chamada of mensagem.tool_calls ?? []) chamadas.set(chamada.id, chamada);
@@ -1185,12 +1295,22 @@ function blocosDaConversa(mensagens: Mensagem[]) {
     if (mensagem.role === "tool") {
       const texto = textoConsulta(chamadas.get(mensagem.tool_call_id), mensagem.content);
       if (texto && !pendentes.includes(texto)) pendentes.push(texto);
+      const linhas = linhasDaConsulta(mensagem.content);
+      if (linhas.length > linhasPendentes.length) linhasPendentes = linhas;
       continue;
     }
     if (!mensagem.content.trim()) continue;
+    if (mensagem.role === "user" && pedidoInterno(mensagem.content)) continue;
     const ultima = pendentes.at(-1);
-    blocos.push({ mensagem, consultas: mensagem.role === "assistant" && ultima ? [ultima] : [] });
-    if (mensagem.role === "assistant") pendentes = [];
+    blocos.push({
+      mensagem,
+      consultas: mensagem.role === "assistant" && ultima ? [ultima] : [],
+      linhas: mensagem.role === "assistant" ? linhasPendentes : [],
+    });
+    if (mensagem.role === "assistant") {
+      pendentes = [];
+      linhasPendentes = [];
+    }
   }
   return blocos;
 }
@@ -1771,7 +1891,17 @@ function partirResposta(texto: string): PecaResposta[] {
     md = [];
   };
   while (i < linhas.length) {
-    if (!/^[-*]\s+\S/.test(linhas[i])) {
+    const anterior = md[md.length - 1]?.trim() ?? "";
+    const atual = linhas[i].trim();
+    if (anterior.startsWith("|") && atual.includes("|")) {
+      const semMarcador = atual.replace(/^[-*]\s+/, "");
+      const novaLinha = /^[A-Za-z]{1,4}\d{2,6}-\d{2}\b/.test(semMarcador) || semMarcador.startsWith("|");
+      if (novaLinha) md.push(semMarcador.startsWith("|") ? semMarcador : `| ${semMarcador}`);
+      else md[md.length - 1] = `${anterior} ${semMarcador}`;
+      i += 1;
+      continue;
+    }
+    if (!/^[-*]\s+\S/.test(linhas[i]) || atual.startsWith("|")) {
       md.push(linhas[i]);
       i += 1;
       continue;
@@ -2311,6 +2441,63 @@ function Markdown({ texto: bruto, ocultarSql = false, textoCorrido = false }: { 
   );
 }
 
+function textoSemListaGrande(texto: string): string {
+  const corte = texto.search(/\nMostrei \d+ de \d+/);
+  if (corte >= 0) return texto.slice(corte).replace(/^Mostrei \d+ de \d+[^\n]*\n?/, "").trim();
+  if ((texto.match(/\b[A-Za-z]{1,4}\d{2,6}-\d{2}\b/g) ?? []).length > 12) return "";
+  return texto;
+}
+
+function ListaConsulta({ linhas }: { linhas: Record<string, unknown>[] }) {
+  const [todos, setTodos] = useState(false);
+  const colunas = Object.keys(linhas[0] ?? {}).filter((coluna) => !/^id/i.test(coluna)).slice(0, 6);
+  const data = colunas.find((coluna) => /data|abertura|quando/i.test(coluna)) ?? "";
+  const ordenadas = data
+    ? [...linhas].sort((a, b) => String(b[data] ?? "").localeCompare(String(a[data] ?? "")))
+    : [...linhas].reverse();
+  const recentes = 12;
+  const visiveis = todos ? ordenadas : ordenadas.slice(0, recentes);
+  return (
+    <div className="chat-lista-consulta">
+      <div className="chat-relatorio-topo">
+        <div>
+          <span>Lista</span>
+          <strong>{todos ? "Todos os registros" : "Os mais recentes"}</strong>
+          <small>
+            {ordenadas.length} {ordenadas.length === 1 ? "registro" : "registros"}
+            {todos || ordenadas.length <= recentes ? "" : ` · mostrando ${visiveis.length}`}
+          </small>
+        </div>
+        {ordenadas.length > recentes ? (
+          <div className="chat-relatorio-acoes">
+            <button type="button" className="chat-ver-consulta" onClick={() => setTodos((atual) => !atual)}>
+              {todos ? "Mostrar só os últimos" : `Ver todos (${ordenadas.length})`}
+            </button>
+          </div>
+        ) : null}
+      </div>
+      <div className="chat-relatorio-tabela-wrap">
+        <table className="chat-relatorio-tabela">
+          <thead>
+            <tr>{colunas.map((coluna) => <th key={coluna}>{coluna.replaceAll("_", " ")}</th>)}</tr>
+          </thead>
+          <tbody>
+            {visiveis.map((linha, indice) => (
+              <tr key={indice}>
+                {colunas.map((coluna) => (
+                  <td key={coluna} className={/processo|numero/i.test(coluna) ? "chat-lista-processo" : undefined}>
+                    {formatarDatasNoTexto(String(linha[coluna] ?? ""))}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function MarkdownTexto({ texto }: { texto: string }) {
   return (
     <ReactMarkdown
@@ -2323,7 +2510,7 @@ function MarkdownTexto({ texto }: { texto: string }) {
         ),
       }}
     >
-      {texto}
+      {formatarDatasNoTexto(texto)}
     </ReactMarkdown>
   );
 }
@@ -2847,7 +3034,7 @@ export function ChatIa({
   const [visoesAbertas, setVisoesAbertas] = useState(false);
   const [telaLateral, setTelaLateral] = useState<"menu" | "conversas">("menu");
   const [chaves, setChaves] = useState<{ id: string; provedor: string; rotulo: string; final: string }[]>([]);
-  const [novaChave, setNovaChave] = useState({ provedor: "gemini", rotulo: "", chave: "" });
+  const [novaChave, setNovaChave] = useState({ provedor: "openrouter", rotulo: "", chave: "" });
   const [filtroContas, setFiltroContas] = useState("");
   const [contas, setContas] = useState<
     {
@@ -3225,7 +3412,7 @@ export function ChatIa({
 
   async function copiarResposta(texto: string, indice: number) {
     try {
-      await navigator.clipboard.writeText(semMençãoPdf(respostaSemPayload(texto)).trim());
+      await navigator.clipboard.writeText(formatarDatasNoTexto(semMençãoPdf(respostaSemPayload(texto))).trim());
       setRespostaCopiada(indice);
       window.setTimeout(() => setRespostaCopiada((atual) => (atual === indice ? null : atual)), 1600);
     } catch {
@@ -3582,6 +3769,14 @@ export function ChatIa({
       return true;
     };
     try {
+      if (pedidoSemProcesso(pergunta)) {
+        const content = "Qual processo? Informe o número, como IM5944-26.";
+        historico = [...historico, { role: "assistant", content, duracaoMs: duracaoConsulta() }];
+        setMensagens(historico);
+        setErro("");
+        avisarConclusao(content, false);
+        return;
+      }
       if (pedeResumoDaResposta(textoVisivel(pergunta))) {
         const anterior = [...mensagens].reverse().find((item) => item.role === "assistant" && item.content.trim());
         const content = anterior
@@ -3592,6 +3787,17 @@ export function ChatIa({
         setErro("");
         avisarConclusao(content, false);
         return;
+      }
+      if (pedeDatasFormatadas(textoVisivel(pergunta))) {
+        const anterior = [...mensagens].reverse().find((item) => item.role === "assistant" && item.content.trim());
+        const content = anterior ? formatarDatasNoTexto(anterior.content) : "";
+        if (anterior && content !== anterior.content) {
+          historico = [...historico, { role: "assistant", content, duracaoMs: duracaoConsulta() }];
+          setMensagens(historico);
+          setErro("");
+          avisarConclusao(content, false);
+          return;
+        }
       }
       if (/quais contas acessaram a ia/i.test(pergunta)) {
         setStatus("Lendo as contas…");
@@ -3649,6 +3855,7 @@ export function ChatIa({
         const dadosReceita = await respReceita.json().catch(() => null);
         if (Array.isArray(dadosReceita?.receita) && dadosReceita.receita.length) receita = dadosReceita.receita;
       }
+      if (pedidoSemProcesso(pergunta)) receita = null;
       if (receita?.some((passo) => passo.nome === "resumo_processo") && !pedeFichaDoProcesso(textoVisivel(pergunta))) {
         receita = null;
       }
@@ -3693,7 +3900,8 @@ export function ChatIa({
         return;
       }
       const processosDiretos = processosDoTexto(textoVisivel(roteada));
-      if (pedeLog(textoVisivel(pergunta)) && processosDiretos.length && !containersDiretos.length && !idsDiretos.length && !taxasDiretas.length) {
+      const pedidoLog = numeroSolto(pergunta) ? `${perguntaAberta(mensagens)}\n${pergunta}`.trim() : pergunta;
+      if (segueLog(pergunta, mensagens) && processosDiretos.length && !containersDiretos.length && !idsDiretos.length && !taxasDiretas.length) {
         setStatus("Consultando o log…");
         historico = [...historico, { role: "assistant", content: "Estou consultando o log." }];
         setMensagens(historico);
@@ -3736,16 +3944,16 @@ export function ChatIa({
         }
         const id = houseId || masterId;
         const args = {
-          ...argsLogDosIds([id], pergunta),
+          ...argsLogDosIds([id], pedidoLog),
           tabela: houseId ? "mov_Logistica_House" : "mov_Logistica_Master",
           campo_chave: houseId ? "IdLogistica_House" : "IdLogistica_Master",
           valores: id,
-          ancorar: !periodoPedido(pergunta),
+          ancorar: !periodoPedido(pedidoLog),
           processo: numero,
         };
         const resultado = await executar("consultar_log", args, controle.signal);
         const bruto = capturarLog();
-        const log = bruto ? restringirAoProcesso(bruto, pergunta) : null;
+        const log = bruto ? restringirAoProcesso(bruto, pedidoLog) : null;
         const falhou = /^erro:/i.test(resultado) && !log;
         const content = log ? resumoDoLog(log) : resultado.replace(/^Erro:\s*/i, "");
         const resposta: Extract<Mensagem, { role: "assistant" }> = {
@@ -3768,7 +3976,12 @@ export function ChatIa({
         for (const passo of receita) {
           if (canceladoRef.current) throw new DOMException("Cancelado", "AbortError");
           setStatus(`${ROTULO_FERRAMENTA[passo.nome] ?? "Consultando"}…`);
-          const args = passo.nome === "consultar_log" ? completarConsultaLog(passo.args, pergunta) : passo.args;
+          const args = { ...passo.args };
+          if (passo.nome === "consultar_log") Object.assign(args, completarConsultaLog(passo.args, pergunta));
+          if (passo.nome === "executar_sql" && typeof args.sql === "string") {
+            args.sql = sqlComPeriodo(sqlSemRepetir(args.sql), pergunta);
+            args.pergunta = pergunta;
+          }
           const resultado = await executar(passo.nome, args, controle.signal);
           if (resultado.startsWith("Erro:")) {
             if (rotaDireta || continuacao) {
@@ -3870,10 +4083,13 @@ export function ChatIa({
               parcial += evento.texto;
               if (modoRelatorioRef.current) {
                 setStatus("Montando o relatório…");
+              } else if (/[|｜]\s*DSML\s*[|｜]/i.test(parcial)) {
+                setStatus("Consultando…");
+                setMensagens(historico);
               } else {
                 setStatus("Escrevendo…");
-                const visivel = semBlocoAberto(parcial);
-                if (visivel.trim() && !temCartao(visivel)) setMensagens([...historico, { role: "assistant", content: visivel }]);
+                const visivel = semChamadaCrua(semBlocoAberto(parcial));
+                if (visivel.trim() && !temCartao(visivel) && !catalogoInterno(visivel)) setMensagens([...historico, { role: "assistant", content: visivel }]);
               }
             }
             if (evento.tipo === "fim" && evento.mensagem) {
@@ -3890,7 +4106,7 @@ export function ChatIa({
           }
         }
         if (!resposta) throw new Error("A IA não respondeu.");
-        const conteudo = respostaSemPayload((resposta.content?.trim() ? resposta.content : parcial).trim());
+        const conteudo = semChamadaCrua(respostaSemPayload((resposta.content?.trim() ? resposta.content : parcial).trim()));
         const pedeHistorico = /quem inclu|quem alter|hist[oó]rico|\blog\b|item de carga|mostre d/i.test(textoVisivel(pergunta));
         const containersPedidos = numerosContainer(pedeHistorico ? pergunta : textoVisivel(pergunta));
         const respondeuSql = /^SQL:/m.test(conteudo) || /<PrimaryKeys>\s*<\/PrimaryKeys>/.test(conteudo);
@@ -3907,7 +4123,7 @@ export function ChatIa({
           ];
           continue;
         }
-        if (!resposta.tool_calls?.length && soNomesDeTabela(conteudo) && passo < MAX_PASSOS - 1) {
+        if (!resposta.tool_calls?.length && (soNomesDeTabela(conteudo) || catalogoInterno(conteudo)) && passo < MAX_PASSOS - 1) {
           historico = [
             ...historico,
             { ...resposta, content: "" },
@@ -3918,20 +4134,37 @@ export function ChatIa({
           ];
           continue;
         }
-        const pedeDado = /\b(?:processos?|clientes?|taxas?|atividades?|prazos?|embarques?|desembarques?|propostas?|comiss[oõ]es?|frete|mudan[cç]as?|hist[oó]rico|logs?)\b/i.test(pergunta);
+        if (pedidoSemProcesso(pergunta) && (resposta.tool_calls ?? []).some((chamada) => !EXPLORACAO.has(chamada.function.name))) {
+          const content = "Qual processo? Informe o número, como IM5944-26.";
+          historico = [...historico, { role: "assistant", content, duracaoMs: duracaoConsulta() }];
+          setMensagens(historico);
+          setErro("");
+          avisarConclusao(content, false);
+          return;
+        }
+        const pedeDado = !pedidoSemProcesso(pergunta) && /\b(?:processos?|abert[oa]s?|clientes?|taxas?|atividades?|prazos?|embarques?|desembarques?|propostas?|comiss[oõ]es?|frete|mudan[cç]as?|hist[oó]rico|logs?|hoje|ontem)\b/i.test(pergunta);
+        const pedeLista = pediuNoChat(pergunta);
+        const recusouLista = /n[aã]o consigo|n[aã]o me retornou|abr[ae] a tela|outra tela|time de log[ií]stica|n[aã]o devem ser usados/i.test(conteudo);
         const jaConsultou = trechoDaPergunta(historico).some((item) => item.role === "tool");
-        if (!resposta.tool_calls?.length && pedeDado && !jaConsultou && passo < MAX_PASSOS - 1) {
+        if (!resposta.tool_calls?.length && (pedeDado || pedeLista || recusouLista) && !jaConsultou && passo < MAX_PASSOS - 1) {
           historico = [
             ...historico,
             { ...resposta, content: "" },
             {
               role: "user",
-              content: "Consulte o banco com uma ferramenta agora e traga os dados reais. Não invente cliente, processo, prazo ou valor.",
+              content: pedeLista || recusouLista
+                ? "Consulte de novo e liste todos os registros da pergunta anterior, um por linha. Não recuse e não mande abrir outra tela."
+                : "Consulte o banco com uma ferramenta agora e traga os dados reais. Não invente cliente, processo, prazo ou valor.",
             },
           ];
+          setMensagens(historico.filter((item) => {
+            if (item.role === "user") return item.content === pergunta || !/Consulte de novo|Consulte o banco/i.test(item.content);
+            if (item.role === "assistant") return Boolean(item.content.trim() || item.tool_calls?.length);
+            return true;
+          }));
           continue;
         }
-        historico = [...historico, { ...resposta, content: conteudo }];
+        historico = [...historico, { ...resposta, content: catalogoInterno(conteudo) ? "" : conteudo }];
         setMensagens(historico);
         if (!resposta.tool_calls?.length) break;
         const rodadaAtual = trechoDaPergunta(historico);
@@ -3965,7 +4198,8 @@ export function ChatIa({
                 chamada.function.arguments = JSON.stringify(args);
               }
               if (chamada.function.name === "executar_sql" && typeof args.sql === "string") {
-                args.sql = sqlComPeriodo(sqlSemRepetir(args.sql), pedido);
+                args.sql = sqlComPeriodo(sqlSemRepetir(args.sql), pergunta);
+                args.pergunta = pergunta;
               }
               if (canceladoRef.current) throw new DOMException("Cancelado", "AbortError");
               resultado = await executar(chamada.function.name, args, controle.signal);
@@ -3984,9 +4218,6 @@ export function ChatIa({
             }
             const secao = secaoDaFerramenta(chamada.function.name, resultado);
             if (secao) secoesDaPergunta.push(secao);
-            if (resultado.length > LIMITE_RESULTADO) {
-              resultado = enxugarResultado(resultado);
-            }
             return { role: "tool" as const, tool_call_id: chamada.id, content: resultado };
           }),
         );
@@ -4056,7 +4287,7 @@ export function ChatIa({
           .reverse()
           .filter((item) => item.role === "tool")
           .map((item) => cartaoDaFerramenta(item.content) || textoDaConsulta(item.content))
-          .find((item) => item && !item.startsWith("Erro:"));
+          .find((item) => item && !item.startsWith("Erro:") && !catalogoInterno(item));
         if (daFerramenta) {
           const resposta: Extract<Mensagem, { role: "assistant" }> = {
             role: "assistant",
@@ -4095,6 +4326,14 @@ export function ChatIa({
               .find((item) => item && !item.startsWith("Erro:") && !item.startsWith("{"));
             ultima.content = daFerramenta || "Não consegui montar o histórico. Tente de novo.";
           }
+        }
+        if (completo) {
+          const daLista = [...historico.slice(corte + 1)]
+            .reverse()
+            .filter((item) => item.role === "tool")
+            .map((item) => textoDaConsulta(item.content))
+            .find((item) => item && item.includes("|") && /\b[A-Za-z]{1,4}\d{2,6}-\d{2}\b/.test(item));
+          if (daLista) ultima.content = daLista;
         }
         if (gasto.total > 0) ultima.uso = gasto;
         ultima.duracaoMs = duracaoConsulta();
@@ -4994,7 +5233,7 @@ export function ChatIa({
               </section>
               <section className="chat-secao">
               <div className="chat-memoria-topo">
-                <h3>Chaves de IA</h3>
+                <h3>Chaves do DeepSeek</h3>
                 <p>Se a chave em uso estourar o limite, a próxima da lista é usada na mesma pergunta.</p>
               </div>
               <ul className="chat-chaves">
@@ -5002,8 +5241,8 @@ export function ChatIa({
                 {chaves.map((item) => (
                   <li key={item.id}>
                     <span>
-                      <strong>{item.rotulo || item.provedor}</strong>
-                      <small>{item.provedor} · ····{item.final}</small>
+                      <strong>{item.rotulo || "DeepSeek"}</strong>
+                      <small>DeepSeek · ····{item.final}</small>
                     </span>
                     <button type="button" className="chat-acao" onClick={() => void removerChave(item.id)}>
                       Remover
@@ -5018,11 +5257,6 @@ export function ChatIa({
                   void salvarChave();
                 }}
               >
-                <select value={novaChave.provedor} onChange={(e) => setNovaChave({ ...novaChave, provedor: e.target.value })}>
-                  <option value="gemini">Gemini</option>
-                  <option value="openrouter">OpenRouter</option>
-                  <option value="ollama">Beam</option>
-                </select>
                 <input
                   value={novaChave.rotulo}
                   placeholder="Nome, opcional"
@@ -5433,31 +5667,31 @@ export function ChatIa({
                 return bloco.mensagem.role === "assistant" &&
                 !("log" in bloco.mensagem && bloco.mensagem.log) &&
                 !pediuRelatorio &&
-                !normalizarCartoes(bloco.mensagem.content) ? null : bloco.mensagem.role === "assistant" ? (
+                (!normalizarCartoes(bloco.mensagem.content) || catalogoInterno(bloco.mensagem.content)) ? null : bloco.mensagem.role === "assistant" ? (
                   <div key={i} id={`chat-msg-${i}`} className={`chat-linha${buscaAlvo === i ? " busca-alvo" : ""}`}>
                     <div className="chat-msg chat-assistant">
                       {"log" in bloco.mensagem && bloco.mensagem.log ? (
                         <LogCard log={cartaoDoHistorico(bloco.mensagem.log)} />
                       ) : pediuRelatorio ? null : (
-                        <Markdown
-                          ocultarSql={!admin}
-                          textoCorrido={pediuTextoParaEnviar(
-                            blocos
-                              .slice(0, i)
-                              .reverse()
-                              .find((item) => item.mensagem.role === "user")?.mensagem.content ?? "",
-                          )}
-                          texto={semMençãoPdf(
-                            graficoSePedido(
-                              respostaSemPayload(bloco.mensagem.content),
-                              blocos
-                                .slice(0, i)
-                                .filter((item) => item.mensagem.role === "user")
-                                .map((item) => item.mensagem.content)
-                                .join("\n"),
-                            ),
-                          )}
-                        />
+                        <>
+                          {bloco.linhas.length > 12 ? <ListaConsulta linhas={bloco.linhas} /> : null}
+                          <Markdown
+                            ocultarSql={!admin}
+                            textoCorrido={pediuTextoParaEnviar(pedidoUsuario)}
+                            texto={semMençãoPdf(
+                              graficoSePedido(
+                                bloco.linhas.length > 12
+                                  ? textoSemListaGrande(respostaSemPayload(bloco.mensagem.content))
+                                  : respostaSemPayload(bloco.mensagem.content),
+                                blocos
+                                  .slice(0, i)
+                                  .filter((item) => item.mensagem.role === "user")
+                                  .map((item) => item.mensagem.content)
+                                  .join("\n"),
+                              ),
+                            )}
+                          />
+                        </>
                       )}
                       {pode.log && "log" in bloco.mensagem && bloco.mensagem.log ? (
                         <div className="chat-relatorio">

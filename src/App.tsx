@@ -527,7 +527,7 @@ export default function App({ usuario, onSair }: { usuario: UsuarioGoogle; onSai
       const resp = await fetch(`${API}/api/sql`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sql: texto(args.sql) }),
+        body: JSON.stringify({ sql: texto(args.sql), pergunta: texto(args.pergunta) }),
         signal: sinal,
       });
       const dados = await resp.json();

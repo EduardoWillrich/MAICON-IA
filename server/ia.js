@@ -1,5 +1,4 @@
-import { Ollama } from "ollama";
-import { textoAprendizado, textoObservado } from "./aprendizado.js";
+import { textoAprendizado } from "./aprendizado.js";
 import {
   amostraDaConsulta,
   conferirTabelas,
@@ -8,20 +7,10 @@ import {
   rodadasDesdePergunta,
 } from "./avaliacaoConsulta.js";
 import { textoConsultasRelevantes } from "./consultas.js";
-import { executarFilaComFallback, filaDeChaves, statusDoErro } from "./filaIa.js";
+import { criarFiltroDeChamada, extrairChamadasDoTexto } from "./chamadaTexto.js";
+import { anotarPedido } from "./datasPedido.js";
+import { executarFilaComFallback, filaDeChaves } from "./filaIa.js";
 import { ferramentaDaVisao } from "./funcoes.js";
-import { registrarResultadoGemini } from "./gemini.js";
-import {
-  MODELOS_LEVES,
-  MODELOS_RESPOSTA,
-  chamadaDireta,
-  ferramentasProvaveis,
-  pedidoDaRodada,
-  pedidoInformativo,
-  respostaDeFerramentaPronta,
-  respostaImediata,
-  textoCalendario,
-} from "./economia.js";
 import { modelosOpenRouter } from "./openrouter.js";
 
 const FERRAMENTAS = [
@@ -512,6 +501,7 @@ const FERRAMENTAS = [
       name: "log_recente",
       description:
         "Lista o log recente com usuário, tabela, tipo (1 inclusão, 2 exclusão, 3 atualização), usuário do Windows e computador. " +
+        "Não use quando pedirem o log de um processo e o número não foi informado: pergunte qual processo. " +
         "horas padrão 24, tipo 0 = todos. Só na aba TI. " +
         "Se pedirem o histórico de uma pessoa, preencha usuario com o nome ou o login. " +
         "Se disserem hoje, mande hoje=true: o filtro é o dia civil, não as últimas 24 horas. " +
@@ -677,6 +667,47 @@ function textoModalidade(modalidade) {
   );
 }
 
+function textoCalendario(agora = new Date()) {
+  const zona = "America/Sao_Paulo";
+  const partes = new Intl.DateTimeFormat("en-US", {
+    timeZone: zona,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(agora);
+  const numero = (tipo) => Number(partes.find((item) => item.type === tipo)?.value);
+  const ano = numero("year");
+  const mes = numero("month");
+  const dia = numero("day");
+  const hoje = new Date(Date.UTC(ano, mes - 1, dia));
+  const ontem = new Date(hoje);
+  ontem.setUTCDate(ontem.getUTCDate() - 1);
+  const inicioMes = new Date(Date.UTC(ano, mes - 1, 1));
+  const dow = hoje.getUTCDay();
+  const inicioSemana = new Date(hoje);
+  inicioSemana.setUTCDate(inicioSemana.getUTCDate() - (dow === 0 ? 6 : dow - 1));
+  const fmt = (data) => {
+    const p = (valor) => String(valor).padStart(2, "0");
+    return `${p(data.getUTCDate())}/${p(data.getUTCMonth() + 1)}/${data.getUTCFullYear()}`;
+  };
+  const semana = new Intl.DateTimeFormat("pt-BR", { timeZone: zona, weekday: "long" }).format(agora);
+  const hojeBr = fmt(hoje);
+  const ontemBr = fmt(ontem);
+  return {
+    hoje: hojeBr,
+    ontem: ontemBr,
+    inicioMes: fmt(inicioMes),
+    inicioSemana: fmt(inicioSemana),
+    texto:
+      `DATA DE HOJE: ${semana}, ${hojeBr}, fuso America/Sao_Paulo. ` +
+      `Ontem é ${ontemBr}. Este mês vai de ${fmt(inicioMes)} até ${hojeBr}. ` +
+      `Esta semana começa em ${fmt(inicioSemana)}. ` +
+      "hoje, ontem, esse mês, este mês, neste mês e esta semana usam exatamente essas datas. " +
+      "Não pergunte a data de novo. Uma lista por período não reaproveita o processo da mensagem anterior. " +
+      "Referência de cliente, como 136.763, não é número de processo. Número de processo tem letras, hífen e ano, como IM5944-26.",
+  };
+}
+
 function sistema(relatorio = false, limitado = false, setor = "geral", modalidade = "", extra = "", apresentacao = false, consultas = "") {
   const calendario = textoCalendario();
   return (
@@ -716,9 +747,9 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "ESCOLHA SOZINHO, sem perguntar o tipo: quem alterou, o que mudou, antes e depois, linha do tempo ou histórico → consultar_log. " +
     "Cliente, situação, fatura, valor, data de abertura ou lista de registros → consultar_dados ou executar_sql, sem abrir o log. " +
     "Se a frase pedir os dois, faça as duas consultas. " +
-    "CONSULTAS PRONTAS: antes de escrever SQL novo, leia as consultas que já estão no final destas instruções. " +
-    "Se uma delas já responde o que o usuário pediu, chame executar_sql com esse SQL, trocando só o número do processo " +
-    "ou o valor do filtro. Não reescreva a consulta. Só crie um SQL novo se nenhuma pronta servir. " +
+    "CONSULTAS PRONTAS: antes de escrever SQL novo, leia as consultas do final destas instruções. " +
+    "Se uma servir, reuse as tabelas, os JOINs e as colunas, e troque as datas pelo período desta pergunta. " +
+    "Não mantenha a data do exemplo, como 29/10. Se nenhuma servir, crie o SELECT do zero. " +
     "{processo} nas consultas prontas não é um processo real. Se o usuário não informou o número, pergunte qual processo. " +
     "Não invente número e não reutilize um processo de exemplo.\n" +
     "CATÁLOGO, antes de qualquer SQL de negócio: se não tiver certeza do nome da tabela, da coluna, do tipo ou da chave " +
@@ -757,8 +788,8 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "WHERE Lhs.Data_Abertura_Processo >= '2026-01-01' AND Lhs.Data_Abertura_Processo < '2027-01-01'\n" +
     "ORDER BY Cia.Nome\n" +
     "LIMITE: é proibido SELECT TOP 50, TOP 100 ou TOP 500. Esse TOP corta as datas mais antigas quando o ORDER BY é descendente. " +
-    "Copie no WHERE as datas exatas que o usuário escreveu, no formato aaaa-mm-dd, com início e fim. " +
-    "hoje, ontem, esse mês e esta semana usam as datas do bloco DATA DE HOJE, não um intervalo inventado. " +
+    "No WHERE use o período desta pergunta, no formato aaaa-mm-dd, com início e fim. " +
+    "hoje, ontem, esse mês e esta semana usam as datas do bloco DATA DE HOJE, não a data de uma consulta antiga. " +
     "Não troque um período escrito pelo usuário por uma data calculada, como 90 dias atrás. " +
     "'este ano', 'esse ano' ou 'no ano' = Data >= 'ano-01-01' AND Data < 'ano seguinte-01-01'. " +
     "Se não houver período, use o ano atual inteiro.\n" +
@@ -799,7 +830,10 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "O que mudou ou últimos 30 dias → o_que_mudou. Resumo do processo → resumo_processo. " +
     "Gráfico de faturas → se o número do processo não veio na mensagem, pergunte qual processo e não consulte. " +
     "Não use processo de exemplo nem processo com TESTE no nome. " +
-    "Com o número informado pelo usuário, consulte as faturas e desenhe o gráfico. Log técnico → localizar_processo e consultar_log. " +
+    "Com o número informado pelo usuário, consulte as faturas e desenhe o gráfico. " +
+    "Log técnico de um processo: se o número não veio na mensagem, pergunte qual processo e pare. " +
+    "Não chame log_recente, executar_sql nem consultar_log nesse caso. " +
+    "Com o número, use localizar_processo e consultar_log. " +
     "Fora o pedido de resumo, é proibido chamar resumo_processo nessa continuação.\n" +
     "resumo_processo resume um processo. buscar_processos acha por cliente, referência ou número. " +
     "acompanhamentos_processo lista as notas. pendencias lista hoje, atrasadas ou a semana da pessoa logada. " +
@@ -838,17 +872,16 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "O valor usa ponto decimal, sem ponto de milhar: 3302.05, nunca 3.302,05. " +
     "A data é opcional, em dd/mm/aaaa. Se houver data, ordene da mais antiga para a mais recente. " +
     "No máximo 12 pontos. Um bloco por série. Não invente número.\n" +
-    "Não use HTML nem LaTeX. A seta de mudança é o caractere →, nunca $\\rightarrow$ nem \\rightarrow. " +
+    "Não use HTML nem LaTeX. Nunca escreva no chat a chamada da ferramenta, marcação DSML, XML ou o texto do SQL. " +
+    "A seta de mudança é o caractere →, nunca $\\rightarrow$ nem \\rightarrow. " +
     "Dinheiro em real, com R$ e centavos (R$ 20.030,00), inclusive importância segurada, mercadoria, frete, pagamento, recebimento e comissão. " +
-    "Omita campos vazios e códigos internos. Datas como dd/mm/aaaa hh:mm. " +
+    "Omita campos vazios e códigos internos. Datas como dd/mm/aaaa hh:mm, nunca 2026-10-29T14:14:32.000Z. " +
     "Nomes de usuário como nome próprio (mario.tobias → Mario Tobias).\n" +
-    "VOLUME: se a ferramenta devolver muitos registros (mais de 8 linhas ou um texto longo), NÃO liste tudo no chat. " +
-    "Escreva um resumo curto: quantidade, período, o que mais importa e no máximo 5 exemplos. " +
-    "Não mencione PDF, arquivo para baixar nem relatório completo. " +
-    "A exceção é monitoramentos_alterados: copie as tabelas inteiras, com todas as linhas e colunas. " +
-    "A exceção também é rota_processo: copie o bloco ```rota inteiro, sem resumir os trechos. " +
-    "Só escreva a lista inteira no chat se o usuário pedir para ver no chat, mostrar tudo aqui, detalhar na conversa " +
-    "ou passar os dados na mensagem.\n" +
+    "LISTA: no chat, no máximo 30 registros. Se houver mais, diga o total e escreva Mostrei 30 de N. " +
+    "Não cole a lista inteira. O total conta, mesmo que só 30 linhas apareçam. " +
+    "monitoramentos_alterados: copie as tabelas inteiras, com todas as linhas e colunas. " +
+    "rota_processo: copie o bloco ```rota inteiro, sem resumir os trechos. " +
+    "Não diga que não consegue, que a lista é parcial, que o total não pode ser confirmado, ou mande abrir outra tela do sistema.\n" +
     "IMPRESSÃO: se o usuário pedir formatado para imprimir, não reescreva o texto. " +
     "O histórico sai no modelo padrão de log, com o botão de imprimir.\n" +
     (relatorio
@@ -857,8 +890,7 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
         "Se faltar algum dos três, pergunte só o que falta, numa mensagem curta: o assunto (processos, atividades, taxas, clientes...), o período ou as colunas. Não consulte antes de ter os três.\n" +
         "Quando tiver os três, chame executar_sql com essas colunas, na ordem em que o usuário pediu, apelido AS em português com o nome do campo, filtro de data no WHERE e sem TOP. " +
         "Nunca selecione coluna Id* nem código interno. Não inclua localizar_processo no relatório. " +
-        "Não use consultar_log para o relatório. Responda com a quantidade de linhas e o período. " +
-        "Não liste as linhas: a tabela aparece no chat. Nunca fale de Excel, planilha nem de arquivo para baixar.\n"
+        "Não use consultar_log para o relatório. A tabela também aparece no chat. Nunca fale de Excel, planilha nem de arquivo para baixar.\n"
       : "") +
     "\n" +
     (extra || "") +
@@ -885,6 +917,7 @@ async function lerStream(body, aoTexto) {
   const decodificar = new TextDecoder();
   let resto = "";
   const acc = { content: "", reasoning: "", tools: [] };
+  const filtro = criarFiltroDeChamada(aoTexto);
   while (true) {
     const { done, value } = await leitor.read();
     if (done) break;
@@ -909,12 +942,13 @@ async function lerStream(body, aoTexto) {
       if (usoBruto) acc.uso = lerUso(usoBruto);
       if (pedacoTexto) {
         acc.content += pedacoTexto;
-        aoTexto?.(pedacoTexto);
+        filtro.receber(pedacoTexto);
       }
       const raciocinio = textoDe(delta.reasoning) || textoDe(delta.reasoning_content);
       if (raciocinio) acc.reasoning += raciocinio;
-      for (const chamada of delta.tool_calls ?? []) {
-        const i = chamada.index ?? 0;
+      const chamadasDoPedaco = delta.tool_calls?.length ? delta.tool_calls : (escolha.message?.tool_calls ?? []);
+      for (const chamada of chamadasDoPedaco) {
+        const i = chamada.index ?? acc.tools.length;
         acc.tools[i] ??= { id: "", type: "function", function: { name: "", arguments: "" } };
         if (chamada.id) acc.tools[i].id = chamada.id;
         if (chamada.extra_content) acc.tools[i].extra_content = chamada.extra_content;
@@ -923,10 +957,22 @@ async function lerStream(body, aoTexto) {
       }
     }
   }
-  const tools = acc.tools.filter(Boolean);
-  if (!acc.content.trim() && !tools.length) return null;
+  filtro.finalizar();
+  const doTexto = extrairChamadasDoTexto(acc.content);
+  const doRaciocinio = extrairChamadasDoTexto(acc.reasoning);
+  const vistas = new Set();
+  const tools = [...acc.tools, ...doTexto.chamadas, ...doRaciocinio.chamadas].filter((item) => {
+    const nome = item?.function?.name;
+    if (!nome) return false;
+    const chave = `${nome}\n${item.function.arguments ?? ""}`;
+    if (vistas.has(chave)) return false;
+    vistas.add(chave);
+    return true;
+  });
+  const content = doTexto.texto;
+  if (!content.trim() && !tools.length) return null;
   return {
-    content: acc.content,
+    content,
     ...(acc.uso ? { uso: acc.uso } : {}),
     ...(tools.length ? { tool_calls: tools } : {}),
   };
@@ -956,74 +1002,6 @@ function corpoComSaida(corpo, maxTokens) {
   return { ...corpo, max_tokens: saida };
 }
 
-async function chamarGemini(chave, corpo, aoTexto, modelosFixos, maxTokens) {
-  const modelos = Array.isArray(modelosFixos) && modelosFixos.length
-    ? modelosFixos
-    : MODELOS_RESPOSTA;
-  let ultimoErro;
-  for (let indice = 0; indice < modelos.length; indice += 1) {
-    const model = modelos[indice];
-    let resp;
-    try {
-      resp = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${chave}` },
-        body: JSON.stringify(corpoComSaida({
-          ...corpo,
-          model,
-          stream: true,
-          ...(model.includes("lite") ? {} : { reasoning_effort: "high" }),
-          temperature: corpo.temperature ?? 0.2,
-        }, maxTokens)),
-      });
-    } catch (erro) {
-      ultimoErro = erroDoProvedor(erro?.message || "O Gemini não respondeu.", 503);
-      registrarResultadoGemini(chave, model, { status: 503 });
-      continue;
-    }
-    if (resp.ok && resp.body) {
-      const temReserva = indice < modelos.length - 1;
-      let guardado = "";
-      try {
-        const mensagem = await lerStream(resp.body, temReserva ? (texto) => { guardado += texto; } : aoTexto);
-        if (mensagem) {
-          registrarResultadoGemini(chave, model, { ok: true, status: resp.status, headers: resp.headers });
-          if (guardado) aoTexto?.(guardado);
-          return mensagem;
-        }
-      } catch (erro) {
-        ultimoErro = erroDoProvedor(erro?.message || "A resposta do Gemini foi interrompida.", 503);
-        registrarResultadoGemini(chave, model, { status: 503, headers: resp.headers });
-        continue;
-      }
-      ultimoErro = erroDoProvedor("A IA não devolveu texto.", 503);
-      registrarResultadoGemini(chave, model, { status: 503, headers: resp.headers });
-      continue;
-    }
-    const bruto = await resp.text();
-    let dados = {};
-    try {
-      dados = JSON.parse(bruto);
-    } catch {
-      dados = {};
-    }
-    const mensagem =
-      dados?.error?.message ||
-      dados?.[0]?.error?.message ||
-      dados?.message ||
-      bruto.replace(/\s+/g, " ").slice(0, 400) ||
-      `Gemini respondeu ${resp.status}`;
-    ultimoErro = erroDoProvedor(mensagem, resp.status);
-    registrarResultadoGemini(chave, model, { status: resp.status, headers: resp.headers });
-    if ([401, 403].includes(resp.status)) throw ultimoErro;
-    const falhaDoModelo =
-      resp.status === 404 ||
-      /not found|not supported|unsupported|invalid_request|model(?:o)?[\s\S]{0,80}(?:unavailable|does not exist)/i.test(mensagem);
-    if (resp.status !== 429 && resp.status < 500 && !falhaDoModelo) throw ultimoErro;
-  }
-  throw ultimoErro || new Error("O Gemini não respondeu.");
-}
-
 function prepararMensagens(mensagens) {
   const nomes = new Map();
   return mensagens.map((mensagem) => {
@@ -1042,138 +1020,8 @@ function prepararMensagens(mensagens) {
   });
 }
 
-function mensagensOllama(mensagens) {
-  return mensagens.map((mensagem) => {
-    if (mensagem.role !== "assistant" || !mensagem.tool_calls?.length) return mensagem;
-    return {
-      ...mensagem,
-      tool_calls: mensagem.tool_calls.map((chamada) => {
-        let argumentos = chamada.function?.arguments ?? {};
-        if (typeof argumentos === "string") {
-          try {
-            argumentos = JSON.parse(argumentos);
-          } catch {
-            argumentos = {};
-          }
-        }
-        return { ...chamada, function: { ...chamada.function, arguments: argumentos } };
-      }),
-    };
-  });
-}
-
-function juntarFerramentas(atual, novas) {
-  const lista = [...atual];
-  novas.forEach((bruta, indice) => {
-    const i = bruta.function?.index ?? bruta.index ?? indice;
-    const nome = bruta.function?.name || bruta.name || "";
-    let argumentos = bruta.function?.arguments ?? bruta.arguments ?? "";
-    if (typeof argumentos !== "string") argumentos = JSON.stringify(argumentos);
-    const item = lista[i] ?? {
-      id: bruta.id || `call_${i}`,
-      type: "function",
-      function: { name: "", arguments: "" },
-    };
-    if (bruta.id) item.id = bruta.id;
-    if (nome) item.function.name = nome;
-    if (argumentos && argumentos !== "{}") {
-      item.function.arguments = typeof bruta.function?.arguments === "string" && item.function.arguments
-        ? item.function.arguments + argumentos
-        : argumentos;
-    }
-    lista[i] = item;
-  });
-  return lista;
-}
-
-function ollamaNaMaquina(base) {
-  try {
-    const host = new URL(base).hostname;
-    return host === "127.0.0.1" || host === "localhost";
-  } catch {
-    return false;
-  }
-}
-
-async function chamarOllama(corpo, aoTexto, sinal, chaveInformada, baseInformada) {
-  const base = (baseInformada || process.env.OLLAMA_URL || "https://ollama.com").replace(/\/$/, "");
-  const local = ollamaNaMaquina(base);
-  const model = local
-    ? process.env.OLLAMA_MODEL_LOCAL || "qwen2.5:3b"
-    : corpo.modelo || process.env.OLLAMA_MODEL || "beam";
-  const chave = local ? "" : chaveInformada || process.env.OLLAMA_API_KEY;
-  const ollama = new Ollama({
-    host: base,
-    headers: chave ? { Authorization: `Bearer ${chave}` } : undefined,
-  });
-  let fluxo;
-  try {
-    fluxo = await ollama.chat({
-      model,
-      messages: mensagensOllama(corpo.messages),
-      tools: corpo.tools,
-      think: false,
-      stream: true,
-      options: {
-        temperature: corpo.temperature ?? 0.2,
-        num_predict: Number(corpo.num_predict) > 0 ? Number(corpo.num_predict) : -1,
-        ...(local ? { num_ctx: Number(process.env.OLLAMA_NUM_CTX) || 4096 } : {}),
-      },
-    });
-  } catch (erro) {
-    if (erro?.name === "AbortError" || sinal?.aborted) {
-      const abortado = new Error("Aborted");
-      abortado.name = "AbortError";
-      throw abortado;
-    }
-    const falha = typeof erro?.error === "string"
-      ? erro.error
-      : erro?.message || "Não foi possível falar com o Ollama.";
-    if (/closing '\}'|can't find closing/i.test(falha) && !corpo._repetida) {
-      return chamarOllama({ ...corpo, _repetida: true }, aoTexto, sinal, chaveInformada, baseInformada);
-    }
-    if (/fetch failed|ECONNREFUSED|Failed to fetch/i.test(falha)) {
-      throw new Error("Não foi possível falar com o Ollama. Perguntas de acompanhamento e taxa já respondem sem ele.");
-    }
-    throw erroDoProvedor(falha, statusDoErro(erro));
-  }
-  if (sinal) {
-    const cancelar = () => fluxo.abort();
-    if (sinal.aborted) fluxo.abort();
-    else sinal.addEventListener("abort", cancelar, { once: true });
-  }
-  let content = "";
-  let tools = [];
-  let uso = null;
-  try {
-    for await (const pedaco of fluxo) {
-      const texto = pedaco.message?.content;
-      if (typeof texto === "string" && texto) {
-        content += texto;
-        aoTexto?.(texto);
-      }
-      if (pedaco.message?.tool_calls?.length) tools = juntarFerramentas(tools, pedaco.message.tool_calls);
-      if (pedaco.done) {
-        const entrada = Number(pedaco.prompt_eval_count) || 0;
-        const saida = Number(pedaco.eval_count) || 0;
-        uso = { entrada, saida, total: entrada + saida };
-      }
-    }
-  } catch (erro) {
-    if (erro?.name === "AbortError" || sinal?.aborted) {
-      const abortado = new Error("Aborted");
-      abortado.name = "AbortError";
-      throw abortado;
-    }
-    throw new Error(erro?.error || erro?.message || "Não foi possível falar com o Ollama.");
-  }
-  tools = tools.filter((item) => item?.function?.name);
-  if (!content.trim() && !tools.length) throw new Error("O modelo não devolveu texto.");
-  return { content, ...(uso?.total ? { uso } : {}), ...(tools.length ? { tool_calls: tools } : {}) };
-}
-
 function corpoAberto(corpo) {
-  const { num_predict: _num, modelo: _modelo, modelosGemini: _modelos, limiteTokens: _limite, ...aberto } = corpo;
+  const { limiteTokens: _limite, ...aberto } = corpo;
   return aberto;
 }
 
@@ -1281,32 +1129,22 @@ async function chamarOpenRouter(chave, corpo, aoTexto, maxTokens) {
   throw ultimoErro || new Error("O OpenRouter não respondeu.");
 }
 
-async function chamarProvedor(item, corpo, aoTexto, sinal) {
-  const modelos = corpo.modelosGemini;
-  const limite = corpo.limiteTokens;
-  const aberto = corpoAberto(corpo);
-  if (item.provedor === "gemini") return chamarGemini(item.chave, aberto, aoTexto, modelos, limite);
-  if (item.provedor === "openrouter") return chamarOpenRouter(item.chave, aberto, aoTexto, limite);
-  if (item.provedor === "ollama") {
-    return chamarOllama({ ...corpo, modelo: process.env.OLLAMA_MODEL || "beam" }, aoTexto, sinal, item.chave, item.extra);
-  }
-  throw new Error(`Provedor de IA não suportado: ${item.provedor}`);
+async function chamarProvedor(item, corpo, aoTexto) {
+  if (item.provedor !== "openrouter") throw new Error(`Provedor de IA não suportado: ${item.provedor}`);
+  return chamarOpenRouter(item.chave, corpoAberto(corpo), aoTexto, corpo.limiteTokens);
 }
 
-function modeloDaPergunta() {
-  return process.env.OLLAMA_MODEL || "beam";
-}
-
-function chaveGemini(chaves) {
-  return String(chaves?.find((item) => item?.provedor === "gemini")?.chave || process.env.GEMINI_API_KEY || "").trim();
-}
-
-async function completarCurto(chave, modelo, sistemaTexto, usuario, maxTokens) {
-  const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+async function completarCurto(chave, sistemaTexto, usuario, maxTokens) {
+  const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${chave}` },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${chave}`,
+      "HTTP-Referer": "https://maicon.conlinebr.com.br",
+      "X-Title": "Maicon AI",
+    },
     body: JSON.stringify({
-      model: modelo,
+      model: modelosOpenRouter()[0],
       messages: [
         { role: "system", content: sistemaTexto },
         { role: "user", content: usuario },
@@ -1314,24 +1152,12 @@ async function completarCurto(chave, modelo, sistemaTexto, usuario, maxTokens) {
       max_tokens: maxTokens,
       temperature: 0,
       stream: false,
+      reasoning: { enabled: false },
     }),
   });
   const dados = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw erroDoProvedor(dados?.error?.message || `Gemini respondeu ${resp.status}`, resp.status);
+  if (!resp.ok) throw erroDoProvedor(dados?.error?.message || `O DeepSeek respondeu ${resp.status}`, resp.status);
   return String(dados?.choices?.[0]?.message?.content || "");
-}
-
-async function comModeloLeve(chave, sistemaTexto, usuario, maxTokens) {
-  let ultimo;
-  for (const modelo of MODELOS_LEVES) {
-    try {
-      return await completarCurto(chave, modelo, sistemaTexto, usuario, maxTokens);
-    } catch (erro) {
-      ultimo = erro;
-      if ([401, 403].includes(Number(erro?.status))) throw erro;
-    }
-  }
-  throw ultimo || new Error("O modelo leve não respondeu.");
 }
 
 function mensagemPronta(msg) {
@@ -1347,7 +1173,6 @@ function corpoDeCorrecao(corpo, instrucao, ferramentas) {
   return {
     ...corpo,
     temperature: 0,
-    modelosGemini: MODELOS_RESPOSTA,
     tools: ferramentas,
     ...(ferramentas.length ? { tool_choice: "required" } : {}),
     messages: corpo.messages.map((item, indice) =>
@@ -1378,43 +1203,8 @@ function ferramentasDoPedido(opcoes, nomes) {
   });
 }
 
-function esquecerConsultasAnteriores(mensagens) {
-  let inicio = 0;
-  for (let i = mensagens.length - 1; i >= 0; i--) {
-    if (mensagens[i]?.role === "user") {
-      inicio = i;
-      break;
-    }
-  }
-  return mensagens.map((item, indice) => {
-    if (indice >= inicio || item?.role !== "tool") return item;
-    return { ...item, content: "Consulta já respondida na pergunta anterior." };
-  });
-}
-
 export async function conversar(mensagens, aoTexto, opcoes = {}) {
   const pedido = [...mensagens].reverse().find((item) => item?.role === "user")?.content ?? "";
-  const roteiro = opcoes.relatorio || opcoes.apresentacao ? pedido : pedidoDaRodada(mensagens);
-  const pronta = respostaDeFerramentaPronta(mensagens);
-  if (pronta) return { role: "assistant", content: pronta, uso: { entrada: 0, saida: 0, total: 0 } };
-  if (!opcoes.relatorio && !opcoes.apresentacao) {
-    const direta = respostaImediata(pedido);
-    if (direta) return { role: "assistant", content: direta, uso: { entrada: 0, saida: 0, total: 0 } };
-    let ferramenta = chamadaDireta(roteiro);
-    if (ferramenta && !ferramentasDoPedido(opcoes, [ferramenta.nome]).length) ferramenta = null;
-    if (ferramenta) {
-      return {
-        role: "assistant",
-        content: "",
-        uso: { entrada: 0, saida: 0, total: 0 },
-        tool_calls: [{
-          id: `direta_${Date.now()}`,
-          type: "function",
-          function: { name: ferramenta.nome, arguments: JSON.stringify(ferramenta.args) },
-        }],
-      };
-    }
-  }
   let inicioRodada = 0;
   for (let i = mensagens.length - 1; i >= 0; i--) {
     if (mensagens[i]?.role === "user") {
@@ -1423,75 +1213,68 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
     }
   }
   const temRetorno = mensagens.slice(inicioRodada).some((item) => item?.role === "tool");
-  const informativo = !opcoes.relatorio && !opcoes.apresentacao && !temRetorno && pedidoInformativo(pedido);
-  const chaveLeve = chaveGemini(opcoes.chaves);
-  const provaveis = ferramentasProvaveis(roteiro);
-  const catalogo = ["buscar_tabelas", "listar_colunas", "executar_sql"];
-  const busca = provaveis.length ? [...new Set([...provaveis, ...catalogo])] : [];
-  const filtro = informativo || opcoes.apresentacao
-    ? { ferramentas: [], termos: "" }
-    : { ferramentas: busca, termos: "" };
-  const base = esquecerConsultasAnteriores(mensagens);
-  const escolhidas = filtro.ferramentas.length ? ferramentasDoPedido(opcoes, filtro.ferramentas) : [];
-  const ferramentas = informativo ? [] : escolhidas.length ? escolhidas : ferramentasDoPedido(opcoes);
-  const roteando = !temRetorno && !opcoes.relatorio && !opcoes.apresentacao && ferramentas.length > 0;
+  const filaBase = filaDeChaves(opcoes.chaves);
+  const chaveDeepSeek = filaBase[0]?.chave || "";
+  const calendarioPedido = textoCalendario();
+  const usuarios = mensagens.filter((item) => item?.role === "user");
+  const pedidoAnterior = String(usuarios.at(-2)?.content ?? "");
+  const comData = mensagens.map((item, indice, lista) => {
+    if (item?.role !== "user" || lista.slice(indice + 1).some((outro) => outro?.role === "user")) return item;
+    const anotado = anotarPedido(item.content, pedidoAnterior, calendarioPedido);
+    return anotado === item.content ? item : { ...item, content: anotado };
+  });
+  const base = comData;
+  const ferramentas = opcoes.apresentacao ? [] : ferramentasDoPedido(opcoes);
   const conferencia = temRetorno && !opcoes.apresentacao ? conferirTabelas(mensagens) : { ok: true, aviso: "" };
   const rodadas = rodadasDesdePergunta(mensagens);
   const corrigindo = conferencia.ok === false && rodadas < 3;
-  let instrucoes = informativo
-    ? "Você é o Maicon, a IA da Conline. Responda a pergunta geral em português, com clareza e no máximo cinco frases. " +
-      "Não consulte o banco, não escreva SQL e não invente dados da empresa."
-    : roteando
-    ? `Você é o roteador do Maicon. ${textoCalendario().texto} ${textoObservado(opcoes.email, opcoes.setor, pedido)} ` +
-      "Escolha e chame imediatamente a ferramenta que inicia a consulta. " +
-      "Não responda com dados, não explique e não invente. " +
-      "Lista de propostas por ontem, hoje, mês ou data chama propostas_periodo, sem localizar processo. " +
-      "Se houver número de processo no formato IM5944-26 e a pergunta for sobre esse processo, comece localizando-o. " +
-      "Use somente as ferramentas disponíveis."
-    : sistema(
-      Boolean(opcoes.relatorio),
-      opcoes.papel !== "admin" && opcoes.acesso?.fazerLog === false,
-      opcoes.setor || "geral",
-      opcoes.modalidade || "",
-      textoAprendizado({
-        email: opcoes.email,
-        visao: opcoes.setor || "geral",
-        mensagens,
-      }) +
-        textoCarteira(opcoes) +
-        (opcoes.papel === "admin"
-          ? ""
-          : "\nSQL NO CHAT: é proibido escrever SELECT, bloco de código SQL ou o texto da consulta. " +
-            "Se pedirem a consulta ou o SQL, responda só que isso fica disponível para o administrador. Não mostre a consulta."),
-      Boolean(opcoes.apresentacao),
-      opcoes.apresentacao ? "" : textoConsultasRelevantes(`${roteiro}\n${filtro.termos}`),
-    );
-  if (!roteando && !informativo && mensagens.filter((item) => item?.role === "user").length > 1) {
+  let instrucoes = sistema(
+    Boolean(opcoes.relatorio),
+    opcoes.papel !== "admin" && opcoes.acesso?.fazerLog === false,
+    opcoes.setor || "geral",
+    opcoes.modalidade || "",
+    textoAprendizado({
+      email: opcoes.email,
+      visao: opcoes.setor || "geral",
+      mensagens,
+    }) +
+      textoCarteira(opcoes) +
+      (opcoes.papel === "admin"
+        ? ""
+        : "\nSQL NO CHAT: é proibido escrever SELECT, bloco de código SQL ou o texto da consulta. " +
+          "Se pedirem a consulta ou o SQL, responda só que isso fica disponível para o administrador. Não mostre a consulta."),
+    Boolean(opcoes.apresentacao),
+    opcoes.apresentacao ? "" : textoConsultasRelevantes(pedido),
+  );
+  const calendario = textoCalendario();
+  instrucoes +=
+    `\nHOJE É ${calendario.hoje}. ONTEM É ${calendario.ontem}. ` +
+    "hoje usa só essa data. Uma lista anterior de outro dia não responde hoje. Consulte de novo.";
+  if (opcoes.completo) {
+    instrucoes +=
+      "\nLISTA COMPLETA NESTA MENSAGEM: chame executar_sql agora, com o mesmo filtro da pergunta anterior. " +
+      "Mostre no máximo 30 linhas e escreva o total, como Mostrei 30 de N. Não cole centenas de linhas. " +
+      "Se a consulta devolver linhas, a resposta é essa lista, não o catálogo de colunas. " +
+      "Não recuse. Não diga que os números anteriores não valem. Não mande abrir a tela de Processos Logísticos nem falar com outro time.";
+  } else if (mensagens.filter((item) => item?.role === "user").length > 1) {
     instrucoes +=
       "\nA última mensagem do usuário é a única pergunta a responder. Não repita a resposta anterior. " +
       "Se pediram um dado, responda esse dado. Não monte de novo a ficha do processo, a menos que tenham pedido o resumo.";
   }
-  if (conferencia.aviso && !roteando && !informativo && !corrigindo) instrucoes += `\n${conferencia.aviso}\n`;
+  if (conferencia.aviso && !corrigindo) instrucoes += `\n${conferencia.aviso}\n`;
   const corpo = {
-    modelo: modeloDaPergunta(),
-    temperature: roteando ? 0 : 0.3,
-    modelosGemini: informativo || opcoes.apresentacao ? MODELOS_LEVES : MODELOS_RESPOSTA,
-    tools: opcoes.apresentacao ? [] : ferramentas,
-    ...(roteando && ferramentas.length ? { tool_choice: "required" } : {}),
+    temperature: 0.3,
+    tools: ferramentas,
     messages: [
       { role: "system", content: instrucoes },
       ...prepararMensagens(base.map(({ uso: _uso, relatorio: _relatorio, log: _log, ...resto }) => resto)),
     ],
   };
-  const filaBase = filaDeChaves(opcoes.chaves);
-  const prioridadeLeve = { openrouter: 0, gemini: 1, ollama: 2 };
-  const filaLeve = [...filaBase].sort((a, b) => prioridadeLeve[a.provedor] - prioridadeLeve[b.provedor]);
-  const fila = roteando || informativo ? filaLeve : filaBase;
   const permitidas = ferramentasDoPedido(opcoes);
   const corpoUsado = corrigindo ? corpoDeCorrecao(corpo, conferencia.instrucao, permitidas) : corpo;
-  const querJulgar = temRetorno && !opcoes.apresentacao && !opcoes.relatorio && !roteando && !informativo;
+  const querJulgar = temRetorno && !opcoes.apresentacao && !opcoes.relatorio;
   const silencioso = corrigindo || querJulgar;
-  console.warn(`[IA] rota ${corrigindo ? "conferencia" : roteando ? "leve" : informativo ? "informativa" : "resposta"}; instrucoes ${instrucoes.length} caracteres; ferramentas ${corpoUsado.tools.length}.`);
+  console.warn(`[IA] rota ${corrigindo ? "conferencia" : "resposta"}; instrucoes ${instrucoes.length} caracteres; ferramentas ${corpoUsado.tools.length}.`);
   if (corrigindo) console.warn(`[IA] Autoavaliação reprovou a consulta: ${conferencia.motivo}`);
 
   async function pedir(corpoAtual, filaAtual, transmitir) {
@@ -1504,7 +1287,6 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
           item,
           corpoAtual,
           temReserva ? (pedaco) => { guardado += pedaco; } : transmitir,
-          opcoes.sinal,
         );
         if (guardado && transmitir) transmitir(guardado);
         return dadosDoProvedor;
@@ -1516,24 +1298,24 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
   }
 
   async function julgarRascunho(rascunho) {
-    if (!chaveLeve || !String(rascunho || "").trim() || respostaConfereComRetorno(rascunho, mensagens)) {
+    if (!chaveDeepSeek || !String(rascunho || "").trim() || respostaConfereComRetorno(rascunho, mensagens)) {
       return { ok: true, motivo: "", deNovo: false };
     }
-    const texto = await comModeloLeve(
-      chaveLeve,
+    const texto = await completarCurto(
+      chaveDeepSeek,
       "Você é a autoavaliação interna do Maicon. Não responda ao usuário. " +
         "Responda só JSON {\"ok\":true} ou {\"ok\":false,\"motivo\":\"...\",\"deNovo\":false}. " +
-        "Reprove se a resposta inventa cliente, valor, data, processo ou fato que não está na amostra, " +
+        "Reprove se a resposta inventa cliente, valor, data, processo ou fato que não está na consulta, " +
         "se as tabelas não servem para a pergunta, ou se ignora os dados retornados. " +
         "Aprove se a resposta só organiza o que a consulta devolveu. " +
         "deNovo=true quando precisa consultar outra tabela ou corrigir o SQL. deNovo=false quando basta reescrever com os dados que já vieram.",
-      `Pergunta: ${String(pedido).slice(0, 500)}\n\nAmostra da consulta:\n${amostraDaConsulta(mensagens) || "(sem amostra)"}\n\nRascunho:\n${String(rascunho).slice(0, 1800)}`,
+      `Pergunta: ${String(pedido).slice(0, 500)}\n\nTrecho da consulta:\n${amostraDaConsulta(mensagens) || "(sem consulta)"}\n\nResposta a conferir:\n${String(rascunho).slice(0, 1800)}`,
       220,
     );
     return lerJulgamento(texto);
   }
 
-  const dados = await pedir(corpoUsado, corrigindo ? filaLeve : fila, silencioso ? () => {} : aoTexto);
+  const dados = await pedir(corpoUsado, filaBase, silencioso ? () => {} : aoTexto);
   if (!silencioso || dados?.tool_calls?.length) return mensagemPronta(dados);
   if (corrigindo) {
     const texto = "Não confirmei essa consulta no banco, então não vou inventar o resultado.";
@@ -1549,16 +1331,16 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
   if (!veredito.ok) {
     console.warn(`[IA] Autoavaliação reprovou a resposta: ${veredito.motivo}`);
     if (veredito.deNovo && rodadas < 3) {
-      const segunda = await pedir(corpoDeCorrecao(corpo, veredito.motivo, permitidas), filaLeve, () => {});
+      const segunda = await pedir(corpoDeCorrecao(corpo, veredito.motivo, permitidas), filaBase, () => {});
       if (segunda?.tool_calls?.length) return mensagemPronta(segunda);
     }
     try {
-      const novo = chaveLeve
-        ? String(await comModeloLeve(
-          chaveLeve,
-          "Reescreva a resposta do Maicon em português claro, só com os dados da consulta. " +
-            "Não invente número, nome, data ou valor. Se o dado não está na consulta, diga que não consta. Sem SQL e sem nome de tabela.",
-          `Pergunta: ${String(pedido).slice(0, 500)}\n\nProblema: ${veredito.motivo}\n\nDados:\n${amostraDaConsulta(mensagens)}\n\nRascunho:\n${String(dados?.content || "").slice(0, 1800)}`,
+      const novo = chaveDeepSeek
+        ? String(await completarCurto(
+          chaveDeepSeek,
+          "Reescreva a resposta do Maicon em português claro, com no máximo 30 linhas da lista e o total. " +
+            "Não invente número, nome, data ou valor. Não diga que a lista é parcial nem que o total não pode ser confirmado. Sem SQL e sem nome de tabela.",
+          `Pergunta: ${String(pedido).slice(0, 500)}\n\nProblema: ${veredito.motivo}\n\nTrecho da consulta:\n${amostraDaConsulta(mensagens)}\n\nResposta a reescrever:\n${String(dados?.content || "").slice(0, 1800)}`,
           700,
         )).trim()
         : "";

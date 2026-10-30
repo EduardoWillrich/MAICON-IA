@@ -9,6 +9,7 @@ import { montarSelect, montarXpaths, tabelasDaLinha } from "./query.js";
 import { enriquecerNomes, nomearSql } from "./nomes.js";
 import { compararComCadastro } from "./atual.js";
 import { conversar } from "./ia.js";
+import { calendarioAtual, sqlDoPeriodo } from "./datasPedido.js";
 import { resumirGmail } from "./gmail.js";
 import { pedeHistorico, responderPorRegra } from "./regras.js";
 import { executarFuncao, chaveConsulta, consultaEmCache, consultaFresca, guardarConsulta } from "./funcoes.js";
@@ -98,9 +99,7 @@ app.get("/api/ia/saude", (_req, res) => {
     ok: true,
     commit: process.env.MAICON_GIT_SHA || "",
     provedores: {
-      gemini: Boolean(String(process.env.GEMINI_API_KEY || "").trim()) || compartilhados.has("gemini"),
-      openrouter: Boolean(String(process.env.OPENROUTER_API_KEY || "").trim()) || compartilhados.has("openrouter"),
-      ollama: Boolean(String(process.env.OLLAMA_API_KEY || "").trim()) || compartilhados.has("ollama"),
+      deepseek: Boolean(String(process.env.OPENROUTER_API_KEY || "").trim()) || compartilhados.has("openrouter"),
     },
   });
 });
@@ -1143,7 +1142,8 @@ function semTopDeLista(sql) {
 app.post("/api/sql", async (req, res) => {
   let pool;
   try {
-    const texto = semTopDeLista(String(req.body?.sql ?? "").trim().replace(/;\s*$/, ""));
+    const pedido = String(req.body?.pergunta ?? "");
+    const texto = semTopDeLista(sqlDoPeriodo(String(req.body?.sql ?? ""), pedido, calendarioAtual()).trim().replace(/;\s*$/, ""));
     if (!texto) throw new Error("SQL vazio.");
     if (/\blimit\s+\d/i.test(texto)) throw new Error("No SQL Server use TOP, não LIMIT.");
     if (/select\s+(top\s+\d+\s+)?\*\s+from/i.test(texto)) {
@@ -1206,36 +1206,6 @@ app.post("/api/sql", async (req, res) => {
 app.get("/api/ia/consumo", (req, res) => {
   if (!soAdmin(emailDaSessao(req))) return res.status(403).json({ erro: "Só o administrador vê o consumo." });
   res.json(resumoConsumo());
-});
-
-app.get("/api/ia/uso", async (req, res) => {
-  if (permissaoDe(emailDaSessao(req)).papel !== "admin") {
-    return res.status(403).json({ disponivel: false });
-  }
-  const chave = process.env.OLLAMA_API_KEY;
-  if (!chave) return res.json({ disponivel: false });
-  try {
-    const resp = await fetch("https://ollama.com/api/usage?range=30d", {
-      headers: { Authorization: `Bearer ${chave}` },
-    });
-    const dados = await resp.json().catch(() => ({}));
-    if (!resp.ok) return res.status(resp.status).json({ disponivel: false });
-    const totais = dados.totals ?? {};
-    const entrada = Number(totais.input_tokens) || 0;
-    const saida = Number(totais.output_tokens) || 0;
-    res.json({
-      disponivel: true,
-      periodo: "30 dias",
-      pedidos: Number(totais.request_count) || 0,
-      entrada,
-      saida,
-      cache: Number(totais.cached_input_tokens) || 0,
-      total: entrada + saida,
-      usd: Number(totais.usage_usd) || 0,
-    });
-  } catch {
-    res.json({ disponivel: false });
-  }
 });
 
 function modalidadeEfetiva(acesso, perfil, visao) {

@@ -309,7 +309,7 @@ async function processosAbertos(pool, args, recorte) {
     ? "CAST(Lhs.Data_Abertura_Processo AS date) = CAST(GETDATE() AS date)"
     : "Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))";
   const comando = `
-    SELECT TOP 40
+    SELECT
       Lhs.Numero_Processo,
       Cli.Nome AS Cliente,
       Sta.Descricao AS Situacao,
@@ -330,8 +330,7 @@ async function processosAbertos(pool, args, recorte) {
       .filter(Boolean)
       .join(" · "),
   );
-  const aviso = r.recordset.length === 40 ? "\n\nMostrei 40 registros." : "";
-  return consultaPronta(`${titulo}\n${lista(linhas, "Nenhum processo aberto nesse recorte.")}${aviso}`, comando, r.recordset);
+  return consultaPronta(`${titulo}\n${lista(linhas, "Nenhum processo aberto nesse recorte.")}`, comando, r.recordset);
 }
 
 async function acompanhamentosProcesso(pool, args) {
@@ -340,7 +339,7 @@ async function acompanhamentosProcesso(pool, args) {
   if (!house) return `Processo ${numero} não encontrado.`;
   const ultimo = args.ultimo === true || args.ultimo === "true" || args.ultimo === 1;
   const r = await pool.request().input("id", sql.Int, house.IdProjeto_Atividade).query(`
-    SELECT ${ultimo ? "TOP 1" : "TOP 15"}
+    SELECT ${ultimo ? "TOP 1" : ""}
       A.Data,
       A.Descricao,
       R.Nome AS Responsavel
@@ -356,7 +355,7 @@ async function acompanhamentosProcesso(pool, args) {
       return [dataCurta(linha.Data), nota, quem && `(${quem})`].filter(Boolean).join(" ");
     })
     .join("\n");
-  return ultimo || r.recordset.length < 15 ? texto : `${texto}\n\nMostrei os 15 mais recentes.`;
+  return texto;
 }
 
 async function pendencias(pool, args, ctx) {
@@ -372,7 +371,7 @@ async function pendencias(pool, args, ctx) {
           ? "(Ati.Previsao_Termino IS NULL OR CAST(Ati.Previsao_Termino AS date) < DATEADD(day, 8, CAST(GETDATE() AS date)))"
           : "Ati.Previsao_Termino IS NOT NULL AND CAST(Ati.Previsao_Termino AS date) >= CAST(GETDATE() AS date) AND CAST(Ati.Previsao_Termino AS date) < DATEADD(day, 8, CAST(GETDATE() AS date))";
   const r = await pool.request().input("id", sql.Int, pessoa.IdPessoa).query(`
-    SELECT TOP 30
+    SELECT
       Tar.Descricao AS Atividade,
       Lhs.Numero_Processo,
       Ati.Previsao_Termino
@@ -524,6 +523,41 @@ function somarDias(data, dias) {
   return copia;
 }
 
+async function processosDasPropostas(pool, linhas) {
+  const ids = [...new Set(linhas.map((linha) => Number(linha.IdProposta_Frete)).filter((id) => id > 0))];
+  if (!ids.length) return new Map();
+  const request = pool.request();
+  request.timeout = 15000;
+  const marcas = ids.map((id, indice) => {
+    request.input(`p${indice}`, sql.Int, id);
+    return `@p${indice}`;
+  });
+  const lista = marcas.join(", ");
+  const r = await request.query(`
+    SELECT IdProposta, Numero_Processo
+    FROM (
+      SELECT IdProposta, Numero_Processo,
+        ROW_NUMBER() OVER (
+          PARTITION BY IdProposta
+          ORDER BY CASE WHEN NULLIF(Numero_Processo, '') IS NULL THEN 1 ELSE 0 END, IdLogistica_House DESC
+        ) AS rn
+      FROM (
+        SELECT Pro.IdProposta_Frete AS IdProposta, H.Numero_Processo, H.IdLogistica_House
+        FROM mov_Proposta_Frete Pro
+        JOIN mov_Logistica_House H ON H.IdProjeto_Atividade = Pro.IdProjeto_Atividade
+        WHERE Pro.IdProposta_Frete IN (${lista})
+          AND Pro.IdProjeto_Atividade IS NOT NULL
+        UNION ALL
+        SELECT O.IdProposta_Frete, H.Numero_Processo, H.IdLogistica_House
+        FROM mov_Oferta_Frete O
+        JOIN mov_Logistica_House H ON H.IdOferta_Frete = O.IdOferta_Frete
+        WHERE O.IdProposta_Frete IN (${lista})
+      ) Candidatos
+    ) Escolha
+    WHERE rn = 1`);
+  return new Map(r.recordset.map((linha) => [Number(linha.IdProposta), linha.Numero_Processo || ""]));
+}
+
 function periodoPropostas(args) {
   const { ano, mes, hoje } = calendarioBrasil();
   const inicioPedido = parseData(args.inicio);
@@ -561,14 +595,16 @@ async function propostasPeriodo(pool, args, recorte, ctx) {
   const { inicio, fim, rotulo } = periodoPropostas(args);
   const abertas = String(args.situacao ?? "todas") !== "todas";
   const request = pool.request();
+  request.timeout = 20000;
   request.input("ini", sql.Date, inicio);
   request.input("fim", sql.Date, fim);
   if (carteira) request.input("id", sql.Int, carteira);
   const filtroCarteira = carteira ? "AND Pro.IdVendedor = @id" : "";
   const filtroSituacao = abertas ? "AND Pro.Situacao IN (1, 4, 5, 6)" : "";
   const comando = `
-    SELECT TOP 200
+    SELECT
       COUNT(*) OVER() AS Total,
+      Pro.IdProposta_Frete,
       Pro.Numero_Proposta,
       CASE Pro.Situacao
         WHEN 1 THEN 'Aguardando aprovação'
@@ -581,20 +617,10 @@ async function propostasPeriodo(pool, args, recorte, ctx) {
       END AS Situacao,
       Pro.Data_Proposta AS Data,
       Cli.Nome AS Cliente,
-      Ven.Nome AS Vendedor,
-      Hou.Numero_Processo AS Processo
+      Ven.Nome AS Vendedor
     FROM mov_Proposta_Frete Pro
     LEFT JOIN cad_Pessoa Cli ON Cli.IdPessoa = Pro.IdCliente
     LEFT JOIN cad_Pessoa Ven ON Ven.IdPessoa = Pro.IdVendedor
-    OUTER APPLY (
-      SELECT TOP 1 H.Numero_Processo
-      FROM mov_Logistica_House H
-      WHERE H.IdProjeto_Atividade = Pro.IdProjeto_Atividade
-         OR H.IdOferta_Frete IN (
-           SELECT O.IdOferta_Frete FROM mov_Oferta_Frete O WHERE O.IdProposta_Frete = Pro.IdProposta_Frete
-         )
-      ORDER BY CASE WHEN NULLIF(H.Numero_Processo, '') IS NULL THEN 1 ELSE 0 END, H.IdLogistica_House DESC
-    ) Hou
     WHERE Pro.Data_Proposta >= @ini AND Pro.Data_Proposta < @fim
       ${filtroSituacao}
       ${filtroCarteira}
@@ -606,16 +632,21 @@ async function propostasPeriodo(pool, args, recorte, ctx) {
   }
   const total = Number(r.recordset[0].Total) || r.recordset.length;
   const linhas = r.recordset.map(({ Total: _total, ...resto }) => resto);
+  const processos = await processosDasPropostas(pool, linhas.slice(0, 30));
+  for (const linha of linhas) {
+    linha.Processo = processos.get(Number(linha.IdProposta_Frete)) || "";
+    delete linha.IdProposta_Frete;
+  }
+  const amostra = linhas.slice(0, 30);
   const tabela = [
     "| Proposta | Data | Situação | Cliente | Vendedor | Processo |",
     "| --- | --- | --- | --- | --- | --- |",
-    ...linhas.slice(0, 40).map((linha) =>
+    ...amostra.map((linha) =>
       `| ${celula(linha.Numero_Proposta)} | ${celula(dataCurta(linha.Data))} | ${celula(linha.Situacao)} | ${celula(linha.Cliente)} | ${celula(linha.Vendedor)} | ${celula(linha.Processo)} |`,
     ),
   ].join("\n");
-  const aviso = total > linhas.length ? `\n\nMostrei ${linhas.length} de ${total}.` : "";
-  const extra = linhas.length > 40 ? "\n\nA tabela acima traz as 40 primeiras." : "";
-  return consultaPronta(`${titulo}: ${total}\n\n${tabela}${extra}${aviso}`, comando, linhas, {
+  const aviso = total > amostra.length ? `\n\nMostrei ${amostra.length} de ${total}, as mais recentes.` : "";
+  return consultaPronta(`${titulo}: ${total}\n\n${tabela}${aviso}`, comando, linhas, {
     ini: inicio,
     fim: fim,
     ...(carteira ? { id: carteira } : {}),
@@ -641,7 +672,7 @@ async function comissaoPeriodo(pool, args, recorte, ctx) {
     filtroPessoa = "AND (Lhs.IdVendedor = @id OR Com.IdPessoa = @id)";
   }
   const r = await request.query(`
-    SELECT TOP 20
+    SELECT
       Lhs.Numero_Processo,
       Cli.Nome AS Cliente,
       Pes.Nome AS Comissionado,
@@ -661,7 +692,7 @@ async function comissaoPeriodo(pool, args, recorte, ctx) {
   const titulo = numero
     ? `Comissões do processo ${String(numero).trim()}`
     : `Comissões de processos abertos entre ${dataDoPeriodo(inicio)} e ${dataDoPeriodo(fim)}`;
-  return `${titulo}\n${lista(linhas, "Nenhuma comissão nesse recorte.")}${linhas.length === 20 ? "\n\nMostrei 20 registros." : ""}`;
+  return `${titulo}\n${lista(linhas, "Nenhuma comissão nesse recorte.")}`;
 }
 
 async function idDaCarteira(pool, recorte, ctx) {
@@ -800,7 +831,7 @@ async function processosAbertosCliente(pool, args, recorte, ctx) {
   }
 
   const comando = `
-    SELECT TOP 30
+    SELECT
       Lhs.Numero_Processo,
       Lhs.Referencia_Cliente,
       Cli.Nome AS Cliente,
@@ -919,7 +950,7 @@ async function prazos(pool, args, recorte) {
       AND Lhs.Numero_Processo NOT LIKE 'DEMU%'
       AND Lhs.Data_Abertura_Processo >= DATEADD(month, -18, CAST(GETDATE() AS date))`;
   const comando = `
-    SELECT TOP 200
+    SELECT
       Lhs.Numero_Processo,
       Cli.Nome AS Cliente,
       Lms.Data_Previsao_Embarque,
@@ -951,7 +982,6 @@ async function prazos(pool, args, recorte) {
     ].filter(Boolean);
     return `${linha.Numero_Processo} · ${String(linha.Cliente ?? "").trim()} · ${marcas.join(", ")}`;
   });
-  const aviso = r.recordset.length === 200 ? "\n\nA lista foi limitada a 200 processos." : "";
   const assunto = marcos.join(", ");
   const titulo =
     modo === "realizado"
@@ -962,13 +992,13 @@ async function prazos(pool, args, recorte) {
         ? `Processos com ${assunto} hoje`
         : `Prazos vencidos ou nos próximos ${dias} dias (processos dos últimos 6 meses)`;
   const vazio = modo === "janela" ? "Nenhum prazo nesse recorte." : "Nenhum processo nesse recorte.";
-  return consultaPronta(`${titulo}\n${lista(linhas, vazio)}${aviso}`, comando, r.recordset, { dias });
+  return consultaPronta(`${titulo}\n${lista(linhas, vazio)}`, comando, r.recordset, { dias });
 }
 
 async function processosParados(pool, args, recorte) {
   const dias = diasDe(args.dias, 7);
   const comando = `
-    SELECT TOP 200
+    SELECT
       Lhs.Numero_Processo,
       Cli.Nome AS Cliente,
       Ult.Data AS Ultimo
@@ -989,9 +1019,8 @@ async function processosParados(pool, args, recorte) {
   const linhas = r.recordset.map(
     (linha) => `${linha.Numero_Processo} · ${String(linha.Cliente ?? "").trim()} · ${linha.Ultimo ? `último acompanhamento ${dataCurta(linha.Ultimo)}` : "sem acompanhamento"}`,
   );
-  const aviso = r.recordset.length === 200 ? "\n\nA lista foi limitada a 200 processos." : "";
   return consultaPronta(
-    `Processos abertos nos últimos 6 meses sem acompanhamento há ${dias} dias ou mais\n${lista(linhas, "Nenhum processo parado nesse recorte.")}${aviso}`,
+    `Processos abertos nos últimos 6 meses sem acompanhamento há ${dias} dias ou mais\n${lista(linhas, "Nenhum processo parado nesse recorte.")}`,
     comando,
     r.recordset.map((linha) => ({
       Numero_Processo: linha.Numero_Processo,
@@ -1124,10 +1153,8 @@ async function documentalCe(pool, args) {
       ].filter(Boolean);
       return `- **${linha.Numero_Processo}**\n${detalhes.map((item) => `  - ${item}`).join("\n")}`;
     });
-    const amostra = cartoes.slice(0, 8);
-    const total = cartoes.length;
-    const texto = `#### ${titulo}\n\n${amostra.length ? amostra.join("\n") : "Nenhuma atividade nesse recorte."}${total > 8 ? `\n\nMostrei 8 de ${total}. A lista do chat traz até 200.` : ""}`;
-    const linhas = r.recordset.slice(0, 200).map((linha) => ({
+    const texto = `#### ${titulo}\n\n${cartoes.length ? cartoes.join("\n") : "Nenhuma atividade nesse recorte."}`;
+    const linhas = r.recordset.map((linha) => ({
       Processo: linha.Numero_Processo,
       Cliente: String(linha.Cliente ?? "").trim(),
       Atividade: String(linha.Atividade ?? "").trim(),
@@ -1326,10 +1353,8 @@ async function atividadesPendentes(pool, args, recorte) {
     ].filter(Boolean);
     return `- **${linha.Numero_Processo}**\n${detalhes.map((item) => `  - ${item}`).join("\n")}`;
   });
-  const amostra = cartoes.slice(0, 8);
-  const total = cartoes.length;
-  const texto = `#### ${titulo}\n\n${amostra.length ? amostra.join("\n") : "Nenhuma atividade pendente em 2026."}${total > 8 ? `\n\nMostrei 8 de ${total}. A lista do chat traz até 200.` : ""}`;
-  const linhas = r.recordset.slice(0, 200).map((linha) => ({
+  const texto = `#### ${titulo}\n\n${cartoes.length ? cartoes.join("\n") : "Nenhuma atividade pendente em 2026."}`;
+  const linhas = r.recordset.map((linha) => ({
     Processo: linha.Numero_Processo,
     Cliente: String(linha.Cliente ?? "").trim(),
     Papel: String(linha.Papel ?? "").trim(),
@@ -1400,9 +1425,7 @@ async function divergenciasViagem(pool, args, recorte) {
     ].filter(Boolean);
     return `- **${linha.Numero_Processo}**\n${partes.map((item) => `  - ${item}`).join("\n")}`;
   });
-  const amostra = cartoes.slice(0, 8);
-  const resto = cartoes.length - amostra.length;
-  const texto = `#### Divergências de desembarque${faixa}\n\nProcessos${faixa} de 2026 em que o desembarque real difere ${dias} dias ou mais da previsão.\n\n${amostra.length ? amostra.join("\n") : `Nenhuma divergência grande de desembarque${faixa} em 2026.`}${resto > 0 ? `\n\nMais ${resto} na lista completa, em Ver tudo no chat.` : ""}`;
+  const texto = `#### Divergências de desembarque${faixa}\n\nProcessos${faixa} de 2026 em que o desembarque real difere ${dias} dias ou mais da previsão.\n\n${cartoes.length ? cartoes.join("\n") : `Nenhuma divergência grande de desembarque${faixa} em 2026.`}`;
   const linhas = r.recordset.map((linha) => {
     const embarque = diasDaViagem(linha.Data_Previsao_Embarque, linha.Data_Embarque);
     const detalhe = [fraseDaViagem("Desembarque", Number(linha.Dias) || 0), embarque != null && Math.abs(embarque) >= dias ? fraseDaViagem("Embarque", embarque) : ""]

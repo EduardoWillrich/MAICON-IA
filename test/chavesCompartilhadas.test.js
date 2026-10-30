@@ -8,7 +8,7 @@ test("chave cadastrada pelo administrador fica disponível para outra conta", ()
   const usuario = `usuario-${sufixo}@teste.invalid`;
   const segredo = `chave-compartilhada-${sufixo}`;
   const chaves = criarChave(administrador, {
-    provedor: "gemini",
+    provedor: "openrouter",
     rotulo: "Teste compartilhado",
     chave: segredo,
   });
@@ -16,7 +16,7 @@ test("chave cadastrada pelo administrador fica disponível para outra conta", ()
   try {
     assert.ok(criada?.id);
     assert.equal(
-      chavesParaUso(usuario).some((item) => item.provedor === "gemini" && item.chave === segredo),
+      chavesParaUso(usuario).some((item) => item.provedor === "openrouter" && item.chave === segredo),
       true,
     );
   } finally {

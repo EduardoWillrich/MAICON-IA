@@ -8,6 +8,7 @@ import {
   rodadasDesdePergunta,
   tabelasDoSql,
 } from "../server/avaliacaoConsulta.js";
+import { textoConsultasRelevantes } from "../server/consultas.js";
 
 function volta(nome, args, content, id = nome) {
   return [
@@ -224,4 +225,10 @@ test("ignora SQL antigo, lê argumentos em objeto e julga o texto copiado", () =
   assert.equal(lerJulgamento('{"ok":false,"motivo":"texto confuso","deNovo":false}').deNovo, false);
   assert.equal(lerJulgamento('{"ok":true}').ok, true);
   assert.equal(rodadasDesdePergunta([{ role: "user", content: "oi" }]), 0);
+});
+
+test("catálogo relevante fica muito menor que o catálogo completo", () => {
+  const recorte = textoConsultasRelevantes("taxas do processo");
+  assert.match(recorte, /taxa/i);
+  assert.ok(recorte.length < 8000);
 });

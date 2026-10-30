@@ -627,6 +627,7 @@ function textoDaReceita(ferramentas) {
       .slice(0, 3)
       .map((item) => `${item.nome} ${JSON.stringify(item.args ?? {})}`)
       .join(" e depois ")
+      .replace(/20\d{2}-\d{2}-\d{2}/g, "{data}")
       .slice(0, 240);
   } catch {
     return "";

@@ -8,11 +8,9 @@ import {
 
 const ambienteCompleto = {
   OPENROUTER_API_KEY: "teste-openrouter",
-  GEMINI_API_KEY: "teste-gemini",
-  OLLAMA_API_KEY: "teste-ollama",
 };
 
-test("a fila usa somente o OpenRouter", () => {
+test("a fila usa somente a chave do DeepSeek", () => {
   const fila = filaDeChaves(
     [
       { provedor: "gemini", chave: "teste-gemini" },
@@ -21,6 +19,7 @@ test("a fila usa somente o OpenRouter", () => {
     ambienteCompleto,
   );
   assert.deepEqual(fila.map((item) => item.provedor), ["openrouter"]);
+  assert.deepEqual(fila.map((item) => item.chave), ["teste-openrouter"]);
 });
 
 test("chaves vazias não entram na fila", () => {
@@ -47,15 +46,15 @@ test("chave pessoal vem antes da chave do ambiente e duplicatas não se repetem"
   );
 });
 
-test("401 no Gemini usa o Beam restante", async () => {
+test("401 numa chave do DeepSeek usa a próxima", async () => {
   const tentativas = [];
   const fila = [
-    { provedor: "gemini", chave: "teste-gemini" },
-    { provedor: "ollama", chave: "teste-ollama" },
+    { provedor: "openrouter", chave: "chave-vencida" },
+    { provedor: "openrouter", chave: "chave-reserva" },
   ];
   const resposta = await executarFilaComFallback(fila, async (item) => {
-    tentativas.push(item.provedor);
-    if (item.provedor === "gemini") {
+    tentativas.push(item.chave);
+    if (item.chave === "chave-vencida") {
       const erro = new Error("API key not valid");
       erro.status = 401;
       throw erro;
@@ -63,7 +62,7 @@ test("401 no Gemini usa o Beam restante", async () => {
     return "ok";
   });
   assert.equal(resposta, "ok");
-  assert.deepEqual(tentativas, ["gemini", "ollama"]);
+  assert.deepEqual(tentativas, ["chave-vencida", "chave-reserva"]);
 });
 
 test("abort do usuário não troca de chave", async () => {
@@ -73,8 +72,8 @@ test("abort do usuário não troca de chave", async () => {
   await assert.rejects(
     executarFilaComFallback(
       [
-        { provedor: "gemini", chave: "teste-gemini" },
-        { provedor: "ollama", chave: "teste-ollama" },
+        { provedor: "openrouter", chave: "chave-a" },
+        { provedor: "openrouter", chave: "chave-b" },
       ],
       async () => {
         tentativas += 1;
@@ -91,8 +90,8 @@ test("erro de programação não troca de chave", async () => {
   await assert.rejects(
     executarFilaComFallback(
       [
-        { provedor: "gemini", chave: "teste-gemini" },
-        { provedor: "ollama", chave: "teste-ollama" },
+        { provedor: "openrouter", chave: "chave-a" },
+        { provedor: "openrouter", chave: "chave-b" },
       ],
       async () => {
         tentativas += 1;

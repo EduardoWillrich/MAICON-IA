@@ -1,3 +1,5 @@
+import { formatarDatasNoTexto } from "./datas";
+
 export type Receita = { nome: string; args: Record<string, unknown> };
 
 const CHAVE = "maicon-receitas";
@@ -183,25 +185,51 @@ export function guardarReceita(pergunta: string, ferramentas: Receita[]) {
   localStorage.setItem(CHAVE, JSON.stringify(todas));
 }
 
+const LINHAS_NO_CHAT = 30;
+
+function colunaDeData(colunas: string[]): string {
+  return colunas.find((coluna) => /data|abertura|quando/i.test(coluna)) ?? "";
+}
+
+function recentePrimeiro(linhas: Record<string, unknown>[], colunas: string[]): Record<string, unknown>[] {
+  const data = colunaDeData(colunas);
+  if (!data) return [...linhas].reverse();
+  return [...linhas].sort((a, b) => String(b[data] ?? "").localeCompare(String(a[data] ?? "")));
+}
+
+export function linhasDaConsulta(resultado: string): Record<string, unknown>[] {
+  try {
+    const dados = JSON.parse(resultado) as { linhas?: unknown };
+    if (!Array.isArray(dados.linhas)) return [];
+    return dados.linhas.filter((linha) => linha && typeof linha === "object") as Record<string, unknown>[];
+  } catch {
+    return [];
+  }
+}
+
 export function textoDaConsulta(resultado: string): string {
   const limpo = resultado.trim();
   if (!limpo) return "";
   try {
     const dados = JSON.parse(limpo) as { texto?: unknown; linhas?: unknown; sql?: unknown; house?: unknown };
-    if (typeof dados.texto === "string" && dados.texto.trim()) return dados.texto.trim();
+    if (typeof dados.texto === "string" && dados.texto.trim()) return formatarDatasNoTexto(dados.texto.trim());
     if (Array.isArray(dados.linhas) && dados.linhas.length) {
       const linhas = dados.linhas.filter((linha) => linha && typeof linha === "object") as Record<string, unknown>[];
       const colunas = Object.keys(linhas[0] ?? {})
         .filter((coluna) => !/^id/i.test(coluna))
         .slice(0, 8);
       if (!colunas.length) return limpo;
-      const celula = (valor: unknown) => String(valor ?? "").replace(/\|/g, "/").replace(/\s+/g, " ").trim();
+      const celula = (valor: unknown) =>
+        formatarDatasNoTexto(String(valor ?? "")).replace(/\|/g, "/").replace(/\s+/g, " ").trim();
+      const ordenadas = recentePrimeiro(linhas, colunas);
       const cabeca = `| ${colunas.join(" | ")} |`;
       const traco = `| ${colunas.map(() => "---").join(" | ")} |`;
-      const corpo = linhas
-        .slice(0, 30)
+      const corpo = ordenadas
+        .slice(0, LINHAS_NO_CHAT)
         .map((linha) => `| ${colunas.map((coluna) => celula(linha[coluna])).join(" | ")} |`);
-      const extra = linhas.length > 30 ? `\n\nMostrei 30 de ${linhas.length}.` : "";
+      const extra = ordenadas.length > LINHAS_NO_CHAT
+        ? `\n\nMostrei ${LINHAS_NO_CHAT} de ${ordenadas.length}, os mais recentes.`
+        : "";
       return `${cabeca}\n${traco}\n${corpo.join("\n")}${extra}`;
     }
     if ("sql" in dados || "house" in dados) return "";

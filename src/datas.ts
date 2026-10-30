@@ -56,6 +56,21 @@ export function formatarDuracao(segundos: number): string {
   return s ? `${min} min ${s} s` : `${min} min`;
 }
 
+export function formatarDatasNoTexto(texto: string): string {
+  return String(texto ?? "").replace(
+    /```[\s\S]*?```|\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?Z?)?/g,
+    (trecho) => {
+      if (trecho.startsWith("```")) return trecho;
+      const data = trecho.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+      if (!data) return trecho;
+      const dia = `${data[3]}/${data[2]}/${data[1]}`;
+      if (!data[4]) return dia;
+      if (data[4] === "00" && data[5] === "00" && (!data[6] || data[6] === "00")) return dia;
+      return data[6] && data[6] !== "00" ? `${dia} ${data[4]}:${data[5]}:${data[6]}` : `${dia} ${data[4]}:${data[5]}`;
+    },
+  );
+}
+
 export function formatarValorCampo(valor: string): string {
   const texto = valor == null ? "" : String(valor).trim();
   if (!texto) return "vazio";

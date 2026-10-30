@@ -176,7 +176,7 @@ export function amostraDaConsulta(mensagens) {
     .filter((texto) => texto && !/^Erro:/i.test(texto))
     .slice(-2)
     .join("\n\n")
-    .slice(0, 1800);
+    .slice(0, 4000);
 }
 
 export function respostaConfereComRetorno(resposta, mensagens) {

@@ -225,7 +225,7 @@ export async function executarFerramentaIa(
     const resp = await fetch(`${API}/api/sql`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sql: texto(args.sql), email: conta?.email, nome: conta?.nome, visao: conta?.visao, conversaId: conversaDaConsulta() }),
+      body: JSON.stringify({ sql: texto(args.sql), pergunta: texto(args.pergunta), email: conta?.email, nome: conta?.nome, visao: conta?.visao, conversaId: conversaDaConsulta() }),
       signal: sinal,
     });
     const dados = await resp.json();
