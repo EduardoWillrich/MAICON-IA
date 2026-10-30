@@ -338,6 +338,40 @@ html.tema-claro .chat-busca-lista { background: #fff; }
 .chat-linha.usuario { justify-content: flex-end; }
 .chat-consulta-linha { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .chat-tempo { color: var(--muted); font-size: 0.72rem; }
+.chat-uso { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, 0.04); color: var(--muted); font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+.chat-uso b { color: var(--text); font-weight: 650; }
+.chat-uso em { font-style: normal; color: #ff8a80; font-weight: 650; }
+.chat-consumo-marca { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.chat-consumo-marca img { width: 42px; height: 42px; padding: 8px; border-radius: 12px; background: rgba(77, 107, 254, 0.12); }
+.chat-consumo-marca .chat-memoria-topo { margin: 0; }
+.chat-consumo-lista { margin-top: 16px; padding: 14px 14px 6px; border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(180deg, rgba(77, 107, 254, 0.1), rgba(255, 255, 255, 0.02) 72px); }
+.chat-consumo-legenda { display: flex; flex-wrap: wrap; gap: 12px 16px; margin-bottom: 12px; color: var(--muted); font-size: 0.72rem; }
+.chat-consumo-legenda span { display: inline-flex; align-items: center; gap: 6px; }
+.chat-consumo-legenda i, .chat-consumo-trilho i { display: block; width: 8px; height: 8px; border-radius: 99px; }
+.chat-consumo-legenda i.entrada, .chat-consumo-trilho i.entrada { background: #4D6BFE; }
+.chat-consumo-legenda i.saida, .chat-consumo-trilho i.saida { background: #9eb0ff; }
+.chat-consumo-legenda i.raciocinio, .chat-consumo-trilho i.raciocinio { background: #ff8a80; }
+.chat-consumo-lista ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.chat-consumo-lista li { display: grid; grid-template-columns: minmax(120px, 0.9fr) minmax(0, 1.6fr) auto; gap: 10px 12px; align-items: center; }
+.chat-consumo-nome { min-width: 0; }
+.chat-consumo-nome strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.86rem; font-weight: 620; }
+.chat-consumo-nome small { color: var(--muted); font-size: 0.72rem; }
+.chat-consumo-trilho { height: 10px; border-radius: 99px; background: rgba(255, 255, 255, 0.06); overflow: hidden; }
+.chat-consumo-trilho > div { display: flex; height: 100%; min-width: 8px; border-radius: 99px; overflow: hidden; }
+.chat-consumo-trilho i { width: auto; height: 100%; border-radius: 0; }
+.chat-consumo-valor { text-align: right; font-variant-numeric: tabular-nums; }
+.chat-consumo-valor b { display: block; font-size: 0.86rem; }
+.chat-consumo-valor em { color: #9eb0ff; font-style: normal; font-size: 0.72rem; font-weight: 700; }
+@media (max-width: 640px) {
+  .chat-consumo-lista li { grid-template-columns: 1fr auto; }
+  .chat-consumo-trilho { grid-column: 1 / -1; }
+}
+.chat-consumo { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.chat-consumo article { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: rgba(255, 255, 255, 0.02); }
+.chat-consumo span { color: var(--muted); font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase; }
+.chat-consumo strong { font-size: 1.35rem; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
+.chat-consumo small { color: var(--muted); font-size: 0.78rem; line-height: 1.4; }
+@media (max-width: 560px) { .chat-consumo { grid-template-columns: 1fr; } }
 .chat-ver-consulta { padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); font: inherit; font-size: 0.72rem; cursor: pointer; }
 .chat-ver-consulta:hover { color: var(--text); border-color: rgba(229, 57, 53, 0.7); }
 .chat-avaliacao { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }

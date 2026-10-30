@@ -1,5 +1,5 @@
 import { Ollama } from "ollama";
-import { textoAprendizado } from "./aprendizado.js";
+import { textoAprendizado, textoObservado } from "./aprendizado.js";
 import {
   amostraDaConsulta,
   conferirTabelas,
@@ -16,7 +16,6 @@ import {
   MODELOS_RESPOSTA,
   chamadaDireta,
   ferramentasProvaveis,
-  lerFiltro,
   pedidoDaRodada,
   pedidoInformativo,
   respostaDeFerramentaPronta,
@@ -907,13 +906,7 @@ async function lerStream(body, aoTexto) {
       const delta = escolha.delta ?? {};
       const pedacoTexto = textoDe(delta.content) || textoDe(escolha.message?.content);
       const usoBruto = pedaco.usage;
-      if (usoBruto) {
-        acc.uso = {
-          entrada: Number(usoBruto.prompt_tokens) || 0,
-          saida: Number(usoBruto.completion_tokens) || 0,
-          total: Number(usoBruto.total_tokens) || 0,
-        };
-      }
+      if (usoBruto) acc.uso = lerUso(usoBruto);
       if (pedacoTexto) {
         acc.content += pedacoTexto;
         aoTexto?.(pedacoTexto);
@@ -936,6 +929,24 @@ async function lerStream(body, aoTexto) {
     content: acc.content,
     ...(acc.uso ? { uso: acc.uso } : {}),
     ...(tools.length ? { tool_calls: tools } : {}),
+  };
+}
+
+const JANELA_DEEPSEEK = 1048576;
+
+function lerUso(bruto) {
+  if (!bruto || typeof bruto !== "object") return null;
+  const entrada = Number(bruto.prompt_tokens) || 0;
+  const saida = Number(bruto.completion_tokens) || 0;
+  const total = Number(bruto.total_tokens) || entrada + saida;
+  if (!total) return null;
+  const raciocinio = Number(bruto.completion_tokens_details?.reasoning_tokens) || Number(bruto.reasoning_tokens) || 0;
+  return {
+    entrada,
+    saida,
+    total,
+    contexto: JANELA_DEEPSEEK,
+    ...(raciocinio ? { raciocinio } : {}),
   };
 }
 
@@ -1185,6 +1196,7 @@ async function chamarOpenRouter(chave, corpo, aoTexto, maxTokens) {
           ...corpo,
           model,
           stream: true,
+          stream_options: { include_usage: true },
           temperature: corpo.temperature ?? 0.2,
           reasoning: { effort: "high" },
           provider: { sort: "latency" },
@@ -1212,6 +1224,7 @@ async function chamarOpenRouter(chave, corpo, aoTexto, maxTokens) {
             tool_choice: "auto",
             model,
             stream: true,
+            stream_options: { include_usage: true },
             temperature: corpo.temperature ?? 0.2,
             reasoning: { effort: "high" },
             provider: { sort: "latency" },
@@ -1241,6 +1254,7 @@ async function chamarOpenRouter(chave, corpo, aoTexto, maxTokens) {
             ...corpo,
             model,
             stream: true,
+            stream_options: { include_usage: true },
             temperature: corpo.temperature ?? 0.2,
             reasoning: { enabled: false },
             provider: { sort: "latency" },
@@ -1318,24 +1332,6 @@ async function comModeloLeve(chave, sistemaTexto, usuario, maxTokens) {
     }
   }
   throw ultimo || new Error("O modelo leve não respondeu.");
-}
-
-async function filtrarPedido(chave, pergunta, nomes) {
-  if (!chave) return { ferramentas: [], termos: "" };
-  try {
-    const texto = await comModeloLeve(
-      chave,
-      "Você só filtra pedidos. Responda um JSON {\"ferramentas\":[],\"termos\":\"\"}. " +
-        "Escolha no máximo 4 nomes desta lista: " + nomes.join(", ") + ". " +
-        "termos são as palavras do pedido úteis para achar a consulta. Sem explicação.",
-      String(pergunta || "").slice(0, 1200),
-      160,
-    );
-    return lerFiltro(texto, nomes);
-  } catch (erro) {
-    console.warn(`[IA] Filtro leve indisponível; status ${erro?.status || "desconhecido"}.`);
-    return { ferramentas: [], termos: "" };
-  }
 }
 
 function mensagemPronta(msg) {
@@ -1428,12 +1424,13 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
   }
   const temRetorno = mensagens.slice(inicioRodada).some((item) => item?.role === "tool");
   const informativo = !opcoes.relatorio && !opcoes.apresentacao && !temRetorno && pedidoInformativo(pedido);
-  const nomes = FERRAMENTAS.map((item) => item.function.name);
   const chaveLeve = chaveGemini(opcoes.chaves);
   const provaveis = ferramentasProvaveis(roteiro);
-  const filtro = temRetorno || informativo || provaveis.length || opcoes.apresentacao
-    ? { ferramentas: provaveis, termos: "" }
-    : await filtrarPedido(chaveLeve, pedido, nomes);
+  const catalogo = ["buscar_tabelas", "listar_colunas", "executar_sql"];
+  const busca = provaveis.length ? [...new Set([...provaveis, ...catalogo])] : [];
+  const filtro = informativo || opcoes.apresentacao
+    ? { ferramentas: [], termos: "" }
+    : { ferramentas: busca, termos: "" };
   const base = esquecerConsultasAnteriores(mensagens);
   const escolhidas = filtro.ferramentas.length ? ferramentasDoPedido(opcoes, filtro.ferramentas) : [];
   const ferramentas = informativo ? [] : escolhidas.length ? escolhidas : ferramentasDoPedido(opcoes);
@@ -1445,7 +1442,7 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
     ? "Você é o Maicon, a IA da Conline. Responda a pergunta geral em português, com clareza e no máximo cinco frases. " +
       "Não consulte o banco, não escreva SQL e não invente dados da empresa."
     : roteando
-    ? `Você é o roteador do Maicon. ${textoCalendario().texto} ` +
+    ? `Você é o roteador do Maicon. ${textoCalendario().texto} ${textoObservado(opcoes.email, opcoes.setor, pedido)} ` +
       "Escolha e chame imediatamente a ferramenta que inicia a consulta. " +
       "Não responda com dados, não explique e não invente. " +
       "Lista de propostas por ontem, hoje, mês ou data chama propostas_periodo, sem localizar processo. " +

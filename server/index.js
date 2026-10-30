@@ -32,6 +32,7 @@ import {
   placarAvaliacoes,
   registrarAvaliacao,
   revisarAvaliacoes,
+  observarConversa,
   receitaServidor,
   registrarCorrecao,
   registrarFalha,
@@ -52,6 +53,8 @@ import {
   listarConversas,
   provedoresCompartilhados,
   registrarConsultaFeita,
+  registrarConsumo,
+  resumoConsumo,
   salvarConversa,
 } from "./conversas.js";
 
@@ -734,6 +737,11 @@ app.post("/api/chat", async (req, res) => {
     }
     const pedida = String(req.body?.visao ?? "");
     const visao = setorEfetivo(acessoChat, perfil.setor, pedida);
+    try {
+      observarConversa(emailChat, visao, mensagens);
+    } catch (erro) {
+      console.warn(`[IA] Observação da conversa não foi gravada: ${erro?.message || erro}`);
+    }
     const ultimaPergunta = [...mensagens].reverse().find((m) => m.role === "user")?.content ?? "";
     const anterior = mensagens.filter((m) => m.role === "user").slice(-2, -1)[0]?.content;
     if (pareceCorrecao(ultimaPergunta) && anterior) registrarCorrecao(emailChat, anterior, ultimaPergunta);
@@ -794,8 +802,12 @@ app.post("/api/chat", async (req, res) => {
       modalidade: modalidadeEfetiva(acessoChat, perfil, visao),
     });
     gravarPreferenciaDita(emailChat, mensagem?.content, ultimaPergunta);
+    if (mensagem?.uso?.total > 0) registrarConsumo(emailChat, mensagem.uso, req.body?.conversaId);
     encerrado = true;
-    enviar({ tipo: "fim", mensagem });
+    const visivel = acessoChat.papel === "admin" || !mensagem?.uso
+      ? mensagem
+      : (({ uso: _uso, ...resto }) => resto)(mensagem);
+    enviar({ tipo: "fim", mensagem: visivel });
     res.end();
   } catch (erro) {
     encerrado = true;
@@ -1191,6 +1203,11 @@ app.post("/api/sql", async (req, res) => {
   }
 });
 
+app.get("/api/ia/consumo", (req, res) => {
+  if (!soAdmin(emailDaSessao(req))) return res.status(403).json({ erro: "Só o administrador vê o consumo." });
+  res.json(resumoConsumo());
+});
+
 app.get("/api/ia/uso", async (req, res) => {
   if (permissaoDe(emailDaSessao(req)).papel !== "admin") {
     return res.status(403).json({ disponivel: false });
@@ -1292,6 +1309,11 @@ app.put("/api/conversas/:id", (req, res) => {
   const email = emailDaSessao(req);
   const salva = salvarConversa(req.params.id, email, req.body?.titulo, req.body?.mensagens);
   if (!salva) return res.status(404).json({ erro: "Conversa não encontrada." });
+  try {
+    observarConversa(email, req.body?.visao, req.body?.mensagens);
+  } catch {
+    /* a conversa já foi salva; a lição pode entrar na próxima leitura */
+  }
   res.json(salva);
 });
 

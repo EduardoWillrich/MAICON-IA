@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import logoMaiconPng from "./assets/maicon-logo.png";
 import logoMaicon from "./assets/maicon-logo.svg";
+import logoDeepSeek from "./assets/deepseek.svg";
 import logoConline from "./assets/conline-logo.png";
 import type { LogPdf } from "./PdfHistorico";
 import {
@@ -33,7 +34,88 @@ type ChamadaFerramenta = {
 
 type Preferencia = { termo: string; tabela: string; campo: string; observacao: string };
 
-type UsoTokens = { entrada: number; saida: number; total: number };
+type UsoTokens = { entrada: number; saida: number; total: number; contexto?: number; raciocinio?: number; janela?: number };
+
+function numeroTokens(valor: number) {
+  return valor.toLocaleString("pt-BR");
+}
+
+function percentualDe(fracao: number) {
+  const pct = fracao * 100;
+  if (pct <= 0) return "0%";
+  if (pct < 0.1) return "< 0,1%";
+  return `${pct.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`;
+}
+
+function textoPercentual(uso: UsoTokens) {
+  const ocupada = uso.janela || uso.entrada;
+  if (!uso.contexto || ocupada <= 0) return "0%";
+  return percentualDe(ocupada / uso.contexto);
+}
+
+type ConsumoConversa = {
+  id: string;
+  titulo: string;
+  total: number;
+  entrada: number;
+  saida: number;
+  raciocinio: number;
+  chamadas: number;
+  ocupacao: number;
+  parte: number;
+};
+
+function GraficoConsumo({ conversas }: { conversas: ConsumoConversa[] }) {
+  if (!conversas.length) {
+    return <p className="chat-historico-vazio">Nenhuma consulta contabilizada ainda. Faça uma pergunta no chat para comparar.</p>;
+  }
+  const maior = Math.max(...conversas.map((item) => item.total), 1);
+  return (
+    <div className="chat-consumo-lista">
+      <div className="chat-consumo-legenda">
+        <span><i className="entrada" /> Entrada</span>
+        <span><i className="saida" /> Saída</span>
+        <span><i className="raciocinio" /> Raciocínio</span>
+      </div>
+      <ol>
+        {conversas.map((item) => {
+          const largura = Math.max(6, Math.round((item.total / maior) * 100));
+          return (
+            <li key={item.id || item.titulo}>
+              <div className="chat-consumo-nome">
+                <strong>{item.titulo}</strong>
+                <small>
+                  {numeroTokens(item.chamadas)} {item.chamadas === 1 ? "consulta" : "consultas"} · janela {percentualDe(item.ocupacao)}
+                </small>
+              </div>
+              <div className="chat-consumo-trilho" title={`${numeroTokens(item.entrada)} entrada · ${numeroTokens(item.saida)} saída · ${numeroTokens(item.raciocinio)} raciocínio`}>
+                <div style={{ width: `${largura}%` }}>
+                  {item.entrada > 0 ? <i className="entrada" style={{ flex: item.entrada }} /> : null}
+                  {item.saida > 0 ? <i className="saida" style={{ flex: item.saida }} /> : null}
+                  {item.raciocinio > 0 ? <i className="raciocinio" style={{ flex: item.raciocinio }} /> : null}
+                </div>
+              </div>
+              <div className="chat-consumo-valor">
+                <b>{numeroTokens(item.total)}</b>
+                <em>{percentualDe(item.parte)}</em>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+function tituloUso(uso: UsoTokens) {
+  const partes = [
+    `Entrada ${numeroTokens(uso.janela || uso.entrada)}`,
+    `Saída ${numeroTokens(uso.saida)}`,
+  ];
+  if (uso.raciocinio) partes.push(`Raciocínio ${numeroTokens(uso.raciocinio)}`);
+  if (uso.contexto) partes.push(`Janela ${numeroTokens(uso.contexto)}`);
+  return partes.join(" · ");
+}
 
 function semAcento(texto: string) {
   return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -2734,7 +2816,18 @@ export function ChatIa({
   const entradaRef = useRef<HTMLTextAreaElement>(null);
   const [memoriaAberta, setMemoriaAberta] = useState(false);
   const [configAberta, setConfigAberta] = useState(false);
-  const [abaConfig, setAbaConfig] = useState<"contas" | "sqlite">("contas");
+  const [consumoIa, setConsumoIa] = useState<{
+    chamadas: number;
+    entrada: number;
+    saida: number;
+    total: number;
+    raciocinio: number;
+    ocupacao: number;
+    pico: number;
+    contexto: number;
+    conversas: ConsumoConversa[];
+  } | null>(null);
+  const [abaConfig, setAbaConfig] = useState<"contas" | "sqlite" | "consumo">("contas");
   const [bancosSqlite, setBancosSqlite] = useState<{ arquivo: string; tabelas: { nome: string; total: number }[] }[]>([]);
   const [arquivoSqlite, setArquivoSqlite] = useState("");
   const [tabelaSqlite, setTabelaSqlite] = useState("");
@@ -3242,6 +3335,19 @@ export function ChatIa({
     return () => window.clearTimeout(timer);
   }, [mensagens, conversaId, ocupado, email, api]);
 
+  useEffect(() => {
+    if (configAberta && admin) void carregarConsumo();
+  }, [configAberta, admin, email, api]);
+
+  async function carregarConsumo() {
+    if (!email || !admin) return;
+    const resp = await fetch(`${api}/api/ia/consumo`);
+    const dados = await resp.json().catch(() => null);
+    if (resp.ok && dados && typeof dados.total === "number") {
+      setConsumoIa({ ...dados, conversas: Array.isArray(dados.conversas) ? dados.conversas : [] });
+    }
+  }
+
   async function carregarContas() {
     if (!email) return;
     const resp = await fetch(`${api}/api/contas?email=${encodeURIComponent(email)}`);
@@ -3424,7 +3530,7 @@ export function ChatIa({
     const resp = await fetch(`${api}/api/conversas/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, titulo, mensagens: mensagensParaArquivo(lista) }),
+      body: JSON.stringify({ email, titulo, visao: admin ? visao : setor, mensagens: mensagensParaArquivo(lista) }),
     });
     if (resp.status === 404 && tentativa < 1) {
       conversaIdRef.current = null;
@@ -3449,7 +3555,7 @@ export function ChatIa({
     canceladoRef.current = false;
     const controle = new AbortController();
     abortarRef.current = controle;
-    const gasto: UsoTokens = { entrada: 0, saida: 0, total: 0 };
+    const gasto: UsoTokens = { entrada: 0, saida: 0, total: 0, janela: 0 };
     const inicioConsulta = performance.now();
     const duracaoConsulta = () => Math.max(1, Math.round(performance.now() - inicioConsulta));
     const pergunta = conteudo.trim();
@@ -3730,6 +3836,7 @@ export function ChatIa({
           apresentacao: apresentacaoRef.current,
           email,
           nome,
+          conversaId: conversaIdRef.current || "",
           visao: admin ? visao : setor,
         }),
           signal: controle.signal,
@@ -3775,6 +3882,9 @@ export function ChatIa({
                 gasto.entrada += resposta.uso.entrada;
                 gasto.saida += resposta.uso.saida;
                 gasto.total += resposta.uso.total;
+                gasto.janela = Math.max(gasto.janela || 0, resposta.uso.entrada);
+                if (resposta.uso.contexto) gasto.contexto = resposta.uso.contexto;
+                if (resposta.uso.raciocinio) gasto.raciocinio = (gasto.raciocinio || 0) + resposta.uso.raciocinio;
               }
             }
           }
@@ -4678,6 +4788,16 @@ export function ChatIa({
                 </button>
                 <button
                   type="button"
+                  className={abaConfig === "consumo" ? "ativo" : ""}
+                  onClick={() => {
+                    setAbaConfig("consumo");
+                    void carregarConsumo();
+                  }}
+                >
+                  Consumo
+                </button>
+                <button
+                  type="button"
                   className={abaConfig === "sqlite" ? "ativo" : ""}
                   onClick={() => {
                     setAbaConfig("sqlite");
@@ -4687,7 +4807,36 @@ export function ChatIa({
                   SQLite
                 </button>
               </div>
-              {abaConfig === "sqlite" ? (
+              {abaConfig === "consumo" ? (
+                <section className="chat-secao chat-consumo-aba">
+                  <div className="chat-consumo-marca">
+                    <img src={logoDeepSeek} alt="" />
+                    <div className="chat-memoria-topo">
+                      <h3>DeepSeek</h3>
+                      <p>Comparativo do gasto entre conversas. A barra mais longa é a que mais consumiu. A porcentagem é a fatia do total.</p>
+                    </div>
+                  </div>
+                  <div className="chat-consumo">
+                    <article>
+                      <span>Tokens</span>
+                      <strong>{numeroTokens(consumoIa?.total || 0)}</strong>
+                      <small>
+                        {numeroTokens(consumoIa?.entrada || 0)} entrada · {numeroTokens(consumoIa?.saida || 0)} saída
+                        {consumoIa?.raciocinio ? ` · ${numeroTokens(consumoIa.raciocinio)} raciocínio` : ""}
+                      </small>
+                    </article>
+                    <article>
+                      <span>Janela</span>
+                      <strong>{percentualDe(consumoIa?.ocupacao || 0)}</strong>
+                      <small>
+                        média · pico {percentualDe(consumoIa?.pico || 0)}
+                        {consumoIa?.chamadas ? ` · ${numeroTokens(consumoIa.chamadas)} consultas` : ""}
+                      </small>
+                    </article>
+                  </div>
+                  <GraficoConsumo conversas={consumoIa?.conversas ?? []} />
+                </section>
+              ) : abaConfig === "sqlite" ? (
                 <section className="chat-secao chat-sqlite">
                   <div className="chat-memoria-topo">
                     <h3>SQLite do servidor</h3>
@@ -5368,6 +5517,13 @@ export function ChatIa({
                           ) : null}
                           {"duracaoMs" in bloco.mensagem && bloco.mensagem.duracaoMs ? (
                             <span className="chat-tempo">Levou {formatarDuracao(bloco.mensagem.duracaoMs)}</span>
+                          ) : null}
+                          {admin && "uso" in bloco.mensagem && bloco.mensagem.uso && bloco.mensagem.uso.total > 0 ? (
+                            <span className="chat-uso" title={tituloUso(bloco.mensagem.uso)}>
+                              <b>{numeroTokens(bloco.mensagem.uso.total)}</b>
+                              <span>tokens</span>
+                              {bloco.mensagem.uso.contexto ? <em>{textoPercentual(bloco.mensagem.uso)}</em> : null}
+                            </span>
                           ) : null}
                           {admin && consultaAberta === i && bloco.consultas.length && !("log" in bloco.mensagem && bloco.mensagem.log) ? (
                             <>

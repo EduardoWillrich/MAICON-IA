@@ -48,6 +48,13 @@ db.exec(`
     motivo TEXT NOT NULL,
     criado TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS observacoes (
+    visao TEXT NOT NULL,
+    chave TEXT NOT NULL,
+    licao TEXT NOT NULL,
+    atualizado TEXT NOT NULL,
+    PRIMARY KEY (visao, chave)
+  );
   CREATE TABLE IF NOT EXISTS avaliacoes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT NOT NULL,
@@ -244,7 +251,7 @@ function encaixam(receita, pergunta) {
 
 export function guardarReceitaServidor(email, visao, pergunta, ferramentasBrutas) {
   const chave = chavePergunta(pergunta);
-  const lista = comMarcadores((Array.isArray(ferramentasBrutas) ? ferramentasBrutas : []).slice(0, 4), pergunta);
+  const lista = comMarcadores((Array.isArray(ferramentasBrutas) ? ferramentasBrutas : []).slice(0, 8), pergunta);
   if (!chave || !lista.length) return;
   const area = String(visao || "geral");
   const json = JSON.stringify(lista);
@@ -252,17 +259,10 @@ export function guardarReceitaServidor(email, visao, pergunta, ferramentasBrutas
     `INSERT INTO receitas (visao, chave, email, ferramentas, vezes, atualizado)
      VALUES (?, ?, ?, ?, 1, ?)
      ON CONFLICT(visao, chave) DO UPDATE SET
-       ferramentas = CASE
-         WHEN receitas.vezes >= 3 AND receitas.ferramentas != excluded.ferramentas THEN receitas.ferramentas
-         ELSE excluded.ferramentas
-       END,
-       email = CASE
-         WHEN receitas.vezes >= 3 AND receitas.ferramentas != excluded.ferramentas THEN receitas.email
-         ELSE excluded.email
-       END,
+       ferramentas = excluded.ferramentas,
+       email = excluded.email,
        vezes = CASE
          WHEN receitas.ferramentas = excluded.ferramentas THEN vezes + 1
-         WHEN receitas.vezes >= 3 THEN vezes
          ELSE 1
        END,
        atualizado = excluded.atualizado`,
@@ -295,10 +295,10 @@ export function receitaServidor(email, visao, pergunta) {
 
 function receitaParecida(area, chave) {
   const candidatas = db
-    .prepare(`SELECT chave, ferramentas, vezes FROM receitas WHERE visao = ? AND vezes >= 2 ORDER BY vezes DESC LIMIT 300`)
+    .prepare(`SELECT chave, ferramentas, vezes FROM receitas WHERE visao = ? AND vezes >= 1 ORDER BY vezes DESC LIMIT 300`)
     .all(area);
   let melhor = null;
-  let nota = 0.72;
+  let nota = 0.55;
   for (const item of candidatas) {
     if (!encaixam(item.chave, chave)) continue;
     const valor = parecido(chave, item.chave);
@@ -399,6 +399,131 @@ export function registrarFalha(email, visao, pergunta, motivo) {
   );
 }
 
+const FALHA_RESPOSTA = /n[aã]o consegui|n[aã]o encontrei|n[aã]o vou listar|n[aã]o retornou|n[aã]o devolveu|n[aã]o encontrado/i;
+
+function argsDaChamada(bruto) {
+  if (bruto && typeof bruto === "object") return bruto;
+  try {
+    const lido = JSON.parse(String(bruto || "{}"));
+    return lido && typeof lido === "object" ? lido : {};
+  } catch {
+    return {};
+  }
+}
+
+function tabelasDoTexto(texto) {
+  const achadas = new Set();
+  const fonte = String(texto || "");
+  for (const item of fonte.matchAll(/\b(?:FROM|JOIN)\s+(?:dbo\.)?([A-Za-z_][\w]*)/gi)) achadas.add(item[1]);
+  for (const item of fonte.matchAll(/"tabela"\s*:\s*"([A-Za-z_][\w]*)"/gi)) achadas.add(item[1]);
+  return [...achadas];
+}
+
+export function licoesDaConversa(mensagens) {
+  const lista = Array.isArray(mensagens) ? mensagens : [];
+  const turnos = [];
+  let atual = null;
+  for (const mensagem of lista) {
+    if (mensagem?.role === "user") {
+      if (atual) turnos.push(atual);
+      atual = { pergunta: String(mensagem.content || ""), chamadas: [], resultados: new Map(), resposta: "" };
+      continue;
+    }
+    if (!atual) continue;
+    if (mensagem?.role === "assistant") {
+      for (const chamada of mensagem.tool_calls || []) {
+        atual.chamadas.push({
+          id: chamada.id,
+          nome: chamada.function?.name || "",
+          args: argsDaChamada(chamada.function?.arguments),
+        });
+      }
+      const texto = String(mensagem.content || "").trim();
+      if (texto) atual.resposta = texto;
+    }
+    if (mensagem?.role === "tool") atual.resultados.set(mensagem.tool_call_id, String(mensagem.content || ""));
+  }
+  if (atual) turnos.push(atual);
+  return turnos.map((turno, indice) => {
+    const uteis = turno.chamadas.filter((chamada) => {
+      const texto = turno.resultados.get(chamada.id) || "";
+      return chamada.nome && texto && !texto.startsWith("Erro:");
+    });
+    const tabelas = [...new Set(uteis.flatMap((chamada) => tabelasDoTexto(turno.resultados.get(chamada.id))))];
+    return {
+      pergunta: turno.pergunta,
+      ferramentas: uteis.map((chamada) => ({ nome: chamada.nome, args: chamada.args })),
+      tabelas,
+      falhou: !turno.resposta.trim() || FALHA_RESPOSTA.test(turno.resposta),
+      seguinte: turnos[indice + 1]?.pergunta || "",
+    };
+  }).filter((item) => item.pergunta.trim() && item.ferramentas.length);
+}
+
+function textoLicao(item) {
+  const nomes = [...new Set(item.ferramentas.map((ferramenta) => ferramenta.nome))].join(", ");
+  const tabelas = item.tabelas.length ? ` Tabelas: ${item.tabelas.join(", ")}.` : "";
+  return `Ferramentas: ${nomes}.${tabelas}`.slice(0, 500);
+}
+
+export function observarConversa(email, visao, mensagens) {
+  const area = String(visao || "geral");
+  const licoes = licoesDaConversa(mensagens);
+  const gravar = db.prepare(
+    `INSERT INTO observacoes (visao, chave, licao, atualizado) VALUES (?, ?, ?, ?)
+     ON CONFLICT(visao, chave) DO UPDATE SET licao = excluded.licao, atualizado = excluded.atualizado`,
+  );
+  let mudou = false;
+  for (let indice = 0; indice < licoes.length; indice += 1) {
+    const item = licoes[indice];
+    if (item.falhou) {
+      const proxima = licoes[indice + 1];
+      if (proxima && !proxima.falhou) {
+        const correcao = textoLicao(proxima);
+        const ja = db
+          .prepare(`SELECT 1 AS ok FROM correcoes WHERE email = ? AND pergunta = ? AND correcao = ? LIMIT 1`)
+          .get(emailDe(email), String(item.pergunta).trim().slice(0, 240), correcao.slice(0, 400));
+        if (!ja) {
+          registrarCorrecao(email, item.pergunta, correcao, area);
+          mudou = true;
+        }
+      }
+      continue;
+    }
+    const chave = chavePergunta(item.pergunta);
+    if (!chave) continue;
+    const licao = textoLicao(item);
+    const guardada = db.prepare(`SELECT licao FROM observacoes WHERE visao = ? AND chave = ?`).get(area, chave);
+    if (guardada?.licao === licao) continue;
+    gravar.run(area, chave, licao, agora());
+    guardarReceitaServidor(email, area, item.pergunta, item.ferramentas);
+    for (const tabela of item.tabelas) registrarUsoVisao(area, tabela);
+    mudou = true;
+  }
+  if (mudou) limparCacheAprendizado();
+  return licoes.filter((item) => !item.falhou).length;
+}
+
+function observacoesRelevantes(visao, pergunta) {
+  const chave = chavePergunta(pergunta);
+  if (!chave) return [];
+  return db
+    .prepare(`SELECT chave, licao FROM observacoes WHERE visao = ? ORDER BY atualizado DESC LIMIT 80`)
+    .all(String(visao || "geral"))
+    .map((item) => ({ ...item, nota: parecido(chave, item.chave) }))
+    .filter((item) => item.nota >= 0.34 || item.chave === chave)
+    .sort((a, b) => b.nota - a.nota)
+    .slice(0, 4);
+}
+
+export function textoObservado(email, visao, pergunta) {
+  const linhas = [];
+  for (const item of observacoesRelevantes(visao, pergunta)) {
+    linhas.push(`- "${item.chave}" → ${item.licao}`);
+  }
+  return linhas.length ? `LIÇÕES LIDAS NAS CONVERSAS:\n${linhas.join("\n")}` : "";
+}
+
 export function revisarFalhas(dias = 7) {
   const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
   return db
@@ -485,7 +610,7 @@ function caminhosAprendidos(visao, pergunta) {
   const chave = chavePergunta(pergunta);
   if (!chave) return [];
   return db
-    .prepare(`SELECT chave, ferramentas, vezes FROM receitas WHERE visao = ? AND vezes >= 2 ORDER BY vezes DESC LIMIT 80`)
+    .prepare(`SELECT chave, ferramentas, vezes FROM receitas WHERE visao = ? AND vezes >= 1 ORDER BY vezes DESC LIMIT 80`)
     .all(String(visao || "geral"))
     .filter((item) => encaixam(item.chave, chave))
     .map((item) => ({ ...item, nota: parecido(chave, item.chave) }))
@@ -520,6 +645,8 @@ export function textoAprendizado({ email, visao, mensagens }) {
     linhas.push("CORREÇÕES JÁ CONFIRMADAS NESTA VISÃO (valem para perguntas parecidas):");
     for (const item of correcoes.daVisao) linhas.push(`- Depois de "${item.pergunta}", a correção foi: ${item.correcao}`);
   }
+  const observado = textoObservado(email, visao, pergunta);
+  if (observado) linhas.push(observado);
   const caminhos = caminhosAprendidos(visao, pergunta);
   if (caminhos.length) {
     linhas.push("CAMINHOS QUE JÁ DERAM CERTO (repita a ferramenta quando a pergunta for parecida, sem inventar outra):");

@@ -126,6 +126,95 @@ export function salvarConversa(id, email, titulo, mensagens) {
   return { id, titulo, atualizado };
 }
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS consumo_ia (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    entrada INTEGER NOT NULL,
+    saida INTEGER NOT NULL,
+    total INTEGER NOT NULL,
+    raciocinio INTEGER NOT NULL DEFAULT 0,
+    contexto INTEGER NOT NULL,
+    criado TEXT NOT NULL
+  );
+`);
+try {
+  db.exec(`ALTER TABLE consumo_ia ADD COLUMN conversa_id TEXT NOT NULL DEFAULT ''`);
+} catch {
+  /* a coluna já existe */
+}
+
+export function registrarConsumo(email, uso, conversaId = "") {
+  const total = Number(uso?.total) || 0;
+  const contexto = Number(uso?.contexto) || 0;
+  if (total <= 0 || contexto <= 0) return;
+  db.prepare(
+    `INSERT INTO consumo_ia (email, conversa_id, entrada, saida, total, raciocinio, contexto, criado) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    String(email || "").slice(0, 180),
+    String(conversaId || "").slice(0, 80),
+    Number(uso.entrada) || 0,
+    Number(uso.saida) || 0,
+    total,
+    Number(uso.raciocinio) || 0,
+    contexto,
+    agora(),
+  );
+}
+
+export function resumoConsumo() {
+  const linha = db.prepare(
+    `SELECT
+       COUNT(*) AS chamadas,
+       COALESCE(SUM(entrada), 0) AS entrada,
+       COALESCE(SUM(saida), 0) AS saida,
+       COALESCE(SUM(total), 0) AS total,
+       COALESCE(SUM(raciocinio), 0) AS raciocinio,
+       COALESCE(AVG(entrada * 1.0 / contexto), 0) AS ocupacao,
+       COALESCE(MAX(entrada * 1.0 / contexto), 0) AS pico,
+       COALESCE(MAX(contexto), 0) AS contexto
+     FROM consumo_ia`,
+  ).get();
+  const totalGeral = Number(linha.total) || 0;
+  const conversas = db.prepare(
+    `SELECT
+       c.conversa_id AS id,
+       COALESCE(NULLIF(v.titulo, ''), 'Consultas anteriores') AS titulo,
+       SUM(c.total) AS total,
+       SUM(c.entrada) AS entrada,
+       SUM(c.saida) AS saida,
+       SUM(c.raciocinio) AS raciocinio,
+       COUNT(*) AS chamadas,
+       AVG(c.entrada * 1.0 / c.contexto) AS ocupacao
+     FROM consumo_ia c
+     LEFT JOIN conversas v ON v.id = c.conversa_id
+     GROUP BY c.conversa_id
+     ORDER BY total DESC
+     LIMIT 12`,
+  ).all();
+  return {
+    chamadas: Number(linha.chamadas) || 0,
+    entrada: Number(linha.entrada) || 0,
+    saida: Number(linha.saida) || 0,
+    total: totalGeral,
+    raciocinio: Number(linha.raciocinio) || 0,
+    ocupacao: Number(linha.ocupacao) || 0,
+    pico: Number(linha.pico) || 0,
+    contexto: Number(linha.contexto) || 0,
+    conversas: conversas.map((item) => ({
+      id: String(item.id || ""),
+      titulo: String(item.titulo || "Consultas anteriores"),
+      total: Number(item.total) || 0,
+      entrada: Number(item.entrada) || 0,
+      saida: Number(item.saida) || 0,
+      raciocinio: Number(item.raciocinio) || 0,
+      chamadas: Number(item.chamadas) || 0,
+      ocupacao: Number(item.ocupacao) || 0,
+      parte: totalGeral ? (Number(item.total) || 0) / totalGeral : 0,
+    })),
+  };
+}
+
 export function registrarConsultaFeita({ email, conversaId, origem, sql }) {
   const texto = String(sql ?? "").trim();
   if (texto.length < 15 || !/\b(select|with)\b/i.test(texto)) return;
