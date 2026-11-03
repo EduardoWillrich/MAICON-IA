@@ -42,7 +42,7 @@ async function modalidadeDaPessoa(pool, idPessoa) {
     JOIN mov_Logistica_House Lhs ON Lhs.IdProjeto_Atividade = Rel.IdProjeto_Atividade
     WHERE Rel.IdResponsavel = @id
       AND Rel.IdPapel_Projeto IN (2, 16, 17)
-      AND Lhs.Numero_Processo LIKE '%-26'
+      AND Lhs.Numero_Processo LIKE '%-${String(new Date().getFullYear()).slice(-2)}'
       AND LEFT(Lhs.Numero_Processo, 2) IN ('IA', 'EA', 'IM', 'EM')
     GROUP BY LEFT(Lhs.Numero_Processo, 2)
     ORDER BY COUNT(*) DESC

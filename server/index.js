@@ -1,6 +1,6 @@
 import { emailsAdmin } from "./env.js";
 import { listarSqlite, lerLinhaSqlite, lerTabelaSqlite } from "./sqliteVisao.js";
-import { adotarTokenGoogle, apagarSessao, contaDoToken } from "./identidade.js";
+import { adotarTokenGoogle, apagarSessao, completarFotos, contaDoToken, puxarFotoDaConta } from "./identidade.js";
 import express from "express";
 import os from "os";
 import sql from "mssql";
@@ -12,9 +12,9 @@ import { conversar } from "./ia.js";
 import { calendarioAtual, sqlDoPeriodo } from "./datasPedido.js";
 import { resumirGmail } from "./gmail.js";
 import { pedeHistorico, responderPorRegra } from "./regras.js";
-import { executarFuncao, chaveConsulta, consultaEmCache, consultaFresca, guardarConsulta } from "./funcoes.js";
+import { executarFuncao, chaveConsulta, consultaEmCache, consultaFresca, guardarConsulta, perguntaMeuDia } from "./funcoes.js";
 import { painelDoUsuario, resumoInicial } from "./inicio.js";
-import { apagarConta, listarContas, permissaoDe, registrarConta, salvarConta } from "./acesso.js";
+import { apagarConta, fotoDaConta, fotoPadrao, listarContas, permissaoDe, registrarConta, salvarConta } from "./acesso.js";
 import { perfilDaConta } from "./setor.js";
 import { filtrarLinhas, motivoBloqueio, recorteDaVisao } from "./recorte.js";
 import { protegerPool } from "./seguranca.js";
@@ -83,7 +83,7 @@ app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", permitida);
     res.setHeader("Vary", "Origin");
   }
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Google-Token");
   res.setHeader("Access-Control-Expose-Headers", "X-Sessao");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   if (req.method === "OPTIONS") {
@@ -142,7 +142,7 @@ function configSql() {
       enableArithAbort: true,
       readOnlyIntent: true,
     },
-    requestTimeout: 120000,
+    requestTimeout: 180000,
     connectionTimeout: 15000,
   };
 }
@@ -186,6 +186,35 @@ async function poolCompartilhado() {
 
 async function conectar() {
   return poolCompartilhado();
+}
+
+async function derrubarPool() {
+  const atual = poolFixo;
+  poolFixo = null;
+  abrindoPool = null;
+  await atual?.encerrar?.().catch(() => {});
+}
+
+function falhaDeConexao(erro) {
+  const texto = String(erro?.code || "") + " " + String(erro?.message || erro);
+  return /ETIMEOUT|ECONNRESET|ESOCKET|ECONNCLOSED|ENOTOPEN|connection is closed|timeout|socket/i.test(texto);
+}
+
+async function consultarSql(comando) {
+  let ultimo;
+  for (let tentativa = 0; tentativa < 3; tentativa += 1) {
+    const pool = await conectar();
+    const pedido = pool.request();
+    pedido.timeout = 180000;
+    try {
+      return await pedido.query(comando);
+    } catch (erro) {
+      ultimo = erro;
+      if (!falhaDeConexao(erro) || tentativa === 2) throw erro;
+      await derrubarPool();
+    }
+  }
+  throw ultimo;
 }
 
 async function testar(_req, res) {
@@ -766,6 +795,27 @@ app.post("/api/chat", async (req, res) => {
         await poolMonitor.close().catch(() => {});
       }
     }
+    if (!jaConsultou && perguntaMeuDia(ultimaPergunta) && !req.body?.relatorio && !req.body?.apresentacao) {
+      const poolDia = await conectar();
+      try {
+        const resultado = await executarFuncao(poolDia, "meu_dia", {}, {
+          recorte: recorteDaVisao(visao, perfil),
+          email: emailChat,
+          nome: nomeDaSessao(req),
+          acesso: acessoChat,
+        });
+        const texto = typeof resultado?.texto === "string" ? resultado.texto : "";
+        if (texto) {
+          encerrado = true;
+          await escreverAosPoucos(enviar, texto);
+          enviar({ tipo: "fim", mensagem: { role: "assistant", content: texto } });
+          res.end();
+          return;
+        }
+      } finally {
+        await poolDia.close().catch(() => {});
+      }
+    }
     const pedidoLog = pedidoLogDePessoa(mensagens);
     if (!jaConsultou && pedidoLog && visao === "ti" && !req.body?.relatorio) {
       const poolLog = await conectar();
@@ -887,27 +937,39 @@ app.post("/api/ia/funcoes", async (req, res) => {
       res.json(guardado.valor);
       return;
     }
-    const pool = await poolCompartilhado();
-    const recorte = await recorteDoPedido(pool, email, nomeDaSessao(req), visaoPedida);
-    const resultado = await executarFuncao(pool, funcao, args, {
-      recorte,
-      email,
-      nome: nomeDaSessao(req),
-      acesso,
-      contas: funcao === "painel_ti" ? listarContas() : [],
-    });
-    const visaoReal = recorte.visao === "tudo" ? "tudo" : recorte.visao;
-    if (ATALHOS_PRONTOS.some(([nome, , visao]) => nome === funcao && visao === visaoReal)) {
-      guardarConsulta(chaveConsulta(funcao, args, visaoReal), resultado);
+    let resultado;
+    let ultimoErro;
+    for (let tentativa = 0; tentativa < 3; tentativa += 1) {
+      const pool = await poolCompartilhado();
+      try {
+        const recorte = await recorteDoPedido(pool, email, nomeDaSessao(req), visaoPedida);
+        resultado = await executarFuncao(pool, funcao, args, {
+          recorte,
+          email,
+          nome: nomeDaSessao(req),
+          acesso,
+          contas: funcao === "painel_ti" ? listarContas() : [],
+        });
+        const visaoReal = recorte.visao === "tudo" ? "tudo" : recorte.visao;
+        if (ATALHOS_PRONTOS.some(([nome, , visao]) => nome === funcao && visao === visaoReal)) {
+          guardarConsulta(chaveConsulta(funcao, args, visaoReal), resultado);
+        }
+        const areaUso = visaoReal && visaoReal !== "tudo" ? visaoReal : visaoPedida || "geral";
+        const tabelasUso = new Set();
+        if (args?.tabela) tabelasUso.add(String(args.tabela));
+        const sqlTexto = typeof args?.sql === "string" ? args.sql : "";
+        for (const achado of sqlTexto.matchAll(/\b(?:FROM|JOIN)\s+([A-Za-z_][A-Za-z0-9_]*)/gi)) tabelasUso.add(achado[1]);
+        for (const tabela of tabelasUso) registrarUsoVisao(areaUso, tabela, args?.campo);
+        if (typeof resultado?.sql === "string") registrarConsultaDoPedido(req, funcao, resultado.sql);
+        res.json(resultado);
+        return;
+      } catch (erro) {
+        ultimoErro = erro;
+        if (!falhaDeConexao(erro) || tentativa === 2) throw erro;
+        await derrubarPool();
+      }
     }
-    const areaUso = visaoReal && visaoReal !== "tudo" ? visaoReal : visaoPedida || "geral";
-    const tabelasUso = new Set();
-    if (args?.tabela) tabelasUso.add(String(args.tabela));
-    const sqlTexto = typeof args?.sql === "string" ? args.sql : "";
-    for (const achado of sqlTexto.matchAll(/\b(?:FROM|JOIN)\s+([A-Za-z_][A-Za-z0-9_]*)/gi)) tabelasUso.add(achado[1]);
-    for (const tabela of tabelasUso) registrarUsoVisao(areaUso, tabela, args?.campo);
-    if (typeof resultado?.sql === "string") registrarConsultaDoPedido(req, funcao, resultado.sql);
-    res.json(resultado);
+    throw ultimoErro;
   } catch (erro) {
     res.status(400).json({ erro: mensagemErro(erro) });
   }
@@ -1154,30 +1216,17 @@ app.post("/api/sql", async (req, res) => {
     const bloqueio = motivoBloqueio(texto, recorte);
     if (bloqueio) throw new Error(bloqueio);
     const nomeado = await nomearSql(pool, texto).catch(() => texto);
-    const consultar = async (comando) => {
-      const pedido = pool.request();
-      pedido.timeout = 60000;
-      const aoFechar = () => {
-        if (!res.writableEnded) pedido.cancel();
-      };
-      res.on("close", aoFechar);
-      try {
-        return await pedido.query(comando);
-      } finally {
-        res.off("close", aoFechar);
-      }
-    };
     let r;
     let sqlExecutado = nomeado;
     try {
-      r = await consultar(nomeado);
+      r = await consultarSql(nomeado);
     } catch (erro) {
       if (nomeado !== texto) {
         sqlExecutado = texto;
-        r = await consultar(texto);
+        r = await consultarSql(texto);
       } else if (/cannot be selected as DISTINCT/i.test(erro?.message || "")) {
         sqlExecutado = texto.replace(/\bdistinct\b/i, "");
-        r = await consultar(sqlExecutado);
+        r = await consultarSql(sqlExecutado);
       } else {
         throw erro;
       }
@@ -1304,7 +1353,7 @@ app.get("/api/acesso", async (req, res) => {
   try {
     email = emailDaSessao(req);
     acesso = permissaoDe(email);
-    registrarConta(email, nomeDaSessao(req));
+    registrarConta(email, nomeDaSessao(req), req.conta?.foto || req.query?.foto || "");
   } catch (erro) {
     res.status(400).json({ erro: mensagemErro(erro) });
     return;
@@ -1322,13 +1371,27 @@ app.get("/api/acesso", async (req, res) => {
   }
   const setor = acesso.papel === "admin" ? perfil.setor : setorEfetivo(acesso, perfil.setor, "");
   const modalidade = modalidadeEfetiva(acesso, perfil, setor);
-  res.json({ ...perfil, ...acesso, setor, modalidade, papel: acesso.papel });
+  let foto = fotoDaConta(email);
+  const tokenGoogle = String(req.get("x-google-token") || req.conta?.token || "").trim();
+  if (tokenGoogle && (!foto || fotoPadrao(foto))) {
+    foto = (await puxarFotoDaConta(email, tokenGoogle)) || foto;
+  }
+  res.json({ ...perfil, ...acesso, setor, modalidade, papel: acesso.papel, foto });
 });
 
-app.get("/api/contas", (req, res) => {
+app.get("/api/contas", async (req, res) => {
   const email = emailDaSessao(req);
   if (permissaoDe(email).papel !== "admin") return res.status(403).json({ erro: "Só o administrador gerencia as contas." });
-  res.json({ contas: listarContas() });
+  const atuais = listarContas();
+  const faltam = atuais.filter((conta) => !conta.foto).map((conta) => conta.email);
+  if (faltam.length) {
+    try {
+      await completarFotos(faltam);
+    } catch {
+      /* a lista segue com a inicial quando o Google não responde */
+    }
+  }
+  res.json({ contas: faltam.length ? listarContas() : atuais });
 });
 
 app.delete("/api/contas", (req, res) => {

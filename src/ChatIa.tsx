@@ -20,7 +20,7 @@ import { AvaliacaoResposta } from "./AvaliacaoResposta";
 import { renovarTokenGmail } from "./tokenGmail";
 import { SymbolLoader } from "./Loader";
 import { SqlDestaque } from "./SqlDestaque";
-import { LogCard, PainelTiCard, logDoTexto, painelDoTexto } from "./PainelTi";
+import { DiaCard, LogCard, PainelTiCard, diaDoTexto, logDoTexto, painelDoTexto } from "./PainelTi";
 import { completarConsultaLog } from "./ferramentasIa";
 import { formatarDataHora, formatarDatasNoTexto } from "./datas";
 import { acoesDoEvento, camposQueMudaram, nomeProprio, rotuloCampo } from "./relatorio";
@@ -181,8 +181,10 @@ type Mensagem =
 const MAX_PASSOS = 12;
 
 const SUGESTOES_COMERCIAL: { titulo: string; descricao: string; pergunta: string; icone: keyof typeof ICONES }[] = [
-  { titulo: "Pendências", descricao: "Atividades pendentes de 2026 do comercial e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do comercial em 2026 e qual o motivo de cada uma?", icone: "busca" },
-  { titulo: "Pendências do inside", descricao: "Atividades pendentes de 2026 do inside e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do inside em 2026 e qual o motivo de cada uma?", icone: "busca" },
+  { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "resumo" },
+  { titulo: "Ficha do processo", descricao: "Situação, proposta e o que fazer agora neste processo.", pergunta: "Monte a ficha do processo {processo}.", icone: "resumo" },
+  { titulo: "Pendências", descricao: "Atividades pendentes deste ano do comercial e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do comercial deste ano e qual o motivo de cada uma?", icone: "busca" },
+  { titulo: "Pendências do inside", descricao: "Atividades pendentes deste ano do inside e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do inside deste ano e qual o motivo de cada uma?", icone: "busca" },
   { titulo: "Resumo do processo", descricao: "Cliente, vendedor responsável e a situação atual.", pergunta: "Faça o resumo do processo {processo}.", icone: "resumo" },
   { titulo: "Buscar cliente", descricao: "Ficha do cliente: vendedor, sem proposta, último processo e comissão do mês.", pergunta: "Se eu informar uma referência de processo, busque os processos. Se eu informar o nome do cliente, monte a ficha: processos abertos, vendedor, quantos estão sem proposta, o último processo e a comissão deste mês. Se eu não disse nem o nome nem a referência, pergunte qual cliente.", icone: "busca" },
   { titulo: "Proposta", descricao: "Oferta comercial e as datas da proposta.", pergunta: "Qual a proposta e a oferta do processo {processo}?", icone: "busca" },
@@ -195,8 +197,10 @@ const SUGESTOES_SETOR: Record<string, { titulo: string; descricao: string; pergu
   inside: SUGESTOES_COMERCIAL,
   comercial: SUGESTOES_COMERCIAL,
   operacional: [
-    { titulo: "Pendências", descricao: "Atividades pendentes de 2026 e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do operacional em 2026 e qual o motivo de cada uma?", icone: "busca" },
-    { titulo: "Divergências", descricao: "Desembarque de 2026 com 15 dias ou mais de diferença da previsão.", pergunta: "Quais processos de 2026 têm o desembarque real muito diferente da previsão?", icone: "troca" },
+    { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "resumo" },
+    { titulo: "Ficha do processo", descricao: "Situação, documental e o que fazer agora neste processo.", pergunta: "Monte a ficha do processo {processo}.", icone: "resumo" },
+    { titulo: "Pendências", descricao: "Atividades pendentes deste ano e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do operacional deste ano e qual o motivo de cada uma?", icone: "busca" },
+    { titulo: "Divergências", descricao: "Desembarque deste ano com 15 dias ou mais de diferença da previsão.", pergunta: "Quais processos deste ano têm o desembarque real muito diferente da previsão?", icone: "troca" },
     { titulo: "Resumo do processo", descricao: "Situação, prazos e a pendência atual.", pergunta: "Faça o resumo operacional do processo {processo}.", icone: "resumo" },
     { titulo: "Rota do navio", descricao: "Navio, portos e as datas de cada trecho da viagem.", pergunta: "Como está a rota do navio no processo {processo}?", icone: "navio" },
     { titulo: "Acompanhamentos", descricao: "As notas de acompanhamento mais recentes.", pergunta: "Quais os acompanhamentos do processo {processo}?", icone: "busca" },
@@ -205,6 +209,8 @@ const SUGESTOES_SETOR: Record<string, { titulo: string; descricao: string; pergu
     { titulo: "O que mudou", descricao: "Campos alterados neste processo nos últimos 30 dias.", pergunta: "O que mudou no processo {processo} nos últimos 30 dias?", icone: "troca" },
   ],
   documental: [
+    { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "resumo" },
+    { titulo: "Ficha do processo", descricao: "Atividades, liberação do CE e o que fazer agora.", pergunta: "Monte a ficha do processo {processo}.", icone: "resumo" },
     { titulo: "Fila do CE", descricao: "Atividades abertas que estão com o documental CE.", pergunta: "Quais atividades estão agora com o documental CE?", icone: "check" },
     { titulo: "Fila do IM", descricao: "Atividades abertas que estão com o documental IM.", pergunta: "Quais atividades estão agora com o documental IM?", icone: "check" },
     { titulo: "Pendências", descricao: "Tudo que está pendente no CE e no IM, e o que falta para concluir.", pergunta: "Quais são todas as atividades pendentes do documental CE e do documental IM, e o que falta para concluir cada uma?", icone: "busca" },
@@ -213,24 +219,28 @@ const SUGESTOES_SETOR: Record<string, { titulo: string; descricao: string; pergu
     { titulo: "Campos livres", descricao: "Campos livres que já estão preenchidos neste processo.", pergunta: "Quais campos livres estão preenchidos no processo {processo}?", icone: "troca" },
   ],
   admin: [
+    { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "resumo" },
     { titulo: "Fila dos setores", descricao: "Abertos, sem proposta, atrasados e parados, por setor.", pergunta: "Como está a fila dos setores: processos abertos, sem proposta, atrasados e parados?", icone: "resumo" },
     { titulo: "Processos parados", descricao: "Sem nenhuma nota de acompanhamento há 7 dias.", pergunta: "Quais processos estão parados há 7 dias sem acompanhamento?", icone: "busca" },
     { titulo: "Prazos vencendo", descricao: "Embarque, desembarque e entrega que vencem nos próximos 7 dias.", pergunta: "Quais prazos de embarque, desembarque e entrega vencem nos próximos 7 dias?", icone: "check" },
-    { titulo: "Divergências", descricao: "Desembarque de 2026 com 15 dias ou mais de diferença da previsão.", pergunta: "Quais processos de 2026 têm o desembarque real muito diferente da previsão?", icone: "troca" },
+    { titulo: "Divergências", descricao: "Desembarque deste ano com 15 dias ou mais de diferença da previsão.", pergunta: "Quais processos deste ano têm o desembarque real muito diferente da previsão?", icone: "troca" },
     { titulo: "Rota do navio", descricao: "Navio, portos e as datas de cada trecho da viagem.", pergunta: "Como está a rota do navio no processo {processo}?", icone: "navio" },
   ],
   gerencia: [
+    { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "resumo" },
+    { titulo: "Ficha do processo", descricao: "Situação, proposta, documental e o que fazer agora.", pergunta: "Monte a ficha do processo {processo}.", icone: "resumo" },
     { titulo: "Fila dos setores", descricao: "Abertos, sem proposta, atrasados e parados, por setor.", pergunta: "Como está a fila dos setores: processos abertos, sem proposta, atrasados e parados?", icone: "resumo" },
     { titulo: "Processos parados", descricao: "Sem nenhuma nota de acompanhamento há 7 dias.", pergunta: "Quais processos estão parados há 7 dias sem acompanhamento?", icone: "busca" },
     { titulo: "Prazos vencendo", descricao: "Embarque, desembarque e entrega que vencem nos próximos 7 dias.", pergunta: "Quais prazos de embarque, desembarque e entrega vencem nos próximos 7 dias?", icone: "check" },
-    { titulo: "Pendências do operacional", descricao: "Atividades pendentes de 2026 e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do operacional em 2026 e qual o motivo de cada uma?", icone: "busca" },
-    { titulo: "Pendências do comercial", descricao: "Atividades pendentes de 2026 e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do comercial em 2026 e qual o motivo de cada uma?", icone: "busca" },
+    { titulo: "Pendências do operacional", descricao: "Atividades pendentes deste ano e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do operacional deste ano e qual o motivo de cada uma?", icone: "busca" },
+    { titulo: "Pendências do comercial", descricao: "Atividades pendentes deste ano e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do comercial deste ano e qual o motivo de cada uma?", icone: "busca" },
     { titulo: "Documental", descricao: "Tudo que está pendente no CE e no IM, e o que falta para concluir.", pergunta: "Quais são todas as atividades pendentes do documental CE e do documental IM, e o que falta para concluir cada uma?", icone: "check" },
     { titulo: "Painel financeiro", descricao: "Comissões, taxas e prazos do mês, com valores.", pergunta: "Monte o painel financeiro deste mês, com valores.", icone: "grafico" },
     { titulo: "Comissões da equipe", descricao: "Comissões de vendedor já calculadas neste mês.", pergunta: "Qual a comissão de vendedor neste mês, com os valores?", icone: "check" },
-    { titulo: "Divergências", descricao: "Desembarque de 2026 com 15 dias ou mais de diferença da previsão.", pergunta: "Quais processos de 2026 têm o desembarque real muito diferente da previsão?", icone: "troca" },
+    { titulo: "Divergências", descricao: "Desembarque deste ano com 15 dias ou mais de diferença da previsão.", pergunta: "Quais processos deste ano têm o desembarque real muito diferente da previsão?", icone: "troca" },
   ],
   financeiro: [
+    { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "resumo" },
     { titulo: "Painel do mês", descricao: "Comissões, taxas e prazos dos próximos 7 dias.", pergunta: "Monte o painel financeiro deste mês, com valores.", icone: "resumo" },
     { titulo: "Gráfico", descricao: "Linha das faturas do processo, com valor e data.", pergunta: "Me mostre em um gráfico de linhas as faturas de um processo, com número, valor e data. Se eu não informei o número, pergunte qual processo.", icone: "grafico" },
     { titulo: "Comissões", descricao: "Comissões de vendedor já calculadas neste mês.", pergunta: "Qual a comissão de vendedor neste mês, com os valores?", icone: "check" },
@@ -239,6 +249,7 @@ const SUGESTOES_SETOR: Record<string, { titulo: string; descricao: string; pergu
     { titulo: "Relatório de taxas", descricao: "Taxas do mês com nome, pagamento e recebimento.", pergunta: "Pedir relatório das taxas deste mês, com nome, pagamento e recebimento.", icone: "relatorio" },
   ],
   ti: [
+    { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "resumo" },
     { titulo: "Painel do TI", descricao: "Resumo das últimas 24 horas: volume, quem alterou e quais tabelas.", pergunta: "Monte o painel do TI das últimas 24 horas.", icone: "resumo" },
     { titulo: "Log recente", descricao: "Eventos das últimas 24 horas, com usuário, tabela, tipo e computador.", pergunta: "Mostre o log das últimas 24 horas, com usuário, tabela, tipo e computador.", icone: "troca" },
     { titulo: "Monitoramentos", descricao: "Quem mudou o projeto de tarefas e a atividade nos registros recentes.", pergunta: "Quais foram os últimos monitoramentos alterados e quem alterou, no projeto de tarefas e na atividade?", icone: "troca" },
@@ -293,8 +304,8 @@ const RELATORIOS_PRONTOS: RelatorioPronto[] = [
   },
   {
     titulo: "Divergências de desembarque",
-    descricao: "Desembarque de 2026 longe da previsão.",
-    pergunta: "Pedir relatório dos processos de 2026 em que o desembarque real está 15 dias ou mais diferente da previsão. Colunas: número do processo, cliente, desembarque previsto, desembarque real e diferença em dias.",
+    descricao: "Desembarque deste ano longe da previsão.",
+    pergunta: "Pedir relatório dos processos deste ano em que o desembarque real está 15 dias ou mais diferente da previsão. Colunas: número do processo, cliente, desembarque previsto, desembarque real e diferença em dias.",
     icone: "troca",
     grupo: "Operação",
     visoes: ["operacional", "gerencia"],
@@ -502,6 +513,11 @@ function dataLegivel(valor: unknown): string {
   return `${data[3]}/${data[2]}/${data[1]} ${data[4]}:${data[5]}`;
 }
 
+function textoParaIa(conteudo: string) {
+  const pronto = textoDaConsulta(conteudo) || conteudo;
+  return pronto.length > 8000 ? `${pronto.slice(0, 8000)}\n…` : pronto;
+}
+
 function resumirResultado(conteudo: string): string {
   let dados: unknown;
   try {
@@ -517,27 +533,29 @@ function resumirResultado(conteudo: string): string {
   const linhas = Array.isArray(registro.linhas) ? registro.linhas : [];
   if (linhas.length) {
     const comDescricao = linhas.filter((linha) => String(linha.Descricao ?? linha.descricao ?? "").trim());
-    if (comDescricao.length) {
-      return comDescricao
-        .map((linha) => {
-          const descricao = String(linha.Descricao ?? linha.descricao ?? "").replace(/\s+/g, " ").trim();
-          const quando = linha.Data ?? linha.data;
-          const responsavel = String(linha.Responsavel ?? linha.responsavel ?? "").trim();
-          const partes = [descricao];
-          if (quando) partes.unshift(`${dataLegivel(quando)}.`);
-          if (responsavel) partes.push(`Responsável: ${responsavel}.`);
-          return partes.join(" ");
-        })
-        .join("\n");
-    }
-    return linhas
-      .map((item) =>
-        Object.entries(item)
-          .filter(([, valor]) => valor != null && String(valor).trim())
-          .map(([chave, valor]) => `${chave}: ${dataLegivel(valor)}`)
-          .join(". "),
-      )
-      .join("\n");
+    const amostra = (comDescricao.length ? comDescricao : linhas).slice(0, 20);
+    const texto = comDescricao.length
+      ? amostra
+          .map((linha) => {
+            const descricao = String(linha.Descricao ?? linha.descricao ?? "").replace(/\s+/g, " ").trim();
+            const quando = linha.Data ?? linha.data;
+            const responsavel = String(linha.Responsavel ?? linha.responsavel ?? "").trim();
+            const partes = [descricao];
+            if (quando) partes.unshift(`${dataLegivel(quando)}.`);
+            if (responsavel) partes.push(`Responsável: ${responsavel}.`);
+            return partes.join(" ");
+          })
+          .join("\n")
+      : amostra
+          .map((item) =>
+            Object.entries(item)
+              .filter(([, valor]) => valor != null && String(valor).trim())
+              .map(([chave, valor]) => `${chave}: ${dataLegivel(valor)}`)
+              .join(". "),
+          )
+          .join("\n");
+    const total = comDescricao.length || linhas.length;
+    return total > amostra.length ? `${texto}\nMais ${total - amostra.length} registros.` : texto;
   }
   return "";
 }
@@ -859,6 +877,9 @@ function textoDocumentalDaRodada(historico: Mensagem[], pergunta: string): strin
 
 const FERRAMENTAS_PRONTAS = new Set([
   "acompanhamentos_processo",
+  "meu_dia",
+  "ficha_processo",
+  "processos_abertos",
   "pendencias",
   "o_que_mudou",
   "proposta_processo",
@@ -1115,6 +1136,26 @@ function pedidoSemProcesso(texto: string) {
   return /pergunte qual processo|n[aã]o informei o n[uú]mero|log t[eé]cnico de um processo/i.test(fala);
 }
 
+function pedeSoAData(texto: string) {
+  const fala = textoVisivel(texto).replace(/[?!.]+/g, "").replace(/\s+/g, " ").trim();
+  if (!fala || fala.length > 50) return false;
+  if (/\b(?:processo|cliente|taxa|atividade|log|fatura|proposta|prazo|embarque|desembarque|comiss|relat[oó]rio)\b/i.test(fala)) return false;
+  return /^(?:que|qual)\s+(?:e|é)\s+(?:o\s+)?dia(?:\s+de\s+hoje)?$|^(?:que|qual)\s+(?:e|é|a)\s+a?\s*data(?:\s+de\s+hoje)?$|^que\s+dia\s+(?:e|é)\s+hoje$|^hoje\s+(?:e|é)\s+(?:que\s+)?dia$|^(?:me\s+)?(?:diz|fala|diga|informe)\s+(?:qual\s+)?(?:e|é|a)\s+(?:a\s+)?(?:data|o\s+dia)(?:\s+de\s+hoje)?$|^(?:que|qual)\s+horas?\s+(?:s[aã]o|e)(?:\s+agora)?$|^que\s+horas\s+s[aã]o(?:\s+agora)?$/i.test(fala);
+}
+
+function textoDaDataAtual(texto: string) {
+  const agora = new Date();
+  const zona = "America/Sao_Paulo";
+  if (/\bhoras?\b/i.test(texto)) {
+    const hora = new Intl.DateTimeFormat("pt-BR", { timeZone: zona, hour: "2-digit", minute: "2-digit" }).format(agora);
+    return `Agora são ${hora}.`;
+  }
+  const dia = new Intl.DateTimeFormat("pt-BR", { timeZone: zona, weekday: "long" }).format(agora);
+  const data = new Intl.DateTimeFormat("pt-BR", { timeZone: zona, day: "2-digit", month: "2-digit", year: "numeric" }).format(agora);
+  const nome = dia.charAt(0).toUpperCase() + dia.slice(1);
+  return `Hoje é ${nome}, ${data}.`;
+}
+
 function numeroSolto(texto: string): string {
   const numero = texto.toUpperCase().match(/\b([A-Z]{1,4}\d{2,6}-\d{2})\b/)?.[1] ?? "";
   if (!numero || texto.trim().length > numero.length + 8) return "";
@@ -1246,6 +1287,9 @@ function textoConsulta(chamada: ChamadaFerramenta | undefined, resultado: string
       "consultar_dados",
       "localizar_processo",
       "resumo_processo",
+      "ficha_processo",
+      "meu_dia",
+      "processos_abertos",
       "buscar_processos",
       "acompanhamentos_processo",
       "pendencias",
@@ -2341,7 +2385,7 @@ function normalizarCartoes(texto: string) {
       const tipo = linguagem.toLowerCase();
       const conteudo = corpo.trim();
       if (!conteudo) return "";
-      if (/^(grafico|email|rota)$/.test(tipo)) return bloco;
+      if (/^(grafico|email|rota|dia)$/.test(tipo)) return bloco;
       if (!/^(log|painel|json)$/.test(tipo) && !/^[{[]/.test(conteudo)) return bloco;
       try {
         const dados = JSON.parse(conteudo) as { banco?: unknown; itens?: unknown };
@@ -2373,7 +2417,7 @@ function semBlocoAberto(texto: string) {
       return antes ? `${antes}\n\n${bloco}` : bloco;
     }
   }
-  if (tipo === "grafico" || tipo === "email" || tipo === "rota") {
+  if (tipo === "grafico" || tipo === "email" || tipo === "rota" || tipo === "dia") {
     const fechado = `${resto.trimEnd()}\n\`\`\``;
     return antes ? `${antes}\n${fechado}` : fechado;
   }
@@ -2381,7 +2425,7 @@ function semBlocoAberto(texto: string) {
 }
 
 function temCartao(texto: string) {
-  return /```(?:log|painel)\b|\{\s*"titulo"\s*:/i.test(texto);
+  return /```(?:log|painel|dia)\b|\{\s*"titulo"\s*:/i.test(texto);
 }
 
 function cartaoDaFerramenta(conteudo: string): string | null {
@@ -2402,6 +2446,8 @@ function Markdown({ texto: bruto, ocultarSql = false, textoCorrido = false }: { 
   if (textoCorrido) {
     return normal ? <TextoResposta texto={ocultarSql ? semSql(normal) : normal} /> : null;
   }
+  const dia = diaDoTexto(normal);
+  if (dia) return <DiaCard dia={dia} />;
   const painel = painelDoTexto(normal);
   if (painel && !/\|[^\n]+\|/.test(normal)) return <PainelTiCard painel={painel} />;
   const log = logDoTexto(normal);
@@ -2913,6 +2959,13 @@ function saudacaoInicial(nomeCompleto: string, qtd: number | null, area: string)
   return { titulo, detalhe, extra };
 }
 
+function AvatarConta({ nome, email, foto, grande = false }: { nome?: string; email: string; foto?: string; grande?: boolean }) {
+  const letra = (nome || email || "?").trim().slice(0, 1).toUpperCase() || "?";
+  const classe = `chat-conta-avatar${grande ? " grande" : ""}`;
+  if (foto) return <img className={classe} src={foto} alt="" referrerPolicy="no-referrer" />;
+  return <span className={classe}>{letra}</span>;
+}
+
 export function ChatIa({
   api,
   aberto,
@@ -3040,6 +3093,7 @@ export function ChatIa({
     {
       email: string;
       nome: string;
+      foto?: string;
       papel: string;
       adminFixo?: boolean;
       verLog: boolean;
@@ -3542,6 +3596,10 @@ export function ChatIa({
     if (resp.ok && Array.isArray(dados.contas)) setContas(dados.contas);
   }
 
+  useEffect(() => {
+    if (configAberta && admin && foto) void carregarContas();
+  }, [foto, configAberta, admin]);
+
   function alterarConta(patch: Partial<(typeof contas)[number]>) {
     setContaAberta((atual) => (atual ? { ...atual, ...patch } : atual));
   }
@@ -3777,6 +3835,14 @@ export function ChatIa({
         avisarConclusao(content, false);
         return;
       }
+      if (pedeSoAData(pergunta)) {
+        const content = textoDaDataAtual(pergunta);
+        historico = [...historico, { role: "assistant", content, duracaoMs: duracaoConsulta() }];
+        setMensagens(historico);
+        setErro("");
+        avisarConclusao(content, false);
+        return;
+      }
       if (pedeResumoDaResposta(textoVisivel(pergunta))) {
         const anterior = [...mensagens].reverse().find((item) => item.role === "assistant" && item.content.trim());
         const content = anterior
@@ -3983,8 +4049,8 @@ export function ChatIa({
             args.pergunta = pergunta;
           }
           const resultado = await executar(passo.nome, args, controle.signal);
-          if (resultado.startsWith("Erro:")) {
-            if (rotaDireta || continuacao) {
+          if (resultado.startsWith("Erro:") || resultado.startsWith("Ferramenta desconhecida")) {
+            if (rotaDireta || continuacao || receita.some((passo) => passo.nome === "meu_dia" || passo.nome === "ficha_processo")) {
               historico = [...historico, { role: "assistant", content: resultado.replace(/^Erro:\s*/, ""), duracaoMs: duracaoConsulta() }];
               setMensagens(historico);
               setErro("");
@@ -4041,9 +4107,13 @@ export function ChatIa({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-          mensagens: historico.map((item) =>
-            item.role === "tool" ? { ...item, content: textoDaConsulta(item.content) || item.content } : item,
-          ),
+          mensagens: historico.map((item) => {
+            if (item.role === "tool") return { ...item, content: textoParaIa(item.content) };
+            if (item.role === "assistant" && item.content.length > 6000) {
+              return { ...item, content: `${item.content.slice(0, 6000)}\n…` };
+            }
+            return item;
+          }),
           completo,
           relatorio: modoRelatorioRef.current,
           apresentacao: apresentacaoRef.current,
@@ -4142,7 +4212,7 @@ export function ChatIa({
           avisarConclusao(content, false);
           return;
         }
-        const pedeDado = !pedidoSemProcesso(pergunta) && /\b(?:processos?|abert[oa]s?|clientes?|taxas?|atividades?|prazos?|embarques?|desembarques?|propostas?|comiss[oõ]es?|frete|mudan[cç]as?|hist[oó]rico|logs?|hoje|ontem)\b/i.test(pergunta);
+        const pedeDado = !pedidoSemProcesso(pergunta) && !pedeSoAData(pergunta) && /\b(?:processos?|abert[oa]s?|clientes?|taxas?|atividades?|prazos?|embarques?|desembarques?|propostas?|comiss[oõ]es?|frete|mudan[cç]as?|hist[oó]rico|logs?|hoje|ontem)\b/i.test(pergunta);
         const pedeLista = pediuNoChat(pergunta);
         const recusouLista = /n[aã]o consigo|n[aã]o me retornou|abr[ae] a tela|outra tela|time de log[ií]stica|n[aã]o devem ser usados/i.test(conteudo);
         const jaConsultou = trechoDaPergunta(historico).some((item) => item.role === "tool");
@@ -4203,6 +4273,10 @@ export function ChatIa({
               }
               if (canceladoRef.current) throw new DOMException("Cancelado", "AbortError");
               resultado = await executar(chamada.function.name, args, controle.signal);
+              for (let tentativa = 0; tentativa < 2 && /^Erro:.*(timeout|conex|socket|interrompid|demorou)/i.test(resultado); tentativa += 1) {
+                setStatus("Lendo de novo…");
+                resultado = await executar(chamada.function.name, args, controle.signal);
+              }
             } catch (e) {
               if (canceladoRef.current || (e instanceof DOMException && e.name === "AbortError")) throw e;
               resultado = `Erro: ${e instanceof Error ? e.message : String(e)}`;
@@ -4301,7 +4375,12 @@ export function ChatIa({
           return;
         }
         if (entregarDados()) return;
-        throw new Error("A consulta terminou sem texto. Tente de novo.");
+        const content = "Nenhum registro nessa consulta.";
+        historico = [...historico, { role: "assistant", content, duracaoMs: duracaoConsulta() }];
+        setMensagens(historico);
+        setErro("");
+        avisarConclusao(content, false);
+        return;
       }
       if (ultima.role === "assistant") {
         const formatado = textoItensDaRodada(historico, pergunta) || textoRotaDaRodada(historico, pergunta) || textoDocumentalDaRodada(historico, pergunta);
@@ -4878,9 +4957,12 @@ export function ChatIa({
           <div className="chat-modal" onClick={() => setContaAberta(null)}>
             <div className="chat-modal-card" onClick={(e) => e.stopPropagation()}>
               <header>
-                <div>
-                  <strong>{contaAberta.nome || contaAberta.email}</strong>
-                  <small>{contaAberta.email}</small>
+                <div className="chat-conta-quem">
+                  <AvatarConta nome={contaAberta.nome} email={contaAberta.email} foto={contaAberta.foto} grande />
+                  <div>
+                    <strong>{contaAberta.nome || contaAberta.email}</strong>
+                    <small>{contaAberta.email}</small>
+                  </div>
                 </div>
                 <button type="button" className="chat-acao icone" onClick={() => setContaAberta(null)} title="Fechar">
                   <Icone nome="fechar" tamanho={18} />
@@ -5215,7 +5297,7 @@ export function ChatIa({
                       return (
                         <li key={conta.email}>
                           <button type="button" className="chat-conta-linha" onClick={() => setContaAberta({ ...conta })}>
-                            <span className="chat-conta-avatar">{(nome || conta.email).slice(0, 1).toUpperCase()}</span>
+                            <AvatarConta nome={nome} email={conta.email} foto={conta.foto} />
                             <span>
                               <strong>{repetido ? conta.email : nome}</strong>
                               {repetido ? null : <small>{conta.email}</small>}

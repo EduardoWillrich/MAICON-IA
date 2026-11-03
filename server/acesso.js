@@ -38,6 +38,36 @@ try {
 } catch {
   /* a coluna já existe */
 }
+try {
+  db.exec("ALTER TABLE acessos ADD COLUMN foto TEXT NOT NULL DEFAULT ''");
+} catch {
+  /* a coluna já existe */
+}
+
+export function urlFotoGoogle(valor) {
+  const url = String(valor ?? "").trim();
+  if (!url || url.length > 2000) return "";
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return "";
+    if (!/(^|\.)googleusercontent\.com$/i.test(parsed.hostname)) return "";
+    return url;
+  } catch {
+    return "";
+  }
+}
+
+export function fotoPadrao(valor) {
+  return /googleusercontent\.com\/a\/ACg8oc/i.test(String(valor ?? ""));
+}
+
+export function escolherFoto(atual, nova) {
+  const novaLimpa = urlFotoGoogle(nova);
+  const atualLimpa = urlFotoGoogle(atual);
+  if (!novaLimpa) return "";
+  if (fotoPadrao(novaLimpa) && atualLimpa && !fotoPadrao(atualLimpa)) return "";
+  return novaLimpa;
+}
 
 function adminsDoAmbiente() {
   return emailsAdmin();
@@ -206,37 +236,59 @@ export function permissaoDe(email) {
 
 const VISTO_MS = 10 * 60 * 1000;
 
-export function registrarConta(email, nome) {
+function gravarNomeEFoto(conta, nomeLimpo, fotoNova, visto) {
+  db.prepare(
+    `UPDATE acessos SET
+      nome = CASE WHEN ? <> '' THEN ? ELSE nome END,
+      foto = CASE WHEN ? <> '' THEN ? ELSE foto END,
+      visto = COALESCE(?, visto)
+     WHERE email = ?`,
+  ).run(nomeLimpo, nomeLimpo, fotoNova, fotoNova, visto, conta);
+}
+
+export function fotoDaConta(email) {
+  const conta = contaDe(email);
+  const linha = db.prepare("SELECT foto FROM acessos WHERE email = ?").get(conta);
+  return urlFotoGoogle(linha?.foto);
+}
+
+export function registrarConta(email, nome, foto = "") {
   const conta = contaDe(email);
   if (!conta || !contaReal(conta)) return;
   const nomeLimpo = String(nome ?? "").trim().slice(0, 80);
+  const pedida = urlFotoGoogle(foto);
   if (adminsDoAmbiente().includes(conta)) {
     try {
       garantirAdminsFixos();
     } catch (erro) {
       console.error("Não gravou os administradores do .env:", erro?.message || erro);
     }
-    if (!nomeLimpo) return;
-    const atual = db.prepare("SELECT nome FROM acessos WHERE email = ?").get(conta);
-    if (atual?.nome === nomeLimpo) return;
-    db.prepare("UPDATE acessos SET nome = ? WHERE email = ?").run(nomeLimpo, conta);
+    const atual = db.prepare("SELECT nome, foto FROM acessos WHERE email = ?").get(conta);
+    const fotoNova = escolherFoto(atual?.foto, pedida);
+    if (!nomeLimpo && !fotoNova) return;
+    if (!atual) return;
+    if ((!nomeLimpo || atual.nome === nomeLimpo) && (!fotoNova || atual.foto === fotoNova)) return;
+    gravarNomeEFoto(conta, nomeLimpo, fotoNova, null);
     return;
   }
-  const atual = db.prepare("SELECT nome, visto FROM acessos WHERE email = ?").get(conta);
+  const atual = db.prepare("SELECT nome, visto, foto FROM acessos WHERE email = ?").get(conta);
+  const fotoNova = escolherFoto(atual?.foto, pedida);
   const agora = new Date();
   if (!atual) {
-    db.prepare(`INSERT INTO acessos (email, nome, visto) VALUES (?, ?, ?)`).run(conta, nomeLimpo, agora.toISOString());
+    db.prepare(`INSERT INTO acessos (email, nome, foto, visto) VALUES (?, ?, ?, ?)`).run(
+      conta,
+      nomeLimpo,
+      fotoNova,
+      agora.toISOString(),
+    );
     return;
   }
   const visto = atual.visto ? new Date(atual.visto).getTime() : 0;
   const recente = Number.isFinite(visto) && agora.getTime() - visto < VISTO_MS;
-  if (recente && (!nomeLimpo || atual.nome === nomeLimpo)) return;
-  db.prepare("UPDATE acessos SET nome = CASE WHEN ? <> '' THEN ? ELSE nome END, visto = ? WHERE email = ?").run(
-    nomeLimpo,
-    nomeLimpo,
-    agora.toISOString(),
-    conta,
-  );
+  const nomeIgual = !nomeLimpo || atual.nome === nomeLimpo;
+  const fotoIgual = !fotoNova || atual.foto === fotoNova;
+  if (recente && nomeIgual && fotoIgual) return;
+  gravarNomeEFoto(conta, nomeLimpo, fotoNova, agora.toISOString());
 }
 
 export function listarContas() {
@@ -255,7 +307,7 @@ export function listarContas() {
     .sort()
     .map((email) => {
       const linha = salvas.find((item) => item.email === email);
-      return { email, nome: linha?.nome || "", ...linhaParaPermissao(linha, email) };
+      return { email, nome: linha?.nome || "", foto: urlFotoGoogle(linha?.foto), ...linhaParaPermissao(linha, email) };
     });
 }
 

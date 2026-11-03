@@ -236,6 +236,75 @@ export function LogCard({ log }: { log: LogPainel }) {
   );
 }
 
+export type ItemDia = {
+  atividade: string;
+  processo: string;
+  cliente: string;
+  quando: string;
+  rel: string;
+  motivo: string;
+};
+
+export type DiaPainel = {
+  titulo: string;
+  nome: string;
+  sub: string;
+  chips: { id: string; rotulo: string; valor: number }[];
+  grupos: { id: string; titulo: string; itens: ItemDia[]; ocultos: number }[];
+  vazio: string;
+};
+
+export function diaDoTexto(texto: string): DiaPainel | null {
+  const bloco = texto.trim().match(/```dia\s*([\s\S]*?)```/i);
+  if (!bloco) return null;
+  try {
+    const dados = JSON.parse(bloco[1]) as DiaPainel;
+    if (dados?.titulo === "Meu dia" && Array.isArray(dados.chips) && Array.isArray(dados.grupos)) return dados;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export function DiaCard({ dia }: { dia: DiaPainel }) {
+  return (
+    <article className="painel-ti dia">
+      <h1>{dia.titulo}</h1>
+      <p className="sub">{dia.sub}</p>
+      <div className="chips">
+        {dia.chips.map((chip) => (
+          <span key={chip.id} className={`chip ${chip.id}`}>
+            <b>{milhar(chip.valor)}</b>
+            {chip.rotulo}
+          </span>
+        ))}
+      </div>
+      {dia.vazio ? <p className="dia-vazio">{dia.vazio}</p> : null}
+      {dia.grupos.map((grupo) => (
+        <section key={grupo.id}>
+          <h2>{grupo.titulo}</h2>
+          <ol className="dia-lista">
+            {grupo.itens.map((item, indice) => (
+              <li key={`${item.processo}-${item.atividade}-${indice}`} className={`dia-item ${grupo.id}`}>
+                <div className="dia-quando">
+                  <strong>{item.rel}</strong>
+                  {item.quando ? <span>{item.quando}</span> : null}
+                </div>
+                <div className="dia-corpo">
+                  <p className="dia-atividade">{item.atividade}</p>
+                  <p className="dia-meta">{[item.processo, item.cliente].filter(Boolean).join(" · ")}</p>
+                  {item.motivo ? <p className="dia-motivo">{item.motivo}</p> : null}
+                </div>
+              </li>
+            ))}
+          </ol>
+          {grupo.ocultos ? <p className="dia-ocultos">E mais {grupo.ocultos} {grupo.ocultos === 1 ? "pendência" : "pendências"} neste grupo.</p> : null}
+        </section>
+      ))}
+    </article>
+  );
+}
+
 export function PainelTiCard({ painel }: { painel: Painel }) {
   return (
     <article className="painel-ti">

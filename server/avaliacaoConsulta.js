@@ -181,7 +181,7 @@ export function amostraDaConsulta(mensagens) {
 
 export function respostaConfereComRetorno(resposta, mensagens) {
   const texto = String(resposta ?? "");
-  if (/```(?:rota|log|painel)/.test(texto)) return true;
+  if (/```(?:rota|log|painel|dia)/.test(texto)) return true;
   const amostra = amostraDaConsulta(mensagens).replace(/\s+/g, " ").trim();
   if (amostra.length < 80) return false;
   return texto.includes(amostra.slice(0, 80));

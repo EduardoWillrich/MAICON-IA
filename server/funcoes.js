@@ -33,6 +33,8 @@ export function consultaFresca(item) {
 
 const FUNCOES = new Set([
   "resumo_processo",
+  "ficha_processo",
+  "meu_dia",
   "buscar_processos",
   "processos_abertos",
   "acompanhamentos_processo",
@@ -137,6 +139,144 @@ function numeroDe(valor) {
   const numero = String(valor ?? "").trim();
   if (!NUMERO.test(numero)) throw new Error("Informe o número do processo, como IM5328-26.");
   return numero;
+}
+
+export function sufixoDoAno(valor, agora = new Date()) {
+  const bruto = String(valor ?? "").trim();
+  if (/^(19|20)\d{2}$/.test(bruto)) return bruto.slice(-2);
+  if (/^\d{2}$/.test(bruto)) return bruto;
+  return String(agora.getFullYear()).slice(-2);
+}
+
+export function anoCheio(sufixo) {
+  const n = Number(sufixo);
+  if (!Number.isInteger(n) || n < 0 || n > 99) return new Date().getFullYear();
+  return n >= 80 ? 1900 + n : 2000 + n;
+}
+
+function normalizarCliente(valor) {
+  return String(valor ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\b(s\s*\/\s*a|s\.a\.?|ltda\.?|eireli|epp)\b/gi, " ")
+    .replace(/[./]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+export function escolherCliente(grupos, termo) {
+  const lista = (Array.isArray(grupos) ? grupos : [])
+    .map((linha) => ({
+      nome: String(linha.Nome ?? linha.nome ?? "").trim(),
+      abertos: Number(linha.Abertos ?? linha.abertos) || 0,
+      semProposta: Number(linha.SemProposta ?? linha.semProposta) || 0,
+    }))
+    .filter((linha) => linha.nome);
+  if (!lista.length) return { tipo: "vazio", cliente: null, outros: [], opcoes: [] };
+  const alvo = normalizarCliente(termo);
+  const exato = lista.find((linha) => normalizarCliente(linha.nome) === alvo);
+  if (exato || lista.length === 1) {
+    const cliente = exato || lista[0];
+    return { tipo: "unico", cliente, outros: lista.filter((linha) => linha.nome !== cliente.nome), opcoes: [] };
+  }
+  return { tipo: "ambiguo", cliente: null, outros: [], opcoes: lista };
+}
+
+export function textoClientesAmbiguos(termo, opcoes) {
+  const linhas = opcoes.map((item) => `- ${item.nome} (${item.abertos} abertos)`);
+  return `Encontrei mais de um cliente para "${termo}":\n${linhas.join("\n")}\nQual deles você quer na ficha?`;
+}
+
+function chaveDoDia(valor) {
+  const curta = dataCurta(valor).slice(0, 10);
+  const data = curta.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!data) return null;
+  return Date.UTC(Number(data[3]), Number(data[2]) - 1, Number(data[1]));
+}
+
+function fraseDoPrazo(dias) {
+  if (dias == null) return "Sem previsão";
+  if (dias === 0) return "Hoje";
+  if (dias === 1) return "Amanhã";
+  if (dias === -1) return "Ontem";
+  if (dias < 0) return `Há ${Math.abs(dias)} dias`;
+  return `Em ${dias} dias`;
+}
+
+export function montarPainelDia(nome, linhas, agora = new Date()) {
+  const calendario = calendarioBrasil(agora);
+  const hoje = Date.UTC(calendario.ano, calendario.mes - 1, calendario.dia);
+  const pessoa = String(nome ?? "").trim();
+  const semana = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", weekday: "long" }).format(agora);
+  const data = `${String(calendario.dia).padStart(2, "0")}/${String(calendario.mes).padStart(2, "0")}/${calendario.ano}`;
+  const grupos = [
+    { id: "atrasada", titulo: "Atrasadas", itens: [], ocultos: 0 },
+    { id: "hoje", titulo: "Hoje", itens: [], ocultos: 0 },
+    { id: "semana", titulo: "Próximos 7 dias", itens: [], ocultos: 0 },
+    { id: "depois", titulo: "Mais adiante", itens: [], ocultos: 0 },
+    { id: "sem_data", titulo: "Sem previsão", itens: [], ocultos: 0 },
+  ];
+  const porId = Object.fromEntries(grupos.map((grupo) => [grupo.id, grupo]));
+  for (const linha of Array.isArray(linhas) ? linhas : []) {
+    const quando = chaveDoDia(linha.Previsao_Termino ?? linha.previsao);
+    const dias = quando == null ? null : Math.round((quando - hoje) / 86_400_000);
+    const id = dias == null ? "sem_data" : dias < 0 ? "atrasada" : dias === 0 ? "hoje" : dias <= 7 ? "semana" : "depois";
+    const grupo = porId[id];
+    const item = {
+      atividade: String(linha.Atividade ?? linha.atividade ?? "Atividade").trim() || "Atividade",
+      processo: String(linha.Numero_Processo ?? linha.processo ?? "").trim(),
+      cliente: String(linha.Cliente ?? linha.cliente ?? "").trim(),
+      quando: quando == null ? "" : dataCurta(linha.Previsao_Termino ?? linha.previsao).slice(0, 10),
+      rel: fraseDoPrazo(dias),
+      motivo: notaCurta(linha.Motivo ?? linha.motivo),
+    };
+    if (grupo.itens.length >= 8) grupo.ocultos += 1;
+    else grupo.itens.push(item);
+  }
+  const contar = (id) => {
+    const grupo = porId[id];
+    return grupo.itens.length + grupo.ocultos;
+  };
+  return {
+    titulo: "Meu dia",
+    nome: pessoa,
+    sub: pessoa ? `${pessoa} · ${semana}, ${data}` : semana ? `${semana}, ${data}` : data,
+    chips: [
+      { id: "atrasada", rotulo: "atrasadas", valor: contar("atrasada") },
+      { id: "hoje", rotulo: "hoje", valor: contar("hoje") },
+      { id: "semana", rotulo: "na semana", valor: contar("semana") },
+    ],
+    grupos: grupos.filter((grupo) => grupo.itens.length),
+    vazio: grupos.every((grupo) => !grupo.itens.length) ? "Nada pendente no seu nome." : "",
+  };
+}
+
+export function perguntaMeuDia(texto) {
+  const chave = String(texto ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/g, "");
+  return (
+    chave === "como está o meu dia" ||
+    chave === "como esta o meu dia" ||
+    chave === "o que eu preciso fazer hoje" ||
+    chave === "o que preciso fazer hoje"
+  );
+}
+
+export function passosDaFicha(texto) {
+  const fonte = String(texto ?? "");
+  const passos = [];
+  const pendencia = fonte.match(/^Pendência: (?!nenhuma\b)(.+)$/m);
+  if (pendencia) passos.push(`Acompanhar a pendência: ${pendencia[1].replace(/\s+/g, " ").trim()}.`);
+  if (/não tem proposta|Proposta: não ligada/i.test(fonte)) passos.push("Vincular a proposta deste processo.");
+  if (/CE ainda não liberado|CE não liberado/i.test(fonte)) passos.push("Cobrar a liberação do CE.");
+  if (/Último acompanhamento: nenhum/.test(fonte)) passos.push("Registrar um acompanhamento.");
+  const previsoes = [...fonte.matchAll(/^Previsão de (embarque|desembarque|entrega):/gim)].map((item) => item[1].toLowerCase());
+  if (previsoes.length) passos.push(`Confirmar a previsão de ${previsoes.join(", ")}.`);
+  return passos.slice(0, 3);
 }
 
 function juntar(partes) {
@@ -796,10 +936,12 @@ async function processosAbertosCliente(pool, args, recorte, ctx) {
     ) C
     WHERE Nome <> ''
     ORDER BY Abertos DESC, Nome`);
-  let nome = String(grupos.recordset[0]?.Nome ?? "").trim();
-  let abertos = Number(grupos.recordset[0]?.Abertos) || 0;
-  let semProposta = Number(grupos.recordset[0]?.SemProposta) || 0;
-  const outros = grupos.recordset.slice(1).map((linha) => String(linha.Nome ?? "").trim()).filter(Boolean);
+  const escolha = escolherCliente(grupos.recordset, termo);
+  if (escolha.tipo === "ambiguo") return textoClientesAmbiguos(termo, escolha.opcoes);
+  let nome = escolha.tipo === "unico" ? escolha.cliente.nome : "";
+  let abertos = escolha.tipo === "unico" ? escolha.cliente.abertos : 0;
+  let semProposta = escolha.tipo === "unico" ? escolha.cliente.semProposta : 0;
+  const outros = escolha.tipo === "unico" ? escolha.outros.map((linha) => linha.nome) : [];
   if (!nome) {
     const achado = await pedido().input("t", sql.NVarChar(80), `%${termo}%`).query(`
       SELECT TOP 1 LTRIM(RTRIM(Cli.Nome)) AS Nome
@@ -1112,7 +1254,7 @@ async function documentalCe(pool, args) {
         AND Ati.Situacao NOT IN (4, 6)
         AND Lhs.Data_Fechamento_Processo IS NULL
         AND Lhs.Data_Cancelamento IS NULL
-        AND Lhs.Numero_Processo LIKE '%-26'
+        AND Lhs.Numero_Processo LIKE '%-' + @ano
         AND EXISTS (
           SELECT 1
           FROM mov_Projeto_Atividade_Responsavel Pap
@@ -1123,7 +1265,8 @@ async function documentalCe(pool, args) {
         AND (@sem = 0 OR ISNULL(Sta.Descricao, '') <> 'CE LIBERADO')
       ORDER BY Lhs.Data_Abertura_Processo DESC, Lhs.Numero_Processo, Tar.Descricao`;
     const sem = foco === "sem_liberacao" ? 1 : 0;
-    const r = await pool.request().input("sem", sql.Int, sem).query(comando);
+    const sufixo = sufixoDoAno(args.ano);
+    const r = await pool.request().input("sem", sql.Int, sem).input("ano", sql.VarChar(2), sufixo).query(comando);
     const titulo =
       foco === "pendencias"
         ? "Pendências do documental CE e do IM"
@@ -1165,7 +1308,7 @@ async function documentalCe(pool, args) {
       Termino: dataCurta(linha.Previsao_Termino),
       Falta: foco === "pendencias" ? faltaDaAtividade(linha, String(linha.Situacao ?? "").trim().toUpperCase() === "CE LIBERADO") : "",
     }));
-    return consultaPronta(texto, comando, linhas, { sem });
+    return consultaPronta(texto, comando, linhas, { sem, ano: sufixo });
   }
 
   const numero = numeroDe(args.numero);
@@ -1308,6 +1451,8 @@ const PAPEIS_PENDENCIA = {
 
 async function atividadesPendentes(pool, args, recorte) {
   const setor = ["operacional", "inside", "comercial"].includes(args.setor) ? args.setor : "operacional";
+  const sufixo = sufixoDoAno(args.ano);
+  const ano = anoCheio(sufixo);
   const faixa = setor === "operacional" && recorte?.modalidade ? ` ${recorte.modalidade}` : "";
   const titulo = setor === "inside" ? "Pendências do inside" : setor === "comercial" ? "Pendências do comercial" : `Pendências do operacional${faixa}`;
   const comando = `
@@ -1338,10 +1483,10 @@ async function atividadesPendentes(pool, args, recorte) {
       AND Ati.Situacao NOT IN (4, 6)
       AND Lhs.Data_Fechamento_Processo IS NULL
       AND Lhs.Data_Cancelamento IS NULL
-      AND Lhs.Numero_Processo LIKE '%-26'
+      AND Lhs.Numero_Processo LIKE '%-' + @ano
       ${setor === "operacional" ? filtroModalidadeSql(recorte) : ""}
     ORDER BY Lhs.Data_Abertura_Processo DESC, Lhs.Numero_Processo, Tar.Descricao`;
-  const r = await pool.request().query(comando);
+  const r = await pool.request().input("ano", sql.VarChar(2), sufixo).query(comando);
   const cartoes = r.recordset.map((linha) => {
     const previsao = previsaoDe(linha.Previsao_Inicio, linha.Previsao_Termino);
     const motivo = notaCurta(linha.Motivo) || "Motivo não informado";
@@ -1353,7 +1498,7 @@ async function atividadesPendentes(pool, args, recorte) {
     ].filter(Boolean);
     return `- **${linha.Numero_Processo}**\n${detalhes.map((item) => `  - ${item}`).join("\n")}`;
   });
-  const texto = `#### ${titulo}\n\n${cartoes.length ? cartoes.join("\n") : "Nenhuma atividade pendente em 2026."}`;
+  const texto = `#### ${titulo}\n\n${cartoes.length ? cartoes.join("\n") : `Nenhuma atividade pendente em ${ano}.`}`;
   const linhas = r.recordset.map((linha) => ({
     Processo: linha.Numero_Processo,
     Cliente: String(linha.Cliente ?? "").trim(),
@@ -1364,7 +1509,7 @@ async function atividadesPendentes(pool, args, recorte) {
     Termino: dataCurta(linha.Previsao_Termino),
     Motivo: notaCurta(linha.Motivo) || "Motivo não informado",
   }));
-  return consultaPronta(texto, comando, linhas);
+  return consultaPronta(texto, comando, linhas, { ano: sufixo });
 }
 
 function diasDaViagem(previsto, realizado) {
@@ -1393,6 +1538,8 @@ function diasDeDivergencia(valor) {
 async function divergenciasViagem(pool, args, recorte) {
   if (recorte?.semOperacional) return "Divergência de desembarque é informação do operacional.";
   const dias = diasDeDivergencia(args.dias);
+  const sufixo = sufixoDoAno(args.ano);
+  const ano = anoCheio(sufixo);
   const faixa = recorte?.modalidade ? ` ${recorte.modalidade}` : "";
   const comando = `
     SELECT
@@ -1406,13 +1553,13 @@ async function divergenciasViagem(pool, args, recorte) {
     FROM mov_Logistica_House Lhs
     JOIN mov_Logistica_Master Lms ON Lms.IdLogistica_Master = Lhs.IdLogistica_Master
     LEFT JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
-    WHERE Lhs.Numero_Processo LIKE '%-26'
+    WHERE Lhs.Numero_Processo LIKE '%-' + @ano
       ${filtroModalidadeSql(recorte)}
       AND Lms.Data_Previsao_Desembarque IS NOT NULL
       AND Lms.Data_Desembarque IS NOT NULL
       AND ABS(DATEDIFF(day, CAST(Lms.Data_Previsao_Desembarque AS date), CAST(Lms.Data_Desembarque AS date))) >= @dias
     ORDER BY ABS(DATEDIFF(day, CAST(Lms.Data_Previsao_Desembarque AS date), CAST(Lms.Data_Desembarque AS date))) DESC, Lhs.Numero_Processo`;
-  const r = await pool.request().input("dias", sql.Int, dias).query(comando);
+  const r = await pool.request().input("dias", sql.Int, dias).input("ano", sql.VarChar(2), sufixo).query(comando);
   const cartoes = r.recordset.map((linha) => {
     const embarque = diasDaViagem(linha.Data_Previsao_Embarque, linha.Data_Embarque);
     const detalhe = [fraseDaViagem("Desembarque", Number(linha.Dias) || 0), embarque != null && Math.abs(embarque) >= dias ? fraseDaViagem("Embarque", embarque) : ""]
@@ -1425,7 +1572,7 @@ async function divergenciasViagem(pool, args, recorte) {
     ].filter(Boolean);
     return `- **${linha.Numero_Processo}**\n${partes.map((item) => `  - ${item}`).join("\n")}`;
   });
-  const texto = `#### Divergências de desembarque${faixa}\n\nProcessos${faixa} de 2026 em que o desembarque real difere ${dias} dias ou mais da previsão.\n\n${cartoes.length ? cartoes.join("\n") : `Nenhuma divergência grande de desembarque${faixa} em 2026.`}`;
+  const texto = `#### Divergências de desembarque${faixa}\n\nProcessos${faixa} de ${ano} em que o desembarque real difere ${dias} dias ou mais da previsão.\n\n${cartoes.length ? cartoes.join("\n") : `Nenhuma divergência grande de desembarque${faixa} em ${ano}.`}`;
   const linhas = r.recordset.map((linha) => {
     const embarque = diasDaViagem(linha.Data_Previsao_Embarque, linha.Data_Embarque);
     const detalhe = [fraseDaViagem("Desembarque", Number(linha.Dias) || 0), embarque != null && Math.abs(embarque) >= dias ? fraseDaViagem("Embarque", embarque) : ""]
@@ -1441,7 +1588,7 @@ async function divergenciasViagem(pool, args, recorte) {
       Detalhe: detalhe,
     };
   });
-  return consultaPronta(texto, comando, linhas, { dias });
+  return consultaPronta(texto, comando, linhas, { dias, ano: sufixo });
 }
 
 async function filaSetor(pool, recorte) {
@@ -2656,6 +2803,8 @@ export function ferramentaDaVisao(nome, setor) {
       "localizar_processo",
       "processos_abertos_cliente",
       "processos_abertos",
+      "meu_dia",
+      "ficha_processo",
       "buscar_tabelas",
       "listar_colunas",
     ].includes(nome);
@@ -2755,6 +2904,68 @@ async function andamentoAtividade(pool, args) {
   return `### ${titulo}\n\n${blocos.join("\n\n")}${acompanhamento}`;
 }
 
+function textoDe(resultado) {
+  if (resultado && typeof resultado === "object" && resultado.texto != null) return String(resultado.texto);
+  return String(resultado ?? "");
+}
+
+function visaoComDocumental(recorte) {
+  return ["documental", "operacional", "tudo", "gerencia"].includes(String(recorte?.visao || ""));
+}
+
+async function fichaDoProcesso(pool, args, recorte) {
+  const numero = numeroDe(args.numero);
+  const resumo = await resumoProcesso(pool, { numero }, recorte);
+  if (/não encontrado/.test(String(resumo))) return resumo;
+  const partes = [String(resumo).trim()];
+  const sqls = [];
+  const linhas = [];
+  if (!recorte?.semComercial) {
+    const proposta = String(await propostaProcesso(pool, { numero }, recorte) ?? "").trim();
+    if (proposta && !/são informação do comercial/.test(proposta)) partes.push(proposta);
+  }
+  if (visaoComDocumental(recorte)) {
+    const doc = await documentalCe(pool, { foco: "processo", caso: "ambos", numero });
+    const texto = textoDe(doc).trim();
+    if (texto && !/^Processo .+ não encontrado/.test(texto)) {
+      partes.push(texto);
+      if (doc && typeof doc === "object") {
+        if (doc.sql) sqls.push(String(doc.sql));
+        if (Array.isArray(doc.linhas)) linhas.push(...doc.linhas);
+      }
+    }
+  }
+  const passos = passosDaFicha(partes.join("\n"));
+  if (passos.length) partes.push(`Próximos passos\n${passos.map((item) => `- ${item}`).join("\n")}`);
+  return consultaPronta(partes.join("\n\n"), sqls.join("\n\n"), linhas);
+}
+
+async function meuDia(pool, _args, _recorte, ctx) {
+  const pessoa = await pessoaDaConta(pool, ctx?.email);
+  if (!pessoa) {
+    const painel = montarPainelDia("", []);
+    painel.vazio = `Não localizei no HeadCargo o cadastro do e-mail ${String(ctx?.email ?? "").trim() || "desta conta"}.`;
+    return `\`\`\`dia\n${JSON.stringify(painel)}\n\`\`\``;
+  }
+  const r = await pool.request().input("id", sql.Int, pessoa.IdPessoa).query(`
+    SELECT
+      Tar.Descricao AS Atividade,
+      Lhs.Numero_Processo,
+      Cli.Nome AS Cliente,
+      Ati.Previsao_Termino,
+      LEFT(CAST(Ati.Observacao AS nvarchar(300)), 160) AS Motivo
+    FROM mov_Atividade Ati
+    LEFT JOIN cad_Tarefa Tar ON Tar.IdTarefa = Ati.IdTarefa
+    LEFT JOIN mov_Logistica_House Lhs ON Lhs.IdProjeto_Atividade = Ati.IdProjeto_Atividade
+    LEFT JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
+    WHERE Ati.IdResponsavel = @id
+      AND Ati.Data_Termino IS NULL
+      AND Ati.Situacao NOT IN (4, 6)
+    ORDER BY CASE WHEN Ati.Previsao_Termino IS NULL THEN 1 ELSE 0 END, Ati.Previsao_Termino`);
+  const painel = montarPainelDia(pessoa.Nome, r.recordset);
+  return `\`\`\`dia\n${JSON.stringify(painel)}\n\`\`\``;
+}
+
 function embalagem(resultado) {
   if (resultado && typeof resultado === "object" && "texto" in resultado) return resultado;
   return { texto: String(resultado ?? ""), sql: "", linhas: [] };
@@ -2765,6 +2976,8 @@ export async function executarFuncao(pool, nome, args, ctx) {
   const dados = args && typeof args === "object" ? args : {};
   const recorte = ctx.recorte ?? {};
   if (nome === "resumo_processo") return embalagem(await resumoProcesso(pool, dados, recorte));
+  if (nome === "ficha_processo") return embalagem(await fichaDoProcesso(pool, dados, recorte));
+  if (nome === "meu_dia") return embalagem(await meuDia(pool, dados, recorte, ctx));
   if (nome === "buscar_processos") return embalagem(await buscarProcessos(pool, dados, recorte));
   if (nome === "processos_abertos") return embalagem(await processosAbertos(pool, dados, recorte));
   if (nome === "acompanhamentos_processo") return embalagem(await acompanhamentosProcesso(pool, dados));

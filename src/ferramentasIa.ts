@@ -126,6 +126,8 @@ export async function executarFerramentaIa(
 ): Promise<string> {
   const funcoesProntas = new Set([
     "resumo_processo",
+    "ficha_processo",
+    "meu_dia",
     "buscar_processos",
     "processos_abertos",
     "acompanhamentos_processo",

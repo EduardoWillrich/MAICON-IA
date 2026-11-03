@@ -856,7 +856,7 @@ async function telaDocumental(pool) {
       AND Ati.Situacao NOT IN (4, 6)
       AND Lhs.Data_Fechamento_Processo IS NULL
       AND Lhs.Data_Cancelamento IS NULL
-      AND Lhs.Numero_Processo LIKE '%-26'`;
+      AND Lhs.Numero_Processo LIKE '%-${String(new Date().getFullYear()).slice(-2)}'`;
   const existe = (filtro) => `AND EXISTS (
     SELECT 1 FROM mov_Projeto_Atividade_Responsavel Pap
     WHERE Pap.IdProjeto_Atividade = Ati.IdProjeto_Atividade

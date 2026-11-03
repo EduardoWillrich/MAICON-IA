@@ -4,7 +4,8 @@ import { capturarLogIa, executarFerramentaIa } from "./ferramentasIa";
 import { eventosDoPdf, OPCOES_PDF_PADRAO, PdfHistorico, type LogPdf, type OpcoesPdf } from "./PdfHistorico";
 import { OpcoesPdfModal } from "./OpcoesPdfModal";
 import { camposDoResultado, usuariosDoResultado } from "./filtrosResultado";
-import type { UsuarioGoogle } from "./sessao";
+import { fotoDoToken } from "./fotoGoogle";
+import { gravarUsuario, lerTokenGmail, type UsuarioGoogle } from "./sessao";
 
 type Acesso = {
   admin: boolean;
@@ -61,6 +62,7 @@ export function TelaIa({ usuario, onSair }: { usuario: UsuarioGoogle; onSair: ()
     return acessoSalvo?.setor || "geral";
   });
   const [removido, setRemovido] = useState(false);
+  const [foto, setFoto] = useState(usuario.foto);
 
   useEffect(() => {
     let ativo = true;
@@ -68,7 +70,22 @@ export function TelaIa({ usuario, onSair }: { usuario: UsuarioGoogle; onSair: ()
     async function carregar() {
       const pedido = ++pedidoAtual;
       try {
-        const resp = await fetch(`/api/acesso?email=${encodeURIComponent(usuario.email)}&nome=${encodeURIComponent(usuario.nome)}`);
+        const tokenGoogle = lerTokenGmail();
+        let fotoEnvio = usuario.foto;
+        if (tokenGoogle) {
+          const melhor = await fotoDoToken(tokenGoogle);
+          if (melhor) {
+            fotoEnvio = melhor;
+            if (melhor !== foto) {
+              setFoto(melhor);
+              gravarUsuario({ email: usuario.email, nome: usuario.nome, foto: melhor });
+            }
+          }
+        }
+        const fotoSalva = fotoEnvio ? `&foto=${encodeURIComponent(fotoEnvio)}` : "";
+        const headers = new Headers();
+        if (tokenGoogle) headers.set("X-Google-Token", tokenGoogle);
+        const resp = await fetch(`/api/acesso?email=${encodeURIComponent(usuario.email)}&nome=${encodeURIComponent(usuario.nome)}${fotoSalva}`, { headers });
         if (!ativo || pedido !== pedidoAtual) return;
         if (resp.status === 403) {
           const dados = await resp.json().catch(() => null);
@@ -109,6 +126,10 @@ export function TelaIa({ usuario, onSair }: { usuario: UsuarioGoogle; onSair: ()
         sessionStorage.setItem(chaveAcesso(usuario.email), JSON.stringify(proximas));
         if (admin) setVisao((atual) => (atual === "geral" || atual === "tudo" ? "gerencia" : atual));
         else setVisao(setor);
+        if (typeof dados.foto === "string" && dados.foto && dados.foto !== usuario.foto) {
+          setFoto(dados.foto);
+          gravarUsuario({ email: usuario.email, nome: usuario.nome, foto: dados.foto });
+        }
       } catch {
         /* falha de rede não tira o papel já confirmado */
       }
@@ -158,7 +179,7 @@ export function TelaIa({ usuario, onSair }: { usuario: UsuarioGoogle; onSair: ()
         fixo
         email={usuario.email}
         nome={usuario.nome}
-        foto={usuario.foto}
+        foto={foto || usuario.foto}
         admin={permissoes.admin}
         setor={permissoes.setor}
         modalidade={permissoes.modalidade}

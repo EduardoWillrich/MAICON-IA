@@ -17,6 +17,8 @@ const FIXAS: Record<string, Receita[]> = {
   "qual a comissão de vendedor neste mês, com os valores?": [{ nome: "comissao_periodo", args: {} }],
   "qual a comissão de vendedor neste mês?": [{ nome: "comissao_periodo", args: {} }],
   "qual a comissão neste mês?": [{ nome: "comissao_periodo", args: {} }],
+  "como está o meu dia?": [{ nome: "meu_dia", args: {} }],
+  "o que eu preciso fazer hoje?": [{ nome: "meu_dia", args: {} }],
   "quais são minhas pendências atrasadas e as dos próximos 7 dias?": [{ nome: "pendencias", args: { escopo: "abertas" } }],
   "quais são minhas pendências atrasadas, de hoje e da semana?": [{ nome: "pendencias", args: { escopo: "abertas" } }],
   "quais atividades minhas estão atrasadas?": [{ nome: "pendencias", args: { escopo: "atrasadas" } }],
@@ -34,16 +36,28 @@ const FIXAS: Record<string, Receita[]> = {
   "quais prazos de embarque, desembarque e entrega vencem nos próximos 7 dias?": [{ nome: "prazos", args: { dias: 7 } }],
   "quais processos estão parados há 7 dias sem acompanhamento?": [{ nome: "processos_parados", args: { dias: 7 } }],
   "quais processos de 2026 têm o desembarque real muito diferente da previsão?": [
+    { nome: "divergencias_viagem", args: { dias: 15, ano: 2026 } },
+  ],
+  "quais processos deste ano têm o desembarque real muito diferente da previsão?": [
     { nome: "divergencias_viagem", args: { dias: 15 } },
   ],
   "como está a fila dos setores: processos abertos, sem proposta, atrasados e parados?": [{ nome: "fila_setor", args: {} }],
   "quais são as atividades pendentes do operacional em 2026 e qual o motivo de cada uma?": [
-    { nome: "atividades_pendentes", args: { setor: "operacional" } },
+    { nome: "atividades_pendentes", args: { setor: "operacional", ano: 2026 } },
   ],
   "quais são as atividades pendentes do inside em 2026 e qual o motivo de cada uma?": [
-    { nome: "atividades_pendentes", args: { setor: "inside" } },
+    { nome: "atividades_pendentes", args: { setor: "inside", ano: 2026 } },
   ],
   "quais são as atividades pendentes do comercial em 2026 e qual o motivo de cada uma?": [
+    { nome: "atividades_pendentes", args: { setor: "comercial", ano: 2026 } },
+  ],
+  "quais são as atividades pendentes do operacional deste ano e qual o motivo de cada uma?": [
+    { nome: "atividades_pendentes", args: { setor: "operacional" } },
+  ],
+  "quais são as atividades pendentes do inside deste ano e qual o motivo de cada uma?": [
+    { nome: "atividades_pendentes", args: { setor: "inside" } },
+  ],
+  "quais são as atividades pendentes do comercial deste ano e qual o motivo de cada uma?": [
     { nome: "atividades_pendentes", args: { setor: "comercial" } },
   ],
   "quais atividades estão agora com o documental ce?": [{ nome: "documental_ce", args: { foco: "fila", caso: "ce" } }],
@@ -80,6 +94,10 @@ const VARIAVEIS: { re: RegExp; montar: (m: RegExpMatchArray) => Receita[] }[] = 
   {
     re: /^qual o andamento da atividade (.+?) no processo (.+?)\?$/i,
     montar: (m) => [{ nome: "andamento_atividade", args: { codigo: m[1].trim(), numero: m[2].trim().toUpperCase() } }],
+  },
+  {
+    re: new RegExp(`^monte a ficha do processo ${PROCESSO}\\.?$`, "i"),
+    montar: (m) => [{ nome: "ficha_processo", args: { numero: m[1].toUpperCase() } }],
   },
   {
     re: new RegExp(`^faça o resumo(?: operacional)? do processo ${PROCESSO}\\.?$`, "i"),

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { fotoDaConta, registrarConta } from "./acesso.js";
 import { abrirSqlite } from "./sqlite.js";
 import { criarSessaoAssinada, lerSessaoAssinada } from "./sessaoAssinada.js";
 
@@ -75,8 +76,82 @@ async function validarGoogle(acesso) {
     throw new Error("A sessão do Google expirou. Entre de novo.");
   }
   const nome = String(dados.name ?? "").trim() || email;
+  const foto = (await fotoDoGoogle(acesso)) || String(dados.picture ?? "").trim();
+  registrarConta(email, nome, foto);
   const sessao = guardarSessao(email, nome, acesso);
-  return { email, nome, token: acesso, entregarSessao: sessao };
+  return { email, nome, foto, token: acesso, entregarSessao: sessao };
+}
+
+const tentativasFoto = new Map();
+
+export function tokenGoogleDaSessao(email) {
+  const conta = String(email ?? "").trim().toLowerCase();
+  if (!conta) return "";
+  const salva = db.prepare("SELECT google FROM sessoes WHERE email = ?").get(conta);
+  return String(salva?.google || "");
+}
+
+function ampliarFoto(url) {
+  return String(url ?? "").trim().replace(/=s\d+(-c)?(?=$|[?#])/, "=s256-c");
+}
+
+async function fotoPeople(acesso) {
+  const resp = await fetch("https://people.googleapis.com/v1/people/me?personFields=photos", {
+    headers: { Authorization: `Bearer ${acesso}` },
+    signal: AbortSignal.timeout(4000),
+  });
+  const dados = await resp.json().catch(() => ({}));
+  if (!resp.ok) return "";
+  const fotos = Array.isArray(dados.photos) ? dados.photos : [];
+  const real = fotos.find((item) => item?.url && item.default === false);
+  return ampliarFoto(real?.url || "");
+}
+
+async function fotoUserinfo(acesso) {
+  const perfil = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+    headers: { Authorization: `Bearer ${acesso}` },
+    signal: AbortSignal.timeout(4000),
+  });
+  const dados = await perfil.json().catch(() => ({}));
+  if (!perfil.ok) return "";
+  return ampliarFoto(dados.picture || "");
+}
+
+export async function fotoDoGoogle(token) {
+  const acesso = String(token ?? "").trim();
+  if (!acesso || acesso.startsWith("maicon.") || acesso.length > 4096) return "";
+  try {
+    const real = await fotoPeople(acesso);
+    if (real) return real;
+    return await fotoUserinfo(acesso);
+  } catch {
+    return "";
+  }
+}
+
+export async function puxarFotoDaConta(email, token) {
+  const conta = String(email ?? "").trim().toLowerCase();
+  const acesso = String(token ?? "").trim();
+  if (!conta || !acesso || acesso.startsWith("maicon.")) return "";
+  const chave = `${conta}:${acesso.slice(-16)}`;
+  const agora = Date.now();
+  const ultima = tentativasFoto.get(chave) || 0;
+  if (agora - ultima < 10 * 60 * 1000) return "";
+  tentativasFoto.set(chave, agora);
+  const foto = await fotoDoGoogle(acesso);
+  if (foto) registrarConta(conta, "", foto);
+  return fotoDaConta(conta);
+}
+
+export async function completarFotos(emails) {
+  const lista = [...emails].slice(0, 24);
+  await Promise.all(
+    lista.map(async (email) => {
+      const token = tokenGoogleDaSessao(email);
+      if (!token) return;
+      await puxarFotoDaConta(email, token);
+    }),
+  );
 }
 
 export async function contaDoToken(token) {

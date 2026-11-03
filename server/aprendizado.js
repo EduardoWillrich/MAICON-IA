@@ -550,6 +550,8 @@ const EXEMPLOS = {
     "Proposta do processo → proposta_processo { numero }.",
     "Lista de propostas de ontem, de hoje ou deste mês → propostas_periodo { quando, situacao }.",
     "Ficha do cliente → processos_abertos_cliente { cliente }.",
+    "Meu dia → meu_dia {}.",
+    "Ficha de um processo → ficha_processo { numero }.",
   ],
   comercial: [
     "Ficha do cliente → processos_abertos_cliente { cliente }.",
@@ -558,23 +560,29 @@ const EXEMPLOS = {
     "Lista de propostas de ontem, de hoje ou deste mês → propostas_periodo { quando, situacao }.",
     "Pendências da semana → pendencias { escopo: semana }.",
     "Pendências do inside → atividades_pendentes { setor: inside }.",
+    "Meu dia → meu_dia {}.",
   ],
   operacional: [
+    "Meu dia → meu_dia {}.",
+    "Ficha de um processo → ficha_processo { numero }.",
     "Prazos dos próximos 7 dias → prazos { dias: 7 }.",
     "Processos parados há 7 dias → processos_parados { dias: 7 }.",
     "Rota do navio de um processo → rota_processo { numero }.",
   ],
   documental: [
+    "Meu dia → meu_dia {}.",
     "Fila do documental CE → documental_ce { foco: fila, caso: ce }.",
     "Fila do documental IM → documental_ce { foco: fila, caso: im }.",
   ],
   financeiro: [
+    "Meu dia → meu_dia {}.",
     "Painel do mês → painel_financeiro {}.",
     "Taxas de um processo → taxas_processo { numero }.",
     "Comissão do mês → comissao_periodo {}.",
     "Prazos em 7 dias → prazos { dias: 7 }.",
   ],
   ti: [
+    "Meu dia → meu_dia {}.",
     "Painel das últimas 24 horas → painel_ti { horas: 24 }.",
     "Log recente → log_recente { horas: 24 }.",
     "Container duplicado ou quem incluiu o item de carga → explicar_itens_carga { numero }. No resumo, copie o texto inteiro.",

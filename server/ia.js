@@ -203,13 +203,39 @@ const FERRAMENTAS = [
     function: {
       name: "resumo_processo",
       description:
-        "Cartão do processo: cliente, referência, vendedor, situação, pendência aberta e último acompanhamento. " +
-        "Use quando pedirem um resumo do processo.",
+        "Cartão curto do processo: cliente, referência, vendedor, situação, pendência aberta e último acompanhamento. " +
+        "Use quando pedirem só o resumo. Para a ficha com proposta, documental e próximos passos, use ficha_processo.",
       parameters: {
         type: "object",
         properties: { numero: { type: "string", description: "Número do processo, ex.: IM5328-26" } },
         required: ["numero"],
       },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "ficha_processo",
+      description:
+        "Ficha de um processo: situação, prazos, pendência, último acompanhamento, proposta quando a visão permitir, " +
+        "documental quando a visão permitir e até três próximos passos. Copie o texto. " +
+        "Use quando pedirem a ficha, o panorama ou o que fazer neste processo.",
+      parameters: {
+        type: "object",
+        properties: { numero: { type: "string", description: "Número do processo, ex.: IM5328-26" } },
+        required: ["numero"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "meu_dia",
+      description:
+        "Abertura do turno da visão logada: pendências, prazos, fila, comissão ou painel, conforme o setor. " +
+        "Use quando pedirem meu dia, o que fazer hoje ou o panorama da manhã. " +
+        "Copie o bloco ```dia inteiro. O painel é o mesmo em todos os setores: pendências da pessoa logada.",
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -248,7 +274,7 @@ const FERRAMENTAS = [
         "Sem período na pergunta, use escopo abertas. hoje, atrasadas e semana só quando o usuário pedir isso.",
       parameters: {
         type: "object",
-        properties: { escopo: { type: "string", enum: ["hoje", "atrasadas", "semana"] } },
+        properties: { escopo: { type: "string", enum: ["abertas", "hoje", "atrasadas", "semana"] } },
       },
     },
   },
@@ -340,11 +366,27 @@ const FERRAMENTAS = [
     function: {
       name: "processos_abertos_cliente",
       description:
-        "Ficha do cliente pelo nome: processos abertos, vendedor, quantos estão sem proposta, último processo e comissão do mês. Use para buscar cliente e para processos do cliente.",
+        "Ficha do cliente pelo nome: processos abertos, vendedor, quantos estão sem proposta, último processo e comissão do mês. " +
+        "Se a busca achar mais de um cliente e nenhum for o nome exato, a ferramenta pergunta qual. Copie a pergunta e não escolha sozinho. " +
+        "foco=abertos, sem_proposta ou sem_movimento monta o ranking da carteira e não precisa de cliente.",
       parameters: {
         type: "object",
-        properties: { cliente: { type: "string" } },
-        required: ["cliente"],
+        properties: {
+          cliente: { type: "string" },
+          foco: { type: "string", enum: ["abertos", "sem_proposta", "sem_movimento"] },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "processos_abertos",
+      description:
+        "Lista processos ainda abertos. quando=hoje traz só os abertos hoje. Sem quando, traz os últimos 6 meses.",
+      parameters: {
+        type: "object",
+        properties: { quando: { type: "string", enum: ["hoje", "semestre"] } },
       },
     },
   },
@@ -353,10 +395,18 @@ const FERRAMENTAS = [
     function: {
       name: "prazos",
       description:
-        "Embarque, desembarque e entrega vencidos ou nos próximos dias. Só operacional e administrador. dias padrão 7.",
+        "Embarque, desembarque e entrega vencidos ou nos próximos dias. dias padrão 7. " +
+        "marco é embarque, desembarque, entrega ou uma lista separada por vírgula. " +
+        "modo=janela é o padrão; modo=realizado lista o que já aconteceu; modo=hoje usa a data de hoje, real ou prevista. " +
+        "modalidade=IA, EA, IM ou EM filtra o prefixo do processo.",
       parameters: {
         type: "object",
-        properties: { dias: { type: "integer" } },
+        properties: {
+          dias: { type: "integer" },
+          marco: { type: "string", description: "embarque, desembarque, entrega ou lista separada por vírgula" },
+          modo: { type: "string", enum: ["janela", "realizado", "hoje"] },
+          modalidade: { type: "string", enum: ["IA", "EA", "IM", "EM"] },
+        },
       },
     },
   },
@@ -397,13 +447,15 @@ const FERRAMENTAS = [
     function: {
       name: "atividades_pendentes",
       description:
-        "Atividades pendentes de 2026 de um setor, com o motivo gravado na atividade. " +
+        "Atividades pendentes deste ano de um setor, com o motivo gravado na atividade. " +
         "setor=operacional (operacional, pré e pós-embarque), inside ou comercial. " +
+        "ano é opcional, com quatro dígitos, quando pedirem outro ano. " +
         "Reproduza o texto da ferramenta, inclusive o motivo.",
       parameters: {
         type: "object",
         properties: {
           setor: { type: "string", enum: ["operacional", "inside", "comercial"] },
+          ano: { type: "integer", description: "Ano do processo, como 2026. Vazio usa o ano atual." },
         },
         required: ["setor"],
       },
@@ -414,12 +466,16 @@ const FERRAMENTAS = [
     function: {
       name: "divergencias_viagem",
       description:
-        "Processos de 2026 em que o desembarque real difere da previsão por muitos dias. " +
-        "dias padrão 15, mínimo 7. Traz previsto, real e o detalhe da divergência. " +
+        "Processos deste ano em que o desembarque real difere da previsão por muitos dias. " +
+        "dias padrão 15, mínimo 7. ano é opcional, com quatro dígitos, quando pedirem outro ano. " +
+        "Traz previsto, real e o detalhe da divergência. " +
         "Use quando pedirem divergência de data na aba de viagem ou desembarque muito diferente da previsão. Reproduza o texto da ferramenta.",
       parameters: {
         type: "object",
-        properties: { dias: { type: "integer" } },
+        properties: {
+          dias: { type: "integer" },
+          ano: { type: "integer", description: "Ano do processo, como 2026. Vazio usa o ano atual." },
+        },
       },
     },
   },
@@ -546,6 +602,10 @@ const FERRAMENTAS = [
   },
 ];
 
+export function esquemaDaFerramenta(nome) {
+  return FERRAMENTAS.find((item) => item.function.name === nome)?.function ?? null;
+}
+
 function textoCarteira(opcoes) {
   const setor = opcoes?.setor || "geral";
   if (!["comercial", "inside"].includes(setor)) return "";
@@ -585,7 +645,7 @@ function textoSetor(setor) {
     return (
       "SETOR OPERACIONAL: mostre situação do processo, datas de embarque e desembarque, averbação, entrega, coleta e transportadora. Não mencione DI nem LI. " +
       "Para atividades pendentes, use atividades_pendentes com setor=operacional. O motivo é o texto da atividade; reproduza o texto da ferramenta. " +
-      "Para divergência de desembarque, use divergencias_viagem. Só entra processo de 2026 em que o real difere 15 dias ou mais da previsão. Reproduza o texto da ferramenta. " +
+      "Para divergência de desembarque, use divergencias_viagem. Entra processo deste ano em que o real difere 15 dias ou mais da previsão. Reproduza o texto da ferramenta. " +
       "Para a rota do navio, o rastreio ou onde a carga está na viagem, use rota_processo e reproduza o bloco ```rota inteiro. " +
       "Não informe comissão, profit, lucro, valor comercial da oferta nem o comercial do cadastro do cliente. " +
       "Se pedirem isso, diga que essa informação é do comercial.\n"
@@ -651,7 +711,7 @@ function textoSetor(setor) {
   return "";
 }
 
-function textoModalidade(modalidade) {
+function textoModalidade(modalidade, ano = new Date().getFullYear()) {
   const nomes = {
     IA: "importação aérea",
     EA: "exportação aérea",
@@ -662,7 +722,7 @@ function textoModalidade(modalidade) {
   if (!nome) return "";
   return (
     `OPERAÇÃO DO USUÁRIO: ${modalidade}, ${nome}. Este usuário não é administrador. ` +
-    `Em lista, total e SQL de processos, filtre Numero_Processo LIKE '${modalidade}%', junto com o ano de 2026. ` +
+    `Em lista, total e SQL de processos, filtre Numero_Processo LIKE '${modalidade}%', junto com o ano de ${ano}, processo terminado em -${String(ano).slice(-2)}. ` +
     "Se ele informar o número de um processo de outro prefixo, consulte esse processo e diga que é de outra operação.\n"
   );
 }
@@ -696,6 +756,7 @@ function textoCalendario(agora = new Date()) {
   return {
     hoje: hojeBr,
     ontem: ontemBr,
+    ano,
     inicioMes: fmt(inicioMes),
     inicioSemana: fmt(inicioSemana),
     texto:
@@ -710,6 +771,7 @@ function textoCalendario(agora = new Date()) {
 
 function sistema(relatorio = false, limitado = false, setor = "geral", modalidade = "", extra = "", apresentacao = false, consultas = "") {
   const calendario = textoCalendario();
+  const ano = calendario.ano;
   return (
     `Você é o Maicon, a inteligência artificial da Conline no sistema HeadCargo. Hoje é ${calendario.hoje}.\n` +
     `${calendario.texto}\n` +
@@ -730,9 +792,9 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
         "Convide a tirar dúvidas sobre o sistema. Sem SQL e sem nome de tabela.\n"
       : "") +
     textoSetor(setor) +
-    textoModalidade(modalidade) +
-    "ANO 2026: se pedirem total, quantidade ou lista de processos sem citar outro ano, considere só 2026. " +
-    "Processo de 2026 é o que termina em -26.\n" +
+    textoModalidade(modalidade, ano) +
+    `ANO ${ano}: se pedirem total, quantidade ou lista de processos sem citar outro ano, considere só ${ano}. ` +
+    `Processo de ${ano} é o que termina em -${String(ano).slice(-2)}.\n` +
     "Você pode executar consultas com as ferramentas. Se o termo do usuário estiver nas PREFERÊNCIAS APRENDIDAS, use direto " +
     "a tabela e o campo de lá. Senão, confirme a tabela com buscar_tabelas (prefira a tabela principal, sem sufixos como " +
     "_Historico, _Lembrete, _Arquivo, a menos que o usuário peça) e o campo com listar_colunas. " +
@@ -785,7 +847,7 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "    CASE Lhs.Tipo_Carga WHEN 1 THEN 'Aéreo' WHEN 3 THEN 'FCL' END AS Tipo_Carga\n" +
     "FROM dbo.mov_Logistica_House Lhs\n" +
     "LEFT OUTER JOIN dbo.cad_Pessoa Cia ON Cia.IdPessoa = Lhs.IdCliente\n" +
-    "WHERE Lhs.Data_Abertura_Processo >= '2026-01-01' AND Lhs.Data_Abertura_Processo < '2027-01-01'\n" +
+    `WHERE Lhs.Data_Abertura_Processo >= '${ano}-01-01' AND Lhs.Data_Abertura_Processo < '${ano + 1}-01-01'\n` +
     "ORDER BY Cia.Nome\n" +
     "LIMITE: é proibido SELECT TOP 50, TOP 100 ou TOP 500. Esse TOP corta as datas mais antigas quando o ORDER BY é descendente. " +
     "No WHERE use o período desta pergunta, no formato aaaa-mm-dd, com início e fim. " +
@@ -827,7 +889,10 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "Lista de propostas, ontem, hoje, esse mês ou uma data → propostas_periodo. " +
     "É proibido responder lista de propostas com localizar_processo ou com mov_Logistica_House. " +
     "Taxas de um processo → taxas_processo. " +
-    "O que mudou ou últimos 30 dias → o_que_mudou. Resumo do processo → resumo_processo. " +
+    "O que mudou ou últimos 30 dias → o_que_mudou. Resumo curto do processo → resumo_processo. " +
+    "Ficha do processo, panorama ou o que fazer nele → ficha_processo e copie o texto, inclusive os próximos passos. " +
+    "Meu dia, o que fazer hoje ou a abertura do turno → meu_dia e copie o texto. " +
+    "É proibido responder 'como está o meu dia' com pendencias: isso só lista a pessoa logada e perde o panorama da visão. " +
     "Gráfico de faturas → se o número do processo não veio na mensagem, pergunte qual processo e não consulte. " +
     "Não use processo de exemplo nem processo com TESTE no nome. " +
     "Com o número informado pelo usuário, consulte as faturas e desenhe o gráfico. " +
@@ -835,11 +900,15 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "Não chame log_recente, executar_sql nem consultar_log nesse caso. " +
     "Com o número, use localizar_processo e consultar_log. " +
     "Fora o pedido de resumo, é proibido chamar resumo_processo nessa continuação.\n" +
-    "resumo_processo resume um processo. buscar_processos acha por cliente, referência ou número. " +
-    "acompanhamentos_processo lista as notas. pendencias lista hoje, atrasadas ou a semana da pessoa logada. " +
+    "resumo_processo resume um processo. ficha_processo junta situação, proposta, documental e os próximos passos. " +
+    "meu_dia abre o turno da visão. buscar_processos acha por cliente, referência ou número. " +
+    "processos_abertos lista os abertos de hoje ou dos últimos 6 meses. " +
+    "acompanhamentos_processo lista as notas. pendencias lista a pessoa logada: sem período, escopo=abertas; hoje, atrasadas e semana só quando pedirem. " +
     "o_que_mudou mostra alterações desde uma data. proposta_processo lê a proposta de um processo. " +
     "propostas_periodo lista propostas pela data, em mov_Proposta_Frete. comissao_periodo é do comercial. " +
-    "processos_abertos_cliente monta a ficha do cliente: abertos, vendedor, sem proposta, último processo e comissão do mês. Copie o texto. prazos é do operacional. " +
+    "processos_abertos_cliente monta a ficha do cliente: abertos, vendedor, sem proposta, último processo e comissão do mês. " +
+    "Se a ferramenta perguntar qual cliente, copie a pergunta. foco=abertos, sem_proposta ou sem_movimento é o ranking, sem nome. " +
+    "prazos aceita marco, modo e modalidade. " +
     "processos_parados lista quem está sem acompanhamento. rota_processo monta o cartão da rota de um processo. " +
     "fila_setor só na visão de todos os setores. " +
     "painel_ti, log_recente e monitoramentos_alterados só na aba TI. " +
@@ -862,7 +931,7 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
       : "Depois da consulta, responda em português claro, para alguém não técnico. Use somente os dados retornados; " +
         "se algo não constar, diga isso. Não invente cliente, valor, data, processo ou tabela.\n\n") +
     "FORMATO: responda em Markdown (GFM). Frases curtas. Use lista, negrito e tabela quando houver vários itens ou colunas. " +
-    "Se a ferramenta devolver um bloco ```log, ```painel ou ```rota, copie o bloco inteiro, sem reescrever em lista ou parágrafo. " +
+    "Se a ferramenta devolver um bloco ```log, ```painel, ```dia ou ```rota, copie o bloco inteiro, sem reescrever em lista ou parágrafo. " +
     "Não use a frase 'Atualização em data, por usuário. N campos.'. " +
     "Cada processo, atividade ou registro fica num item de lista, começando com '- '. " +
     "É proibido juntar vários processos no mesmo parágrafo. " +
