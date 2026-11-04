@@ -2745,7 +2745,9 @@ function agruparRelacionamento(partes: { tipo: string; texto: string }[]) {
   const abrir = (nivel: string) => {
     if (atual) grupos.push(atual);
     const titulo = nivel ? nivel.charAt(0).toUpperCase() + nivel.slice(1) : "Clientes";
-    atual = { nivel, titulo, cartoes: [], nota: "" };
+    const grupo = { nivel, titulo, cartoes: [] as string[], nota: "" };
+    atual = grupo;
+    return grupo;
   };
   const tratar = (linha: string) => {
     const nivel = nivelDoTitulo(linha);
@@ -2763,16 +2765,16 @@ function agruparRelacionamento(partes: { tipo: string; texto: string }[]) {
   };
   for (const parte of partes) {
     if (parte.tipo === "encarte") {
+      let nivel = "";
       if (!atual) {
-        let nivel = "";
         try {
           nivel = String(JSON.parse(parte.texto)?.nivel ?? "");
         } catch {
           nivel = "";
         }
-        abrir(nivel);
       }
-      atual?.cartoes.push(parte.texto);
+      const grupo = atual ?? abrir(nivel);
+      grupo.cartoes.push(parte.texto);
       continue;
     }
     parte.texto.split("\n").forEach(tratar);
