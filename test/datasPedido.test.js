@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { anotarPedido, sqlDoPeriodo } from "../server/datasPedido.js";
+import { anotarPedido, perguntaDeConjunto, sqlDoPeriodo, sqlParaExecutar, sqlSemExcecao } from "../server/datasPedido.js";
 import { textoConsultasRelevantes } from "../server/consultas.js";
 
 const calendario = { hoje: "30/10/2026", ontem: "29/10/2026" };
@@ -91,6 +91,58 @@ test("pedido de FCL mantém o tipo de carga", () => {
 test("consultas prontas não repetem a data do exemplo", () => {
   const texto = textoConsultasRelevantes("quais processos foram abertos esse mês");
   assert.doesNotMatch(texto, /2026-10-29/);
+});
+
+test("lista do mês passado não fica presa no TOP 1 da prévia", () => {
+  const pedido = "traga os lucros estimados dos processos totais do mes passado";
+  assert.equal(perguntaDeConjunto(pedido), true);
+  assert.equal(perguntaDeConjunto("qual o lucro do processo IM5618-26"), false);
+  const sql = "SELECT TOP 1 Numero_Processo, Lucro_Estimado FROM mov_Logistica_House";
+  assert.equal(sqlParaExecutar(sql, pedido, false), "SELECT Numero_Processo, Lucro_Estimado FROM mov_Logistica_House");
+  assert.match(sqlParaExecutar(sql, pedido, true), /^SELECT TOP 1 /i);
+});
+
+test("última semana é sábado a sexta da semana anterior", () => {
+  const anotado = anotarPedido("quais processos abriram na última semana", "", calendario);
+  assert.match(anotado, /2026-10-17/);
+  assert.match(anotado, /2026-10-24/);
+  assert.match(anotado, /sábado 17\/10\/2026 a sexta 23\/10\/2026/);
+  assert.doesNotMatch(anotado, /2026-10-23'/);
+  assert.doesNotMatch(anotado, /2026-10-30'/);
+});
+
+test("semana passada não conta sete dias a partir do dia pedido", () => {
+  const anotado = anotarPedido("liste os processos da semana passada", "", calendario);
+  assert.match(anotado, /2026-10-17/);
+  assert.match(anotado, /< '2026-10-24'/);
+  assert.doesNotMatch(anotado, /2026-10-23/);
+});
+
+test("consulta de processo deixa de fora TESTE, DEMU e cancelado 6", () => {
+  const sql =
+    "SELECT Lhs.Numero_Processo FROM dbo.mov_Logistica_House Lhs " +
+    "LEFT OUTER JOIN dbo.cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente " +
+    "WHERE Lhs.Data_Abertura_Processo >= '2026-10-01'";
+  const ajustado = sqlSemExcecao(sql, "quantos processos abriram esse mês");
+  assert.match(ajustado, /Lhs\.Numero_Processo NOT LIKE '%TESTE%'/);
+  assert.match(ajustado, /Lhs\.Numero_Processo NOT LIKE 'DEMU%'/);
+  assert.match(ajustado, /Lhs\.Data_Cancelamento IS NULL/);
+  assert.match(ajustado, /Lhs\.IdStatus_Processo_Logistico <> 6/);
+  assert.match(ajustado, /Cli\.Nome NOT LIKE '%TESTE%'/);
+  assert.equal(ajustado.match(/NOT LIKE '%TESTE%'/g).length, 2);
+});
+
+test("pedido de teste ou cancelado mantém esses registros", () => {
+  const sql = "SELECT Lhs.Numero_Processo FROM dbo.mov_Logistica_House Lhs";
+  const testes = sqlSemExcecao(sql, "liste os processos TESTE");
+  assert.doesNotMatch(testes, /NOT LIKE '%TESTE%'/);
+  assert.match(testes, /NOT LIKE 'DEMU%'/);
+  const cancelados = sqlSemExcecao(sql, "quais processos foram cancelados");
+  assert.doesNotMatch(cancelados, /IdStatus_Processo_Logistico/);
+  assert.doesNotMatch(cancelados, /Data_Cancelamento/);
+  assert.match(cancelados, /NOT LIKE '%TESTE%'/);
+  const demu = sqlSemExcecao(sql, "mostra os processos DEMU");
+  assert.doesNotMatch(demu, /NOT LIKE 'DEMU%'/);
 });
 
 test("ontem usa o dia anterior ao de hoje", () => {

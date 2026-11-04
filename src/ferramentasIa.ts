@@ -146,6 +146,7 @@ export async function executarFerramentaIa(
     "fila_setor",
     "painel_ti",
     "painel_financeiro",
+    "relacionamento_clientes",
     "taxas_processo",
     "log_recente",
     "monitoramentos_alterados",
@@ -227,7 +228,7 @@ export async function executarFerramentaIa(
     const resp = await fetch(`${API}/api/sql`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sql: texto(args.sql), pergunta: texto(args.pergunta), email: conta?.email, nome: conta?.nome, visao: conta?.visao, conversaId: conversaDaConsulta() }),
+      body: JSON.stringify({ sql: texto(args.sql), pergunta: texto(args.pergunta), previa: Boolean(args.previa), email: conta?.email, nome: conta?.nome, visao: conta?.visao, conversaId: conversaDaConsulta() }),
       signal: sinal,
     });
     const dados = await resp.json();

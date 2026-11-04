@@ -6,6 +6,8 @@ import { nomeProprio } from "./itensCarga.js";
 import { montarSelect, parseCamposXml, tabelasDaLinha } from "./query.js";
 import { explicarCampoLivre } from "./campoLivre.js";
 import { explicarItensCarga } from "./itensCarga.js";
+import { relacionamentoFinanceiro, relacionamentoPorClassificacao, relacionamentoPorNomes, textoEncarte, textoEncartes, textoRelacionamento } from "./relacionamento.js";
+import { PROCESSO_REAL, SEM_EXCECAO } from "./datasPedido.js";
 
 const NUMERO = /^[A-Za-z0-9./-]{3,30}$/;
 const cacheConsulta = new Map();
@@ -55,6 +57,7 @@ const FUNCOES = new Set([
   "log_recente",
   "monitoramentos_alterados",
   "painel_financeiro",
+  "relacionamento_clientes",
   "taxas_processo",
   "explicar_itens_carga",
   "explicar_campo_livre",
@@ -457,10 +460,8 @@ async function processosAbertos(pool, args, recorte) {
     FROM mov_Logistica_House Lhs
     LEFT JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
     LEFT JOIN cad_Status_Processo_Logistico Sta ON Sta.IdStatus_Processo_Logistico = Lhs.IdStatus_Processo_Logistico
-    WHERE Lhs.Data_Cancelamento IS NULL
+    WHERE ${PROCESSO_REAL}
       AND Lhs.Data_Fechamento_Processo IS NULL
-      AND Lhs.Numero_Processo NOT LIKE '%TESTE%'
-      AND Lhs.Numero_Processo NOT LIKE 'DEMU%'
       AND ${periodo}
       ${filtroModalidadeSql(recorte)}
     ORDER BY Lhs.Data_Abertura_Processo DESC`;
@@ -849,7 +850,7 @@ async function resumoCarteira(pool, foco, recorte, ctx, quando = "") {
   if (carteira === 0) return "Não localizei seu cadastro para filtrar a carteira.";
   if (!carteira && !admin && !["comercial", "inside"].includes(visao)) return "A carteira de clientes aparece no comercial.";
   const filtro = carteira ? "AND Lhs.IdVendedor = @id" : "";
-  const real = "Lhs.Data_Cancelamento IS NULL AND Lhs.Numero_Processo NOT LIKE '%TESTE%' AND Lhs.Numero_Processo NOT LIKE 'DEMU%'";
+  const real = PROCESSO_REAL;
   const hoje = quando === "hoje";
   const aberto = hoje
     ? `${real} AND CAST(Lhs.Data_Abertura_Processo AS date) = CAST(GETDATE() AS date)`
@@ -916,7 +917,7 @@ async function processosAbertosCliente(pool, args, recorte, ctx) {
   if (carteira === 0) return "Não localizei seu cadastro para filtrar a carteira.";
   const filtro = carteira ? "AND Lhs.IdVendedor = @id" : "";
   const modal = filtroModalidadeSql(recorte);
-  const real = "Lhs.Data_Cancelamento IS NULL AND Lhs.Numero_Processo NOT LIKE '%TESTE%' AND Lhs.Numero_Processo NOT LIKE 'DEMU%'";
+  const real = PROCESSO_REAL;
   const aberto = `${real} AND Lhs.Data_Fechamento_Processo IS NULL AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))`;
   const pedido = () => {
     const req = pool.request();
@@ -1025,8 +1026,25 @@ async function processosAbertosCliente(pool, args, recorte, ctx) {
   const linhas = abertosLista.recordset.map((linha) =>
     [linha.Numero_Processo, String(linha.Referencia_Cliente ?? "").trim(), String(linha.Situacao ?? "").trim()].filter(Boolean).join(" · "),
   );
-  const texto = [
-    `Ficha de ${nome}`,
+  const relacao = (await relacionamentoPorNomes(pool, [nome]))[0] || {
+    nome,
+    nivel: "",
+    classificacao: "",
+    pagamento: "sem",
+    pagamentoTexto: "Sem faturas recentes",
+  };
+  const amostra = linhas.slice(0, 12);
+  const restantes = linhas.length - amostra.length;
+  const processos = linhas.length
+    ? [
+        "Processos abertos",
+        ...amostra.map((linha) => `- ${linha}`),
+        restantes ? `E mais ${restantes} ${restantes === 1 ? "processo aberto" : "processos abertos"}.` : "",
+      ].filter(Boolean).join("\n")
+    : "Nenhum processo aberto nos últimos 6 meses.";
+  const campos = [
+    `**Ficha de ${nome}**`,
+    `Relacionamento: ${relacao.classificacao || "sem classificação"}. ${relacao.pagamentoTexto}.`,
     outros.length ? `Também encontrei: ${outros.join(", ")}.` : "",
     vendedor,
     `Abertos: ${abertos}`,
@@ -1035,10 +1053,9 @@ async function processosAbertosCliente(pool, args, recorte, ctx) {
       ? `Último processo: ${String(casa.Numero_Processo).trim()}${casa.Data_Abertura_Processo ? `, aberto em ${dataCurta(casa.Data_Abertura_Processo)}` : ""}`
       : "Último processo: não encontrado.",
     recorte?.semComissao ? "" : `Comissão deste mês: ${dinheiro(comissao?.recordset[0]?.Comissao) || "R$ 0,00"}`,
-    "",
-    linhas.length ? `Processos abertos\n${linhas.map((linha) => `- ${linha}`).join("\n")}` : "Nenhum processo aberto nos últimos 6 meses.",
-  ].filter((linha) => linha !== "").join("\n");
-  return consultaPronta(texto, comando, abertosLista.recordset, { nome, ...(carteira ? { id: carteira } : {}) });
+  ].filter(Boolean);
+  const texto = [textoEncarte(relacao), campos.join("\n\n"), processos].join("\n\n");
+  return consultaPronta(texto, comando, abertosLista.recordset.slice(0, 12), { nome, ...(carteira ? { id: carteira } : {}) });
 }
 
 function marcosDoPrazo(args) {
@@ -1084,12 +1101,10 @@ async function prazos(pool, args, recorte) {
   const condicoes = marcos.map((marco) => condicaoDoPrazo(marco, modo, dias)).join("\n        OR ");
   const recorteAberto =
     modo === "janela"
-      ? `Lhs.Data_Fechamento_Processo IS NULL
-      AND Lhs.Data_Cancelamento IS NULL
+      ? `${PROCESSO_REAL}
+      AND Lhs.Data_Fechamento_Processo IS NULL
       AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))`
-      : `Lhs.Data_Cancelamento IS NULL
-      AND Lhs.Numero_Processo NOT LIKE '%TESTE%'
-      AND Lhs.Numero_Processo NOT LIKE 'DEMU%'
+      : `${PROCESSO_REAL}
       AND Lhs.Data_Abertura_Processo >= DATEADD(month, -18, CAST(GETDATE() AS date))`;
   const comando = `
     SELECT
@@ -1152,7 +1167,7 @@ async function processosParados(pool, args, recorte) {
       WHERE A.IdProjeto_Atividade = Lhs.IdProjeto_Atividade
     ) Ult
     WHERE Lhs.Data_Fechamento_Processo IS NULL
-      AND Lhs.Data_Cancelamento IS NULL
+      AND ${PROCESSO_REAL}
       AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))
       ${filtroModalidadeSql(recorte)}
       AND (Ult.Data IS NULL OR Ult.Data < DATEADD(day, -@dias, GETDATE()))
@@ -1253,7 +1268,7 @@ async function documentalCe(pool, args) {
       WHERE Ati.Data_Termino IS NULL
         AND Ati.Situacao NOT IN (4, 6)
         AND Lhs.Data_Fechamento_Processo IS NULL
-        AND Lhs.Data_Cancelamento IS NULL
+        AND ${PROCESSO_REAL}
         AND Lhs.Numero_Processo LIKE '%-' + @ano
         AND EXISTS (
           SELECT 1
@@ -1482,7 +1497,7 @@ async function atividadesPendentes(pool, args, recorte) {
     WHERE Ati.Data_Termino IS NULL
       AND Ati.Situacao NOT IN (4, 6)
       AND Lhs.Data_Fechamento_Processo IS NULL
-      AND Lhs.Data_Cancelamento IS NULL
+      AND ${PROCESSO_REAL}
       AND Lhs.Numero_Processo LIKE '%-' + @ano
       ${setor === "operacional" ? filtroModalidadeSql(recorte) : ""}
     ORDER BY Lhs.Data_Abertura_Processo DESC, Lhs.Numero_Processo, Tar.Descricao`;
@@ -1595,10 +1610,11 @@ async function filaSetor(pool, recorte) {
   if (recorte?.visao !== "tudo" && recorte?.visao !== "gerencia") return "A fila dos setores aparece só na visão de todos os setores e na gerência.";
   const r = await pool.request().query(`
     SELECT
-      SUM(CASE WHEN Lhs.Data_Fechamento_Processo IS NULL AND Lhs.Data_Cancelamento IS NULL THEN 1 ELSE 0 END) AS Abertos,
-      SUM(CASE WHEN Lhs.Data_Fechamento_Processo IS NULL AND Lhs.Data_Cancelamento IS NULL AND Lhs.IdOferta_Frete IS NULL THEN 1 ELSE 0 END) AS Sem_Proposta
+      SUM(CASE WHEN Lhs.Data_Fechamento_Processo IS NULL AND ${PROCESSO_REAL} THEN 1 ELSE 0 END) AS Abertos,
+      SUM(CASE WHEN Lhs.Data_Fechamento_Processo IS NULL AND ${PROCESSO_REAL} AND Lhs.IdOferta_Frete IS NULL THEN 1 ELSE 0 END) AS Sem_Proposta
     FROM mov_Logistica_House Lhs
-    WHERE Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))`);
+    WHERE ${SEM_EXCECAO}
+      AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))`);
   const atrasadas = await pool.request().query(`
     SELECT COUNT(*) AS Total
     FROM mov_Atividade Ati
@@ -1616,7 +1632,7 @@ async function filaSetor(pool, recorte) {
       WHERE A.IdProjeto_Atividade = Lhs.IdProjeto_Atividade
     ) Ult
     WHERE Lhs.Data_Fechamento_Processo IS NULL
-      AND Lhs.Data_Cancelamento IS NULL
+      AND ${PROCESSO_REAL}
       AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))
       AND (Ult.Data IS NULL OR Ult.Data < DATEADD(day, -7, GETDATE()))`);
   const prazosVencidos = await pool.request().query(`
@@ -1624,7 +1640,7 @@ async function filaSetor(pool, recorte) {
     FROM mov_Logistica_House Lhs
     LEFT JOIN mov_Logistica_Master Lms ON Lms.IdLogistica_Master = Lhs.IdLogistica_Master
     WHERE Lhs.Data_Fechamento_Processo IS NULL
-      AND Lhs.Data_Cancelamento IS NULL
+      AND ${PROCESSO_REAL}
       AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))
       AND (
         (Lms.Data_Embarque IS NULL AND Lms.Data_Previsao_Embarque < CAST(GETDATE() AS date))
@@ -2196,6 +2212,11 @@ async function taxasProcesso(pool, args) {
   );
 }
 
+async function relacionamentoClientes(pool, args = {}) {
+  const grupos = await relacionamentoPorClassificacao(pool, args.nivel || args.niveis);
+  return consultaPronta(textoRelacionamento(grupos), "", [], {});
+}
+
 async function painelFinanceiro(pool, args = {}) {
   const sqlComissao = `
     SELECT
@@ -2203,7 +2224,8 @@ async function painelFinanceiro(pool, args = {}) {
       COUNT(*) AS Qtd_Comissao
     FROM mov_Logistica_House Lhs
     JOIN mov_Oferta_Frete_Comissao Com ON Com.IdOferta_Frete = Lhs.IdOferta_Frete
-    WHERE Lhs.Data_Abertura_Processo >= DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
+    WHERE ${PROCESSO_REAL}
+      AND Lhs.Data_Abertura_Processo >= DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
       AND Lhs.Data_Abertura_Processo < DATEADD(month, 1, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))`;
   const sqlTaxas = `
     SELECT TOP 12
@@ -2213,7 +2235,8 @@ async function painelFinanceiro(pool, args = {}) {
     FROM mov_Logistica_Taxa Tax
     JOIN mov_Logistica_House Lhs ON Lhs.IdLogistica_House = Tax.IdLogistica_House
     LEFT JOIN cad_Taxa_Logistica_Exibicao Exb ON Exb.IdTaxa_Logistica_Exibicao = Tax.IdTaxa_Logistica_Exibicao
-    WHERE Lhs.Data_Abertura_Processo >= DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
+    WHERE ${PROCESSO_REAL}
+      AND Lhs.Data_Abertura_Processo >= DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
       AND Lhs.Data_Abertura_Processo < DATEADD(month, 1, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))
     GROUP BY Exb.Nome
     ORDER BY SUM(Tax.Valor_Recebimento_Total) DESC`;
@@ -2222,15 +2245,18 @@ async function painelFinanceiro(pool, args = {}) {
     FROM mov_Logistica_House Lhs
     LEFT JOIN mov_Logistica_Master Lms ON Lms.IdLogistica_Master = Lhs.IdLogistica_Master
     WHERE Lhs.Data_Fechamento_Processo IS NULL
-      AND Lhs.Data_Cancelamento IS NULL
+      AND ${PROCESSO_REAL}
       AND (
         (Lms.Data_Embarque IS NULL AND Lms.Data_Previsao_Embarque IS NOT NULL AND Lms.Data_Previsao_Embarque < DATEADD(day, 7, CAST(GETDATE() AS date)))
         OR (Lms.Data_Desembarque IS NULL AND Lms.Data_Previsao_Desembarque IS NOT NULL AND Lms.Data_Previsao_Desembarque < DATEADD(day, 7, CAST(GETDATE() AS date)))
         OR (Lhs.Data_Entrega IS NULL AND Lhs.Data_Previsao_Entrega IS NOT NULL AND Lhs.Data_Previsao_Entrega < DATEADD(day, 7, CAST(GETDATE() AS date)))
       )`;
-  const totais = await pool.request().query(sqlComissao);
-  const taxas = await pool.request().query(sqlTaxas);
-  const prazos = await pool.request().query(sqlPrazos);
+  const [totais, taxas, prazos, relacao] = await Promise.all([
+    pool.request().query(sqlComissao),
+    pool.request().query(sqlTaxas),
+    pool.request().query(sqlPrazos),
+    args?.foco === "taxas" ? Promise.resolve([]) : relacionamentoFinanceiro(pool, 6),
+  ]);
   const cabeca = totais.recordset[0] ?? {};
   const listaTaxas = taxas.recordset.map(
     (linha) =>
@@ -2245,6 +2271,8 @@ async function painelFinanceiro(pool, args = {}) {
     `- Prazos de embarque, desembarque ou entrega nos próximos 7 dias: ${Number(prazos.recordset[0]?.Qtd) || 0}`,
     "",
     lista(listaTaxas, "Nenhuma taxa neste mês."),
+    "",
+    textoEncartes("Relacionamento com o cliente", relacao),
   ].join("\n");
   const pronto = consultaPronta(texto, "", taxas.recordset, {});
   pronto.sql = [sqlComissao, sqlTaxas, sqlPrazos].map((item) => item.trim()).join("\n\n");
@@ -2790,6 +2818,7 @@ export function ferramentaDaVisao(nome, setor) {
   if (setor === "financeiro") {
     return [
       "painel_financeiro",
+      "relacionamento_clientes",
       "taxas_processo",
       "comissao_periodo",
       "prazos",
@@ -2998,6 +3027,7 @@ export async function executarFuncao(pool, nome, args, ctx) {
   if (nome === "log_recente") return embalagem(await logRecente(pool, dados, ctx));
   if (nome === "monitoramentos_alterados") return embalagem(await monitoramentosAlterados(pool, dados, ctx));
   if (nome === "painel_financeiro") return embalagem(await painelFinanceiro(pool, dados));
+  if (nome === "relacionamento_clientes") return embalagem(await relacionamentoClientes(pool, dados));
   if (nome === "taxas_processo") return embalagem(await taxasProcesso(pool, dados));
   if (nome === "explicar_itens_carga") return embalagem(await explicarItensCarga(pool, dados));
   if (nome === "explicar_campo_livre") return embalagem(await explicarCampoLivre(pool, dados));

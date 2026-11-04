@@ -41,6 +41,13 @@ export function filaDeChaves(chavesPessoais, ambiente = process.env) {
   return fila;
 }
 
+export function estouroDeTokens(erro) {
+  const status = statusDoErro(erro);
+  const texto = String(erro?.message ?? erro?.error ?? erro ?? "");
+  if (status === 402 || status === 429 || status === 413) return true;
+  return /insufficient credits|out of credits|quota|rate.?limit|usage limit|billing|payment required|cr[eé]ditos?|key limit|monthly limit|resource has been exhausted|context length|maximum context|context window|too many tokens|token limit|max(?:imum)?[_ ]tokens|prompt is too long|input is too long|exceeds the .{0,40}limit|payload too large|request too large/i.test(texto);
+}
+
 export function statusDoErro(erro) {
   const candidatos = [
     erro?.status,

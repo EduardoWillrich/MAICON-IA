@@ -35,6 +35,72 @@ export function extrairChamadasDoTexto(bruto) {
   return { texto: original.slice(0, inicio).trim(), chamadas };
 }
 
+const ABRE_PENSAMENTO = "<thought>";
+const FECHA_PENSAMENTO = "</thought>";
+
+export function criarFiltroDePensamento(aoTexto, aoPensamento) {
+  let pendente = "";
+  let dentro = false;
+  const soltar = (texto, destino) => {
+    if (texto) destino?.(texto);
+  };
+  return {
+    receber(pedaco) {
+      if (!pedaco) return;
+      pendente += pedaco;
+      let visivel = "";
+      while (pendente) {
+        if (dentro) {
+          const fim = pendente.toLowerCase().indexOf(FECHA_PENSAMENTO);
+          if (fim < 0) {
+            const guarda = FECHA_PENSAMENTO.length - 1;
+            const seguro = Math.max(0, pendente.length - guarda);
+            soltar(pendente.slice(0, seguro), aoPensamento);
+            pendente = pendente.slice(seguro);
+            break;
+          }
+          soltar(pendente.slice(0, fim), aoPensamento);
+          pendente = pendente.slice(fim + FECHA_PENSAMENTO.length);
+          dentro = false;
+          continue;
+        }
+        const inicio = pendente.toLowerCase().indexOf(ABRE_PENSAMENTO);
+        if (inicio < 0) {
+          let seguro = pendente.length;
+          const cauda = ABRE_PENSAMENTO.length - 1;
+          for (let i = Math.max(0, pendente.length - cauda); i < pendente.length; i += 1) {
+            if (ABRE_PENSAMENTO.startsWith(pendente.slice(i).toLowerCase())) {
+              seguro = i;
+              break;
+            }
+          }
+          visivel += pendente.slice(0, seguro);
+          pendente = pendente.slice(seguro);
+          break;
+        }
+        visivel += pendente.slice(0, inicio);
+        pendente = pendente.slice(inicio + ABRE_PENSAMENTO.length);
+        dentro = true;
+      }
+      soltar(visivel, aoTexto);
+    },
+    finalizar() {
+      if (dentro) soltar(pendente, aoPensamento);
+      else soltar(pendente, aoTexto);
+      pendente = "";
+      dentro = false;
+    },
+  };
+}
+
+export function textoSemPensamento(bruto) {
+  let visivel = "";
+  const filtro = criarFiltroDePensamento((texto) => { visivel += texto; });
+  filtro.receber(String(bruto ?? ""));
+  filtro.finalizar();
+  return visivel.trim();
+}
+
 export function criarFiltroDeChamada(aoTexto) {
   let pendente = "";
   const soltarAntesDaMarca = () => {

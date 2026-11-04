@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  estouroDeTokens,
   executarFilaComFallback,
   filaDeChaves,
   podeTrocarChave,
@@ -14,7 +15,7 @@ test("a fila usa somente a chave do DeepSeek", () => {
   const fila = filaDeChaves(
     [
       { provedor: "gemini", chave: "teste-gemini" },
-      { provedor: "ollama", chave: "teste-ollama" },
+      { provedor: "outro", chave: "teste-outro" },
     ],
     ambienteCompleto,
   );
@@ -154,4 +155,17 @@ test("413 request too large permite fallback", () => {
   const erro = new Error("Request too large");
   erro.status = 413;
   assert.equal(podeTrocarChave(erro), true);
+});
+
+test("reconhece crédito, cota e janela estourada", () => {
+  assert.equal(estouroDeTokens(Object.assign(new Error("Insufficient credits"), { status: 402 })), true);
+  assert.equal(estouroDeTokens(Object.assign(new Error("Rate limit exceeded"), { status: 429 })), true);
+  assert.equal(estouroDeTokens(new Error("This model's maximum context length is 1048576 tokens.")), true);
+  assert.equal(estouroDeTokens(new Error("Os créditos da IA acabaram. Recarregue a chave do OpenRouter para continuar.")), true);
+});
+
+test("não trata falha comum como estouro de tokens", () => {
+  assert.equal(estouroDeTokens(Object.assign(new Error("Unauthorized"), { status: 401 })), false);
+  assert.equal(estouroDeTokens(Object.assign(new Error("OpenRouter indisponível"), { status: 503 })), false);
+  assert.equal(estouroDeTokens(new Error("modelo inexistente")), false);
 });

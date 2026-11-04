@@ -76,9 +76,10 @@ function useBackdrop(ref: RefObject<HTMLCanvasElement | null>) {
     const cur = { x: 0, y: 0, p: 0 };
     const ripples: { x: number; y: number; t0: number }[] = [];
 
-    let w = 0, h = 0, raf = 0, last = 0;
+    let w = 0, h = 0, raf = 0, last = 0, vivo = true;
     let tiles: { x: number; y: number; cx: number; cy: number; glow: number }[] = [];
     let sprite: HTMLCanvasElement;
+    const agora = () => performance.now() / 1000;
 
     const strokeTile = (c: CanvasRenderingContext2D, x: number, y: number, e: number) => {
       const k = 1 + 0.38 * e;
@@ -130,10 +131,11 @@ function useBackdrop(ref: RefObject<HTMLCanvasElement | null>) {
       { a: [0.3, 0.98], c1: [0.4, 0.7], c2: [0.7, 0.9], b: [0.96, 0.66] },
     ];
 
-    const frame = (ms: number) => {
-      const t = ms / 1000;
-      const dt = Math.min(0.05, last ? (ms - last) / 1000 : 0.016);
-      last = ms;
+    const frame = () => {
+      const t = agora();
+      const dt = Math.min(0.05, last ? t - last : 0.016);
+      last = t;
+      try {
 
       const g = ctx.createRadialGradient(w * 0.3, h * 0.4, 0, w * 0.3, h * 0.4, Math.max(w, h) * 0.85);
       g.addColorStop(0, "#0c0407");
@@ -170,14 +172,18 @@ function useBackdrop(ref: RefObject<HTMLCanvasElement | null>) {
 
       for (let i = ripples.length - 1; i >= 0; i--) {
         const age = t - ripples[i].t0;
+        if (age < 0) continue;
         if (age > RIPPLE_LIFE) { ripples.splice(i, 1); continue; }
         const rp = ripples[i];
         const fade = 1 - ease(age / RIPPLE_LIFE);
-        ctx.strokeStyle = `rgba(255,110,125,${(0.4 * fade).toFixed(3)})`;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(rp.x, rp.y, age * RIPPLE_SPEED, 0, Math.PI * 2);
-        ctx.stroke();
+        const raio = age * RIPPLE_SPEED;
+        if (raio > 0) {
+          ctx.strokeStyle = `rgba(255,110,125,${(0.4 * fade).toFixed(3)})`;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(rp.x, rp.y, raio, 0, Math.PI * 2);
+          ctx.stroke();
+        }
         if (age < 0.35) {
           const fl = 1 - age / 0.35;
           const fg = ctx.createRadialGradient(rp.x, rp.y, 0, rp.x, rp.y, 90);
@@ -197,7 +203,8 @@ function useBackdrop(ref: RefObject<HTMLCanvasElement | null>) {
           const u = Math.max(0, 1 - Math.hypot(tl.cx - cur.x, tl.cy - cur.y) / HOVER_R);
           target = Math.max(target, ease(u) * cur.p);
           for (const rp of ripples) {
-            const age = t - rp.t0;
+            const age = Math.max(0, t - rp.t0);
+            if (age > RIPPLE_LIFE) continue;
             const band = Math.max(0, 1 - Math.abs(Math.hypot(tl.cx - rp.x, tl.cy - rp.y) - age * RIPPLE_SPEED) / RIPPLE_BAND);
             target = Math.max(target, ease(band) * (1 - ease(age / RIPPLE_LIFE)));
           }
@@ -208,8 +215,9 @@ function useBackdrop(ref: RefObject<HTMLCanvasElement | null>) {
         if (tl.glow < 0.01) ctx.drawImage(sprite, tl.cx - hw, tl.cy - hh, hw * 2, hh * 2);
         else strokeTile(ctx, tl.x, tl.y, tl.glow);
       }
-
-      if (!reduce) raf = requestAnimationFrame(frame);
+      } finally {
+        if (vivo && !reduce) raf = requestAnimationFrame(frame);
+      }
     };
 
     resize();
@@ -226,7 +234,7 @@ function useBackdrop(ref: RefObject<HTMLCanvasElement | null>) {
     };
     const onDown = (e: PointerEvent) => {
       onMove(e);
-      ripples.push({ x: e.clientX, y: e.clientY, t0: performance.now() / 1000 });
+      ripples.push({ x: e.clientX, y: e.clientY, t0: agora() });
       if (ripples.length > 6) ripples.shift();
     };
     const onUp = (e: PointerEvent) => {
@@ -243,6 +251,7 @@ function useBackdrop(ref: RefObject<HTMLCanvasElement | null>) {
       window.addEventListener("blur", onLeave);
     }
     return () => {
+      vivo = false;
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", onResize);
       window.removeEventListener("pointermove", onMove);

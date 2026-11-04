@@ -1,9 +1,8 @@
-﻿import { useEffect, useId, useRef, useState } from "react";
+﻿import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import logoMaiconPng from "./assets/maicon-logo.png";
 import logoMaicon from "./assets/maicon-logo.svg";
-import logoDeepSeek from "./assets/deepseek.svg";
 import logoConline from "./assets/conline-logo.png";
 import type { LogPdf } from "./PdfHistorico";
 import {
@@ -14,7 +13,7 @@ import {
   type RelatorioChat,
   type SecaoRelatorio,
 } from "./pdfRelatorio";
-import { guardarReceita, linhasDaConsulta, receitaSalva, textoDaConsulta, type Receita } from "./receitasIa";
+import { calculosDaConsulta, guardarReceita, linhasDaConsulta, receitaSalva, textoDaConsulta, type Receita } from "./receitasIa";
 import { InicioPainel } from "./InicioPainel";
 import { AvaliacaoResposta } from "./AvaliacaoResposta";
 import { renovarTokenGmail } from "./tokenGmail";
@@ -55,6 +54,7 @@ function textoPercentual(uso: UsoTokens) {
 
 type ConsumoConversa = {
   id: string;
+  email?: string;
   titulo: string;
   total: number;
   entrada: number;
@@ -65,40 +65,166 @@ type ConsumoConversa = {
   parte: number;
 };
 
-function GraficoConsumo({ conversas }: { conversas: ConsumoConversa[] }) {
+function PreviaRelatorio({
+  previa,
+  podeAprovar,
+  onAprovar,
+}: {
+  previa: { sql: string; colunas: string[]; linhas: string[][] };
+  podeAprovar: boolean;
+  onAprovar: () => void;
+}) {
+  return (
+    <div className="chat-previa">
+      <div className="chat-previa-topo">
+        <strong>Antes de começarmos, confira se essas informações estão corretas.</strong>
+      </div>
+      <div className="chat-previa-campos">
+        {previa.colunas.map((coluna) => (
+          <span key={coluna}>{coluna}</span>
+        ))}
+      </div>
+      {previa.linhas.length ? (
+        <div className="chat-relatorio-tabela-wrap">
+          <table className="chat-relatorio-tabela">
+            <thead>
+              <tr>
+                {previa.colunas.map((coluna) => (
+                  <th key={coluna}>{coluna}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {previa.linhas.map((linha, indice) => (
+                <tr key={indice}>
+                  {linha.map((celula, coluna) => (
+                    <td key={coluna}>{celula}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p>Nenhuma linha nesta amostra.</p>
+      )}
+      {podeAprovar ? (
+        <div className="chat-previa-acoes">
+          <button type="button" onClick={onAprovar}>
+            Está certo, trazer o restante
+          </button>
+          <small>Se algo estiver errado, escreva o que precisa mudar.</small>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const IAS_CONSUMO = ["google", "openrouter"] as const;
+type IaConsumo = (typeof IAS_CONSUMO)[number];
+const ROTULO_CONSUMO: Record<IaConsumo, { nome: string; aba: string; texto: string }> = {
+  google: {
+    nome: "Gemma 4 31B",
+    aba: "Google",
+    texto: "Pedidos de hoje na chave do Google. O dia zera à meia-noite da Califórnia. Quando essa cota acaba, a mesma Gemma 4 31B segue pela OpenRouter.",
+  },
+  openrouter: {
+    nome: "Gemma 4 31B · OpenRouter",
+    aba: "OpenRouter",
+    texto: "Reserva usada quando o Google estoura o limite ou devolve erro. É o mesmo Gemma 4 31B.",
+  },
+};
+
+type SaldoIa = {
+  google: { pedidos: number; limite: number; restam: number; tokens: number };
+  openrouter: {
+    ativo: boolean;
+    usado: number | null;
+    teto: number | null;
+    restante: number | null;
+    pedidos: number;
+    limite: number | null;
+    restam: number | null;
+    tokens: number;
+  };
+};
+
+function dinheiro(valor: number) {
+  return valor.toLocaleString("pt-BR", { style: "currency", currency: "USD" });
+}
+
+function PainelSaldo({ saldo }: { saldo: SaldoIa | null }) {
+  const google = saldo?.google;
+  const reserva = saldo?.openrouter;
+  return (
+    <div className="chat-saldo">
+      <article>
+        <span>Google · usado</span>
+        <strong>{numeroTokens(google?.pedidos || 0)}</strong>
+        <small>
+          {google ? `restam ${numeroTokens(google.restam)} de ${numeroTokens(google.limite)}` : "carregando"}
+          {google?.tokens ? ` · ${numeroTokens(google.tokens)} tokens` : ""}
+        </small>
+      </article>
+      <article>
+        <span>OpenRouter · ainda temos</span>
+        <strong>{reserva?.restante == null ? "—" : dinheiro(reserva.restante)}</strong>
+        <small>
+          {reserva?.usado == null ? "sem chave" : `${dinheiro(reserva.usado)} usados`}
+          {reserva?.teto != null ? ` de ${dinheiro(reserva.teto)}` : ""}
+          {reserva?.limite != null ? ` · grátis ${numeroTokens(reserva.pedidos)} de ${numeroTokens(reserva.limite)}, restam ${numeroTokens(reserva.restam || 0)}` : ""}
+        </small>
+      </article>
+    </div>
+  );
+}
+
+function GraficoConsumo({ conversas, onAbrir }: { conversas: ConsumoConversa[]; onAbrir: (item: ConsumoConversa) => void }) {
   if (!conversas.length) {
     return <p className="chat-historico-vazio">Nenhuma consulta contabilizada ainda. Faça uma pergunta no chat para comparar.</p>;
   }
   const maior = Math.max(...conversas.map((item) => item.total), 1);
   return (
     <div className="chat-consumo-lista">
-      <div className="chat-consumo-legenda">
-        <span><i className="entrada" /> Entrada</span>
-        <span><i className="saida" /> Saída</span>
-        <span><i className="raciocinio" /> Raciocínio</span>
+      <div className="chat-consumo-lista-topo">
+        <div className="chat-consumo-legenda">
+          <span><i className="entrada" /> Entrada</span>
+          <span><i className="saida" /> Saída</span>
+          <span><i className="raciocinio" /> Raciocínio</span>
+        </div>
+        <small>{conversas.length} {conversas.length === 1 ? "conversa" : "conversas"}</small>
       </div>
-      <ol>
-        {conversas.map((item) => {
+      <ol className="chat-consumo-rolagem">
+        {conversas.map((item, indice) => {
           const largura = Math.max(6, Math.round((item.total / maior) * 100));
           return (
             <li key={item.id || item.titulo}>
-              <div className="chat-consumo-nome">
-                <strong>{item.titulo}</strong>
-                <small>
-                  {numeroTokens(item.chamadas)} {item.chamadas === 1 ? "consulta" : "consultas"} · janela {percentualDe(item.ocupacao)}
-                </small>
-              </div>
-              <div className="chat-consumo-trilho" title={`${numeroTokens(item.entrada)} entrada · ${numeroTokens(item.saida)} saída · ${numeroTokens(item.raciocinio)} raciocínio`}>
-                <div style={{ width: `${largura}%` }}>
-                  {item.entrada > 0 ? <i className="entrada" style={{ flex: item.entrada }} /> : null}
-                  {item.saida > 0 ? <i className="saida" style={{ flex: item.saida }} /> : null}
-                  {item.raciocinio > 0 ? <i className="raciocinio" style={{ flex: item.raciocinio }} /> : null}
+              <button
+                type="button"
+                className="chat-consumo-abrir"
+                disabled={!item.id}
+                title={item.id ? "Abrir esta conversa" : "Conversa sem vínculo"}
+                onClick={() => onAbrir(item)}
+              >
+                <span className="chat-consumo-posto">{indice + 1}</span>
+                <div className="chat-consumo-nome">
+                  <strong title={item.titulo}>{item.titulo}</strong>
+                  <small>
+                    {numeroTokens(item.chamadas)} {item.chamadas === 1 ? "consulta" : "consultas"} · janela {percentualDe(item.ocupacao)}
+                  </small>
                 </div>
-              </div>
-              <div className="chat-consumo-valor">
-                <b>{numeroTokens(item.total)}</b>
-                <em>{percentualDe(item.parte)}</em>
-              </div>
+                <div className="chat-consumo-trilho" title={`${numeroTokens(item.entrada)} entrada · ${numeroTokens(item.saida)} saída · ${numeroTokens(item.raciocinio)} raciocínio`}>
+                  <div style={{ width: `${largura}%` }}>
+                    {item.entrada > 0 ? <i className="entrada" style={{ flex: item.entrada }} /> : null}
+                    {item.saida > 0 ? <i className="saida" style={{ flex: item.saida }} /> : null}
+                    {item.raciocinio > 0 ? <i className="raciocinio" style={{ flex: item.raciocinio }} /> : null}
+                  </div>
+                </div>
+                <div className="chat-consumo-valor">
+                  <b>{numeroTokens(item.total)}</b>
+                  <em>{percentualDe(item.parte)}</em>
+                </div>
+              </button>
             </li>
           );
         })}
@@ -175,6 +301,7 @@ type Mensagem =
       log?: LogPdf;
       excel?: boolean;
       pedidoRelatorio?: boolean;
+      previa?: { sql: string; colunas: string[]; linhas: string[][] };
     }
   | { role: "tool"; tool_call_id: string; content: string };
 
@@ -186,10 +313,11 @@ const SUGESTOES_COMERCIAL: { titulo: string; descricao: string; pergunta: string
   { titulo: "Pendências", descricao: "Atividades pendentes deste ano do comercial e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do comercial deste ano e qual o motivo de cada uma?", icone: "busca" },
   { titulo: "Pendências do inside", descricao: "Atividades pendentes deste ano do inside e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do inside deste ano e qual o motivo de cada uma?", icone: "busca" },
   { titulo: "Resumo do processo", descricao: "Cliente, vendedor responsável e a situação atual.", pergunta: "Faça o resumo do processo {processo}.", icone: "resumo" },
-  { titulo: "Buscar cliente", descricao: "Ficha do cliente: vendedor, sem proposta, último processo e comissão do mês.", pergunta: "Se eu informar uma referência de processo, busque os processos. Se eu informar o nome do cliente, monte a ficha: processos abertos, vendedor, quantos estão sem proposta, o último processo e a comissão deste mês. Se eu não disse nem o nome nem a referência, pergunte qual cliente.", icone: "busca" },
+  { titulo: "Buscar cliente", descricao: "Ficha do cliente: vendedor, sem proposta, último processo, comissão e se paga em dia.", pergunta: "Se eu informar uma referência de processo, busque os processos. Se eu informar o nome do cliente, monte a ficha: processos abertos, vendedor, quantos estão sem proposta, o último processo, a comissão deste mês, se ele é ouro, prata ou bronze e se paga em dia. Se eu não disse nem o nome nem a referência, pergunte qual cliente.", icone: "busca" },
   { titulo: "Proposta", descricao: "Oferta comercial e as datas da proposta.", pergunta: "Qual a proposta e a oferta do processo {processo}?", icone: "busca" },
   { titulo: "Comissão do mês", descricao: "Comissões já calculadas neste mês.", pergunta: "Qual a comissão neste mês?", icone: "check" },
-  { titulo: "Processos do cliente", descricao: "Ficha com os processos abertos, o vendedor e a comissão do mês.", pergunta: "Monte a ficha do cliente com os processos abertos. Se eu não disse o nome, pergunte qual cliente. Inclua vendedor, quantos estão sem proposta, o último processo e a comissão deste mês.", icone: "resumo" },
+  { titulo: "Processos do cliente", descricao: "Ficha com os processos abertos, o vendedor, a comissão e o relacionamento.", pergunta: "Monte a ficha do cliente com os processos abertos. Se eu não disse o nome, pergunte qual cliente. Inclua vendedor, quantos estão sem proposta, o último processo, a comissão deste mês, se ele é ouro, prata ou bronze e se paga em dia.", icone: "resumo" },
+  { titulo: "Ouro, prata e bronze", descricao: "Relacionamento desses clientes, em cartões coloridos.", pergunta: "Qual o relacionamento dos clientes ouro, prata e bronze?", icone: "resumo" },
   { titulo: "Minhas pendências", descricao: "O que está atrasado e o que vence nos próximos 7 dias.", pergunta: "Quais são minhas pendências atrasadas e as dos próximos 7 dias?", icone: "check" },
 ];
 
@@ -247,6 +375,8 @@ const SUGESTOES_SETOR: Record<string, { titulo: string; descricao: string; pergu
     { titulo: "Taxas do processo", descricao: "Pagamento e recebimento de cada taxa.", pergunta: "Quais as taxas do processo {processo}, com pagamento e recebimento?", icone: "busca" },
     { titulo: "Prazos", descricao: "Embarque, desembarque e entrega que vencem nos próximos 7 dias.", pergunta: "Quais prazos de embarque, desembarque e entrega vencem nos próximos 7 dias?", icone: "check" },
     { titulo: "Relatório de taxas", descricao: "Taxas do mês com nome, pagamento e recebimento.", pergunta: "Pedir relatório das taxas deste mês, com nome, pagamento e recebimento.", icone: "relatorio" },
+    { titulo: "Relacionamento", descricao: "Se o cliente é ouro, prata ou bronze e se paga em dia.", pergunta: "Monte a ficha do cliente. Se eu não disse o nome, pergunte qual. Diga se ele é ouro, prata ou bronze e se paga em dia.", icone: "resumo" },
+    { titulo: "Ouro, prata e bronze", descricao: "Relacionamento desses clientes, em cartões coloridos.", pergunta: "Qual o relacionamento dos clientes ouro, prata e bronze?", icone: "resumo" },
   ],
   ti: [
     { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "resumo" },
@@ -473,6 +603,14 @@ function textoVisivel(content: string) {
 }
 
 function Icone({ nome, tamanho = 18 }: { nome: keyof typeof ICONES; tamanho?: number }) {
+  if (nome === "novo") {
+    return (
+      <svg viewBox="0 0 24 24" width={tamanho} height={tamanho} aria-hidden fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M7 5.2h9.4A2.6 2.6 0 0 1 19 7.8v5.6a2.6 2.6 0 0 1-2.6 2.6H10l-3.8 3v-3H7A2.6 2.6 0 0 1 4.4 13.4V7.8A2.6 2.6 0 0 1 7 5.2z" />
+        <path d="M11.7 8.2v4.6M9.4 10.5h4.6" />
+      </svg>
+    );
+  }
   return (
     <svg viewBox="0 0 24 24" width={tamanho} height={tamanho} aria-hidden>
       <path fill="currentColor" d={ICONES[nome]} />
@@ -488,6 +626,7 @@ const ROTULO_FERRAMENTA: Record<string, string> = {
   explicar_campo_livre: "Lendo o campo livre",
   painel_ti: "Montando o painel do TI",
   painel_financeiro: "Montando o painel financeiro",
+  relacionamento_clientes: "Montando o relacionamento",
   taxas_processo: "Lendo as taxas do processo",
   log_recente: "Lendo o log recente",
   monitoramentos_alterados: "Lendo monitoramentos alterados",
@@ -714,6 +853,27 @@ function perguntaComProcesso(pergunta: string, anteriores: Mensagem[]): string {
   return pergunta;
 }
 
+function etapaDaRodada(historico: Mensagem[], relatorio: boolean, sqlAprovado: string) {
+  const rodada = trechoDaPergunta(historico);
+  let nome = "";
+  let conteudo = "";
+  for (let i = rodada.length - 1; i >= 0; i--) {
+    const item = rodada[i];
+    if (item.role !== "tool") continue;
+    conteudo = item.content;
+    const chamada = rodada.find(
+      (mensagem) => mensagem.role === "assistant" && mensagem.tool_calls?.some((chamada) => chamada.id === item.tool_call_id),
+    );
+    nome = chamada?.role === "assistant" ? chamada.tool_calls?.find((chamada) => chamada.id === item.tool_call_id)?.function.name ?? "" : "";
+    break;
+  }
+  const sqlOk = nome === "executar_sql" && Boolean(conteudo) && !conteudo.startsWith("Erro:");
+  if (sqlAprovado) return sqlOk ? "resposta" : "relatorio";
+  if (relatorio) return "previa";
+  if (sqlOk) return "resposta";
+  return "consulta";
+}
+
 function trechoDaPergunta(historico: Mensagem[]): Mensagem[] {
   let inicio = 0;
   for (let i = historico.length - 1; i >= 0; i--) {
@@ -896,6 +1056,7 @@ const FERRAMENTAS_PRONTAS = new Set([
   "fila_setor",
   "painel_ti",
   "painel_financeiro",
+  "relacionamento_clientes",
   "taxas_processo",
   "log_recente",
   "monitoramentos_alterados",
@@ -1162,13 +1323,16 @@ function numeroSolto(texto: string): string {
   return numero;
 }
 
+function assuntoDaPergunta(pergunta: string, anteriores: Mensagem[]): string {
+  const aberto = numeroSolto(pergunta) ? perguntaAberta(anteriores) : "";
+  return `${aberto}\n${textoVisivel(pergunta)}`.trim();
+}
+
 function segueLog(pergunta: string, anteriores: Mensagem[]): boolean {
   if (pedeLog(textoVisivel(pergunta))) return true;
   if (!numeroSolto(pergunta)) return false;
   const assunto = perguntaAberta(anteriores);
-  const pediu = Boolean(assunto && (pedeLog(assunto) || pedidoSemProcesso(assunto)));
-  const ultima = [...anteriores].reverse().find((item) => item.role === "assistant" && item.content.trim());
-  return pediu || /qual processo/i.test(ultima?.content ?? "");
+  return Boolean(assunto && pedeLog(assunto));
 }
 
 function pedidoInterno(texto: string) {
@@ -1235,6 +1399,19 @@ function restringirAoProcesso(log: LogPdf, pedido: string): LogPdf {
     return !proc || processos.includes(proc);
   });
   return eventos.length === log.eventos.length ? log : { ...log, eventos };
+}
+
+function perguntaDeConjunto(pergunta: string) {
+  if (processoCitado(pergunta)) return false;
+  return /\b(?:m[eê]s|totais|todos|todas|lista|processos|lucros)\b/i.test(pergunta);
+}
+
+function sqlAprovadoInteiro(sql: string): string {
+  return sql
+    .trim()
+    .replace(/;\s*$/, "")
+    .replace(/\bselect\s+distinct\s+top\s+\d+\s+/i, "SELECT DISTINCT ")
+    .replace(/\bselect\s+top\s+\d+\s+/i, "SELECT ");
 }
 
 function sqlSemRepetir(sql: string): string {
@@ -1309,6 +1486,7 @@ function textoConsulta(chamada: ChamadaFerramenta | undefined, resultado: string
       "log_recente",
       "monitoramentos_alterados",
       "painel_financeiro",
+      "relacionamento_clientes",
       "taxas_processo",
       "andamento_atividade",
     ].includes(nome)
@@ -1327,11 +1505,25 @@ function textoConsulta(chamada: ChamadaFerramenta | undefined, resultado: string
   return null;
 }
 
+function indiceDaPergunta(lista: Mensagem[], titulo: string) {
+  const blocos = blocosDaConversa(lista);
+  const chave = titulo.trim().toLowerCase();
+  if (chave && chave !== "consultas anteriores") {
+    const achou = blocos.findIndex(
+      (bloco) => bloco.mensagem.role === "user" && bloco.mensagem.content.trim().toLowerCase().startsWith(chave.slice(0, 48)),
+    );
+    if (achou >= 0) return achou;
+  }
+  return blocos.findIndex((bloco) => bloco.mensagem.role === "user");
+}
+
 function blocosDaConversa(mensagens: Mensagem[]) {
   const chamadas = new Map<string, ChamadaFerramenta>();
-  const blocos: { mensagem: Exclude<Mensagem, { role: "tool" }>; consultas: string[]; linhas: Record<string, unknown>[] }[] = [];
+  const blocos: { mensagem: Exclude<Mensagem, { role: "tool" }>; consultas: string[]; linhas: Record<string, unknown>[]; calculos: string; encartes: string[] }[] = [];
   let pendentes: string[] = [];
   let linhasPendentes: Record<string, unknown>[] = [];
+  let calculosPendentes = "";
+  let encartesPendentes: string[] = [];
   for (const mensagem of mensagens) {
     if (mensagem.role === "assistant") {
       for (const chamada of mensagem.tool_calls ?? []) chamadas.set(chamada.id, chamada);
@@ -1340,7 +1532,14 @@ function blocosDaConversa(mensagens: Mensagem[]) {
       const texto = textoConsulta(chamadas.get(mensagem.tool_call_id), mensagem.content);
       if (texto && !pendentes.includes(texto)) pendentes.push(texto);
       const linhas = linhasDaConsulta(mensagem.content);
-      if (linhas.length > linhasPendentes.length) linhasPendentes = linhas;
+      const calculos = calculosDaConsulta(mensagem.content);
+      if (linhas.length > linhasPendentes.length) {
+        linhasPendentes = linhas;
+        if (calculos) calculosPendentes = calculos;
+      } else if (!calculosPendentes && calculos) calculosPendentes = calculos;
+      for (const bloco of encartesDoConteudo(mensagem.content)) {
+        if (!encartesPendentes.includes(bloco)) encartesPendentes.push(bloco);
+      }
       continue;
     }
     if (!mensagem.content.trim()) continue;
@@ -1350,10 +1549,14 @@ function blocosDaConversa(mensagens: Mensagem[]) {
       mensagem,
       consultas: mensagem.role === "assistant" && ultima ? [ultima] : [],
       linhas: mensagem.role === "assistant" ? linhasPendentes : [],
+      calculos: mensagem.role === "assistant" ? calculosPendentes : "",
+      encartes: mensagem.role === "assistant" ? encartesPendentes : [],
     });
     if (mensagem.role === "assistant") {
       pendentes = [];
       linhasPendentes = [];
+      calculosPendentes = "";
+      encartesPendentes = [];
     }
   }
   return blocos;
@@ -1383,6 +1586,10 @@ function receitasDaConversa(historico: Mensagem[]): Receita[] {
         args = JSON.parse(chamada.function.arguments || "{}");
       } catch {
         args = {};
+      }
+      if (args.previa) {
+        delete args.previa;
+        if (typeof args.sql === "string") args.sql = sqlAprovadoInteiro(args.sql);
       }
       lista.push({ nome: chamada.function.name, args });
     }
@@ -1736,6 +1943,7 @@ function textoParaBusca(texto: string) {
   const semBloco = texto.replace(/```([a-z]*)\s*\n?([\s\S]*?)```/gi, (_todo, tipo: string, corpo: string) => {
     const nome = tipo.toLowerCase();
     if (nome === "rota") return textoDaRota(corpo) || corpo.replace(/[{}[\]"]/g, " ");
+    if (nome === "encarte") return textoDoEncarte(corpo);
     if (nome === "grafico") return corpo.replace(/\|/g, " ");
     const frases: string[] = [];
     try {
@@ -1746,6 +1954,86 @@ function textoParaBusca(texto: string) {
     return frases.join(" · ");
   });
   return semBloco.replace(/[#>*_`]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function textoDoEncarte(bruto: string) {
+  try {
+    const dados = JSON.parse(bruto) as { nome?: string; classificacao?: string; detalhe?: string };
+    return [dados.nome, dados.classificacao, dados.detalhe].map((item) => String(item ?? "").trim()).filter(Boolean).join(" · ");
+  } catch {
+    return "";
+  }
+}
+
+function EncarteCard({ bruto }: { bruto: string }) {
+  let dados: { nome?: string; nivel?: string; classificacao?: string; pagamento?: string; detalhe?: string } | null = null;
+  try {
+    dados = JSON.parse(bruto);
+  } catch {
+    return null;
+  }
+  if (!dados || typeof dados !== "object") return null;
+  const nivel = ["ouro", "prata", "bronze"].includes(String(dados.nivel)) ? String(dados.nivel) : "";
+  const pagamento = dados.pagamento === "atraso" || dados.pagamento === "em-dia" ? dados.pagamento : "";
+  const selo = nivel ? `Cliente ${nivel}` : dados.classificacao || "Sem classificação";
+  return (
+    <article className={`chat-encarte encarte${nivel ? ` nivel-${nivel}` : ""}`}>
+      <header>
+        <em>{selo}</em>
+        <small className={pagamento}>{dados.detalhe || "Sem faturas recentes"}</small>
+      </header>
+      <strong>{dados.nome || "Cliente"}</strong>
+    </article>
+  );
+}
+
+function FichaCorpo({ texto }: { texto: string }) {
+  const campos: { rotulo: string; valor: string }[] = [];
+  const processos: string[] = [];
+  let nota = "";
+  let naLista = false;
+  for (const bruta of texto.split("\n")) {
+    const linha = bruta.replace(/\*\*/g, "").trim();
+    if (!linha) continue;
+    if (/^ficha de\b/i.test(linha) || /^relacionamento:/i.test(linha)) continue;
+    if (/^processos abertos$/i.test(linha)) {
+      naLista = true;
+      continue;
+    }
+    if (/^e mais\b/i.test(linha)) {
+      nota = linha;
+      continue;
+    }
+    if (naLista || /^-\s+/.test(linha)) {
+      processos.push(linha.replace(/^-\s+/, ""));
+      continue;
+    }
+    const par = linha.match(/^([^:]{2,40}):\s*(.+)$/);
+    if (par) campos.push({ rotulo: par[1], valor: par[2] });
+  }
+  if (!campos.length && !processos.length) return <Fragmento texto={texto} />;
+  return (
+    <div className="chat-ficha-corpo">
+      {campos.length ? (
+        <dl>
+          {campos.map((campo) => (
+            <div key={campo.rotulo}>
+              <dt>{campo.rotulo}</dt>
+              <dd>{campo.valor}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      {processos.length ? (
+        <ul className="chat-ficha-processos">
+          {processos.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : null}
+      {nota ? <p>{nota}</p> : null}
+    </div>
+  );
 }
 
 function RotaCard({ bruto, completo = false }: { bruto: string; completo?: boolean }) {
@@ -2385,7 +2673,7 @@ function normalizarCartoes(texto: string) {
       const tipo = linguagem.toLowerCase();
       const conteudo = corpo.trim();
       if (!conteudo) return "";
-      if (/^(grafico|email|rota|dia)$/.test(tipo)) return bloco;
+      if (/^(grafico|email|rota|dia|encarte)$/.test(tipo)) return bloco;
       if (!/^(log|painel|json)$/.test(tipo) && !/^[{[]/.test(conteudo)) return bloco;
       try {
         const dados = JSON.parse(conteudo) as { banco?: unknown; itens?: unknown };
@@ -2417,7 +2705,7 @@ function semBlocoAberto(texto: string) {
       return antes ? `${antes}\n\n${bloco}` : bloco;
     }
   }
-  if (tipo === "grafico" || tipo === "email" || tipo === "rota" || tipo === "dia") {
+  if (tipo === "grafico" || tipo === "email" || tipo === "rota" || tipo === "dia" || tipo === "encarte") {
     const fechado = `${resto.trimEnd()}\n\`\`\``;
     return antes ? `${antes}\n${fechado}` : fechado;
   }
@@ -2439,9 +2727,89 @@ function cartaoDaFerramenta(conteudo: string): string | null {
   return null;
 }
 
+function nivelDoTitulo(linha: string) {
+  const limpo = linha.replace(/\*\*/g, "").trim().toLowerCase();
+  if (limpo === "ouro" || limpo === "prata" || limpo === "bronze") return limpo;
+  return "";
+}
+
+function agruparRelacionamento(partes: { tipo: string; texto: string }[]) {
+  const encartes = partes.filter((parte) => parte.tipo === "encarte");
+  const md = partes.filter((parte) => parte.tipo === "md").map((parte) => parte.texto).join("\n");
+  if (encartes.length < 2 || partes.some((parte) => parte.tipo !== "md" && parte.tipo !== "encarte") || !/\b(ouro|prata|bronze)\b/i.test(md)) {
+    return null;
+  }
+  const intro: string[] = [];
+  const grupos: { nivel: string; titulo: string; cartoes: string[]; nota: string }[] = [];
+  let atual: (typeof grupos)[number] | null = null;
+  const abrir = (nivel: string) => {
+    if (atual) grupos.push(atual);
+    const titulo = nivel ? nivel.charAt(0).toUpperCase() + nivel.slice(1) : "Clientes";
+    atual = { nivel, titulo, cartoes: [], nota: "" };
+  };
+  const tratar = (linha: string) => {
+    const nivel = nivelDoTitulo(linha);
+    if (nivel) {
+      abrir(nivel);
+      return;
+    }
+    const texto = linha.replace(/\*\*/g, "").trim();
+    if (!texto) return;
+    if (/^e mais\b|^nenhum cliente\b/i.test(texto)) {
+      if (atual) atual.nota = atual.nota ? `${atual.nota} ${texto}` : texto;
+      return;
+    }
+    if (!atual) intro.push(texto);
+  };
+  for (const parte of partes) {
+    if (parte.tipo === "encarte") {
+      if (!atual) {
+        let nivel = "";
+        try {
+          nivel = String(JSON.parse(parte.texto)?.nivel ?? "");
+        } catch {
+          nivel = "";
+        }
+        abrir(nivel);
+      }
+      atual?.cartoes.push(parte.texto);
+      continue;
+    }
+    parte.texto.split("\n").forEach(tratar);
+  }
+  if (atual) grupos.push(atual);
+  return grupos.length ? { intro: intro.join(" "), grupos } : null;
+}
+
+function RelacionamentoGrupos({ intro, grupos }: { intro: string; grupos: { nivel: string; titulo: string; cartoes: string[]; nota: string }[] }) {
+  return (
+    <section className="chat-relacionamento">
+      {intro ? <h2>{intro}</h2> : null}
+      {grupos.map((grupo) => (
+        <section key={grupo.titulo} className={`chat-relacao${grupo.nivel ? ` nivel-${grupo.nivel}` : ""}`}>
+          <header>
+            <em>{grupo.titulo}</em>
+            <span>
+              {grupo.cartoes.length} {grupo.cartoes.length === 1 ? "cliente" : "clientes"}
+            </span>
+          </header>
+          {grupo.cartoes.length ? (
+            <div className="chat-encartes">
+              {grupo.cartoes.map((bruto, indice) => (
+                <EncarteCard key={`${grupo.titulo}-${indice}`} bruto={bruto} />
+              ))}
+            </div>
+          ) : null}
+          {grupo.nota ? <p>{grupo.nota}</p> : null}
+        </section>
+      ))}
+    </section>
+  );
+}
+
 function Markdown({ texto: bruto, ocultarSql = false, textoCorrido = false }: { texto: string; ocultarSql?: boolean; textoCorrido?: boolean }) {
   let texto = bruto;
-  const partes: { tipo: "md" | "grafico" | "email" | "rota"; texto: string }[] = [];
+  const partes: { tipo: "md" | "grafico" | "email" | "rota" | "encarte"; texto: string }[] = [];
   const normal = normalizarCartoes(texto);
   if (textoCorrido) {
     return normal ? <TextoResposta texto={ocultarSql ? semSql(normal) : normal} /> : null;
@@ -2454,7 +2822,7 @@ function Markdown({ texto: bruto, ocultarSql = false, textoCorrido = false }: { 
   if (log?.itens.length) return <LogCard log={log} />;
   if (!normal) return null;
   texto = normal;
-  const regra = /```(grafico|email|rota)\s*\n([\s\S]*?)```/gi;
+  const regra = /```(grafico|email|rota|encarte)\s*\n([\s\S]*?)```/gi;
   let cursor = 0;
   for (const achado of texto.matchAll(regra)) {
     const inicio = achado.index ?? 0;
@@ -2462,7 +2830,8 @@ function Markdown({ texto: bruto, ocultarSql = false, textoCorrido = false }: { 
       const md = abrirLista(moedasDoChat(setasDoChat(ocultarSql ? semSql(texto.slice(cursor, inicio)) : texto.slice(cursor, inicio))));
       if (md.trim()) partes.push({ tipo: "md", texto: md });
     }
-    const tipo = achado[1] === "email" ? "email" : achado[1] === "rota" ? "rota" : "grafico";
+    const nome = achado[1].toLowerCase();
+    const tipo = nome === "email" ? "email" : nome === "rota" ? "rota" : nome === "encarte" ? "encarte" : "grafico";
     partes.push({ tipo, texto: achado[2] });
     cursor = inicio + achado[0].length;
   }
@@ -2470,58 +2839,150 @@ function Markdown({ texto: bruto, ocultarSql = false, textoCorrido = false }: { 
     const md = abrirLista(moedasDoChat(setasDoChat(ocultarSql ? semSql(texto.slice(cursor)) : texto.slice(cursor))));
     if (md.trim()) partes.push({ tipo: "md", texto: md });
   }
-  return (
-    <>
-      {partes.map((parte, indice) =>
-        parte.tipo === "grafico" ? (
-          <Grafico key={indice} texto={parte.texto} />
-        ) : parte.tipo === "email" ? (
-          <EmailCard key={indice} bruto={parte.texto} />
-        ) : parte.tipo === "rota" ? (
-          <RotaCard key={indice} bruto={parte.texto} />
-        ) : (
-          <Fragmento key={indice} texto={parte.texto} />
-        ),
-      )}
-    </>
-  );
+  const encartes = partes.filter((parte) => parte.tipo === "encarte");
+  const textoFicha = partes
+    .filter((parte) => parte.tipo === "md")
+    .map((parte) => parte.texto)
+    .join("\n\n");
+  const fichaUnica = encartes.length === 1 && partes.every((parte) => parte.tipo === "encarte" || parte.tipo === "md") && /\bficha de\b|\bvendedor:/i.test(textoFicha);
+  if (fichaUnica) {
+    return (
+      <section className="chat-ficha">
+        <EncarteCard bruto={encartes[0].texto} />
+        <FichaCorpo texto={textoFicha} />
+      </section>
+    );
+  }
+  const relacao = agruparRelacionamento(partes);
+  if (relacao) return <RelacionamentoGrupos intro={relacao.intro} grupos={relacao.grupos} />;
+  const desenhar = (parte: (typeof partes)[number], indice: number) =>
+    parte.tipo === "grafico" ? (
+      <Grafico key={indice} texto={parte.texto} />
+    ) : parte.tipo === "email" ? (
+      <EmailCard key={indice} bruto={parte.texto} />
+    ) : parte.tipo === "rota" ? (
+      <RotaCard key={indice} bruto={parte.texto} />
+    ) : parte.tipo === "encarte" ? (
+      <EncarteCard key={indice} bruto={parte.texto} />
+    ) : (
+      <Fragmento key={indice} texto={parte.texto} />
+    );
+  const saida: ReactNode[] = [];
+  let fila: { parte: (typeof partes)[number]; indice: number }[] = [];
+  const soltarEncartes = () => {
+    if (!fila.length) return;
+    if (fila.length > 1) {
+      saida.push(
+        <div className="chat-encartes" key={`encartes-${fila[0].indice}`}>
+          {fila.map((item) => desenhar(item.parte, item.indice))}
+        </div>,
+      );
+    } else {
+      saida.push(desenhar(fila[0].parte, fila[0].indice));
+    }
+    fila = [];
+  };
+  partes.forEach((parte, indice) => {
+    if (parte.tipo === "encarte") {
+      fila.push({ parte, indice });
+      return;
+    }
+    soltarEncartes();
+    saida.push(desenhar(parte, indice));
+  });
+  soltarEncartes();
+  return <>{saida}</>;
+}
+
+function extrairEncartes(texto: string) {
+  return [...texto.matchAll(/```encarte\s*\n[\s\S]*?```/gi)].map((achado) => achado[0]);
+}
+
+function encartesDoConteudo(conteudo: string) {
+  return extrairEncartes(textoDaConsulta(conteudo) || "");
+}
+
+function nomeDoEncarte(bloco: string) {
+  const corpo = bloco.match(/```encarte\s*\n([\s\S]*?)```/i)?.[1] ?? "";
+  try {
+    const dados = JSON.parse(corpo) as { nome?: string };
+    return String(dados.nome ?? "").trim().toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function garantirEncartes(texto: string, encartes: string[] = []) {
+  if (!encartes.length) return texto;
+  const presentes = new Set(extrairEncartes(texto).map(nomeDoEncarte).filter(Boolean));
+  const faltam = encartes.filter((bloco) => {
+    const nome = nomeDoEncarte(bloco);
+    return nome ? !presentes.has(nome) : !texto.includes(bloco);
+  });
+  if (!faltam.length) return texto;
+  return [...faltam, texto.trim()].filter(Boolean).join("\n\n");
 }
 
 function textoSemListaGrande(texto: string): string {
-  const corte = texto.search(/\nMostrei \d+ de \d+/);
-  if (corte >= 0) return texto.slice(corte).replace(/^Mostrei \d+ de \d+[^\n]*\n?/, "").trim();
-  if ((texto.match(/\b[A-Za-z]{1,4}\d{2,6}-\d{2}\b/g) ?? []).length > 12) return "";
-  return texto;
+  const encartes = extrairEncartes(texto);
+  const corpo = texto.replace(/```encarte\s*\n[\s\S]*?```/gi, "").trim();
+  if (/\bficha de\b/i.test(corpo)) {
+    const resumo = corpo
+      .replace(/\nProcessos abertos\n(?:[ \t]*- .*(?:\n|$))+/i, "\n")
+      .replace(/\nMostrei \d+ de \d+[^\n]*/g, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    return [encartes.join("\n\n"), resumo].filter(Boolean).join("\n\n");
+  }
+  const corte = corpo.search(/\nMostrei \d+ de \d+/);
+  if (corte >= 0) {
+    const resto = corpo.slice(corte).replace(/^\n?Mostrei \d+ de \d+[^\n]*\n?/, "").trim();
+    return [encartes.join("\n\n"), resto].filter(Boolean).join("\n\n");
+  }
+  if ((corpo.match(/\b[A-Za-z]{1,4}\d{2,6}-\d{2}\b/g) ?? []).length > 12) return encartes.join("\n\n");
+  return [encartes.join("\n\n"), corpo].filter(Boolean).join("\n\n");
 }
 
-function ListaConsulta({ linhas }: { linhas: Record<string, unknown>[] }) {
+function linhasDoCalculo(calculos: string) {
+  return calculos
+    .split("\n")
+    .map((linha) => linha.trim())
+    .filter((linha) => linha.startsWith("- "))
+    .map((linha) => linha.replace(/^- /, ""));
+}
+
+function ListaConsulta({ linhas, calculos = "" }: { linhas: Record<string, unknown>[]; calculos?: string }) {
   const [todos, setTodos] = useState(false);
   const colunas = Object.keys(linhas[0] ?? {}).filter((coluna) => !/^id/i.test(coluna)).slice(0, 6);
-  const data = colunas.find((coluna) => /data|abertura|quando/i.test(coluna)) ?? "";
-  const ordenadas = data
-    ? [...linhas].sort((a, b) => String(b[data] ?? "").localeCompare(String(a[data] ?? "")))
-    : [...linhas].reverse();
   const recentes = 12;
-  const visiveis = todos ? ordenadas : ordenadas.slice(0, recentes);
+  const visiveis = todos ? linhas : linhas.slice(0, recentes);
+  const totais = linhasDoCalculo(calculos);
   return (
     <div className="chat-lista-consulta">
       <div className="chat-relatorio-topo">
         <div>
           <span>Lista</span>
-          <strong>{todos ? "Todos os registros" : "Os mais recentes"}</strong>
+          <strong>{todos ? "Todos os registros" : "Na ordem da consulta"}</strong>
           <small>
-            {ordenadas.length} {ordenadas.length === 1 ? "registro" : "registros"}
-            {todos || ordenadas.length <= recentes ? "" : ` · mostrando ${visiveis.length}`}
+            {linhas.length} {linhas.length === 1 ? "registro" : "registros"}
+            {todos || linhas.length <= recentes ? "" : ` · mostrando ${visiveis.length}`}
           </small>
         </div>
-        {ordenadas.length > recentes ? (
+        {linhas.length > recentes ? (
           <div className="chat-relatorio-acoes">
             <button type="button" className="chat-ver-consulta" onClick={() => setTodos((atual) => !atual)}>
-              {todos ? "Mostrar só os últimos" : `Ver todos (${ordenadas.length})`}
+              {todos ? "Mostrar os primeiros" : `Ver todos (${linhas.length})`}
             </button>
           </div>
         ) : null}
       </div>
+      {totais.length ? (
+        <ul className="chat-lista-totais">
+          {totais.map((item, indice) => (
+            <li key={`${indice}-${item}`}>{item}</li>
+          ))}
+        </ul>
+      ) : null}
       <div className="chat-relatorio-tabela-wrap">
         <table className="chat-relatorio-tabela">
           <thead>
@@ -3049,9 +3510,11 @@ export function ChatIa({
   const [temaClaro, setTemaClaro] = useState(() => document.documentElement.classList.contains("tema-claro"));
   const [erro, setErro] = useState("");
   const fimRef = useRef<HTMLDivElement>(null);
+  const focoMensagemRef = useRef<number | null>(null);
   const abortarRef = useRef<AbortController | null>(null);
   const canceladoRef = useRef(false);
   const modoRelatorioRef = useRef(false);
+  const consultaTotalRef = useRef("");
   const apresentacaoRef = useRef(false);
   const entradaRef = useRef<HTMLTextAreaElement>(null);
   const [memoriaAberta, setMemoriaAberta] = useState(false);
@@ -3068,6 +3531,8 @@ export function ChatIa({
     conversas: ConsumoConversa[];
   } | null>(null);
   const [abaConfig, setAbaConfig] = useState<"contas" | "sqlite" | "consumo">("contas");
+  const [iaConsumo, setIaConsumo] = useState<IaConsumo>("google");
+  const [saldoIa, setSaldoIa] = useState<SaldoIa | null>(null);
   const [bancosSqlite, setBancosSqlite] = useState<{ arquivo: string; tabelas: { nome: string; total: number }[] }[]>([]);
   const [arquivoSqlite, setArquivoSqlite] = useState("");
   const [tabelaSqlite, setTabelaSqlite] = useState("");
@@ -3083,6 +3548,7 @@ export function ChatIa({
   const [carregandoSqlite, setCarregandoSqlite] = useState(false);
   const [inicioAberto, setInicioAberto] = useState(true);
   const [abaAbertura, setAbaAbertura] = useState<"consultas" | "relatorios">("consultas");
+  const [consultasAbertas, setConsultasAbertas] = useState(false);
   const [lateralRecolhida, setLateralRecolhida] = useState(() => sessionStorage.getItem("maicon-lateral") === "1");
   const [visoesAbertas, setVisoesAbertas] = useState(false);
   const [telaLateral, setTelaLateral] = useState<"menu" | "conversas">("menu");
@@ -3124,6 +3590,8 @@ export function ChatIa({
   const buscaRef = useRef<HTMLInputElement>(null);
   const buscaCaixaRef = useRef<HTMLDivElement>(null);
   const [conversaId, setConversaId] = useState<string | null>(null);
+  const [conversaDe, setConversaDe] = useState("");
+  const conversaDeRef = useRef("");
   const conversaIdRef = useRef<string | null>(null);
   const [preferencias, setPreferencias] = useState<Preferencia[]>([]);
   const [glossario, setGlossario] = useState<{ termo: string; significado: string }[]>([]);
@@ -3229,6 +3697,15 @@ export function ChatIa({
   }, [texto]);
 
   useEffect(() => {
+    const foco = focoMensagemRef.current;
+    if (foco !== null) {
+      focoMensagemRef.current = null;
+      setBuscaAlvo(foco);
+      window.setTimeout(() => {
+        document.getElementById(`chat-msg-${foco}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 60);
+      return;
+    }
     fimRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [mensagens, status]);
 
@@ -3263,11 +3740,15 @@ export function ChatIa({
 
   function novaConversa() {
     modoRelatorioRef.current = false;
+    consultaTotalRef.current = "";
     apresentacaoRef.current = false;
     setInicioAberto(false);
     setAbaAbertura("consultas");
+    setConsultasAbertas(false);
     conversaIdRef.current = null;
     setConversaId(null);
+    conversaDeRef.current = "";
+    setConversaDe("");
     sessionStorage.removeItem("maicon-conversa-id");
     setMensagens([]);
     setConsultaAberta(null);
@@ -3577,12 +4058,31 @@ export function ChatIa({
   }, [mensagens, conversaId, ocupado, email, api]);
 
   useEffect(() => {
-    if (configAberta && admin) void carregarConsumo();
-  }, [configAberta, admin, email, api]);
+    if (configAberta && admin) void carregarConsumo(iaConsumo);
+  }, [configAberta, admin, email, api, iaConsumo]);
 
-  async function carregarConsumo() {
+  useEffect(() => {
+    if (!admin || !email || !configAberta || abaConfig !== "consumo") return;
+    let ativo = true;
+    const carregar = () => {
+      void fetch(`${api}/api/ia/saldo`)
+        .then((resp) => (resp.ok ? resp.json() : null))
+        .then((dados) => {
+          if (ativo && dados?.google) setSaldoIa(dados);
+        })
+        .catch(() => {});
+    };
+    carregar();
+    const timer = window.setInterval(carregar, 12000);
+    return () => {
+      ativo = false;
+      window.clearInterval(timer);
+    };
+  }, [admin, email, api, ocupado, configAberta, abaConfig]);
+
+  async function carregarConsumo(modelo: IaConsumo = iaConsumo) {
     if (!email || !admin) return;
-    const resp = await fetch(`${api}/api/ia/consumo`);
+    const resp = await fetch(`${api}/api/ia/consumo?modelo=${modelo}`);
     const dados = await resp.json().catch(() => null);
     if (resp.ok && dados && typeof dados.total === "number") {
       setConsumoIa({ ...dados, conversas: Array.isArray(dados.conversas) ? dados.conversas : [] });
@@ -3740,18 +4240,32 @@ export function ChatIa({
     setConversas([]);
   }
 
-  async function abrirConversa(id: string) {
+  async function abrirConversa(id: string, titulo = "") {
     if (!email || ocupado) return;
     const resp = await fetch(`${api}/api/conversas/${id}?email=${encodeURIComponent(email)}`);
     const dados = await resp.json();
     if (!resp.ok) return;
-    conversaIdRef.current = id;
-    sessionStorage.setItem("maicon-conversa-id", id);
-    setConversaId(id);
-    setMensagens(Array.isArray(dados.mensagens) ? dados.mensagens : []);
+    const lista = Array.isArray(dados.mensagens) ? dados.mensagens : [];
+    const alheia = Boolean(dados.somenteLeitura);
+    conversaDeRef.current = alheia ? String(dados.email || "") : "";
+    setConversaDe(conversaDeRef.current);
+    if (alheia) {
+      conversaIdRef.current = null;
+      sessionStorage.removeItem("maicon-conversa-id");
+      setConversaId(null);
+    } else {
+      conversaIdRef.current = id;
+      sessionStorage.setItem("maicon-conversa-id", id);
+      setConversaId(id);
+    }
+    const indice = indiceDaPergunta(lista, titulo || String(dados.titulo || ""));
+    focoMensagemRef.current = indice >= 0 ? indice : null;
+    setMensagens(lista);
     setInicioAberto(false);
+    setConfigAberta(false);
     setMemoriaAberta(false);
     setConsultaAberta(null);
+    setTelaLateral(alheia ? "menu" : "conversas");
     modoRelatorioRef.current = false;
   }
 
@@ -3786,8 +4300,14 @@ export function ChatIa({
     }
   }
 
+  function aprovarPrevia(sql: string) {
+    if (!sql) return;
+    consultaTotalRef.current = sql;
+    void enviar("A primeira linha está certa. Pode trazer o restante.");
+  }
+
   async function enviar(conteudo: string, receitaPronta?: Receita[] | null) {
-    if (!conteudo.trim() || ocupado) return;
+    if (!conteudo.trim() || ocupado || conversaDeRef.current) return;
     if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission();
     setInicioAberto(false);
     setTexto("");
@@ -3804,6 +4324,8 @@ export function ChatIa({
     const inicioConsulta = performance.now();
     const duracaoConsulta = () => Math.max(1, Math.round(performance.now() - inicioConsulta));
     const pergunta = conteudo.trim();
+    const aprovando = /^a primeira linha est[aá] certa\.\s*pode trazer o restante\.?$/i.test(pergunta);
+    if (!aprovando) consultaTotalRef.current = "";
     if (/^pedir relat[oó]rio/i.test(pergunta)) modoRelatorioRef.current = true;
     await garantirConversa(pergunta);
     if (conversaIdRef.current) sessionStorage.setItem("maicon-conversa-id", conversaIdRef.current);
@@ -3908,6 +4430,36 @@ export function ChatIa({
           return;
         }
       }
+      let dadosAprovados = false;
+      if (aprovando && consultaTotalRef.current) {
+        setStatus(modoRelatorioRef.current ? "Montando o relatório…" : "Buscando o restante…");
+        const sql = sqlAprovadoInteiro(consultaTotalRef.current);
+        const resultado = await executar("executar_sql", { sql }, controle.signal);
+        if (/^erro:/i.test(resultado)) {
+          const content = resultado.replace(/^Erro:\s*/i, "");
+          historico = [...historico, { role: "assistant", content, duracaoMs: duracaoConsulta() }];
+          setMensagens(historico);
+          setErro(content);
+          avisarConclusao(content, true);
+          return;
+        }
+        const secao = secaoDaFerramenta("executar_sql", resultado);
+        if (secao) secoesDaPergunta.push(secao);
+        const id = "consulta-aprovada";
+        historico = [
+          ...historico,
+          {
+            role: "assistant",
+            content: "",
+            tool_calls: [{ id, type: "function", function: { name: "executar_sql", arguments: JSON.stringify({ sql }) } }],
+          },
+          { role: "tool", tool_call_id: id, content: resultado },
+        ];
+        setMensagens(historico);
+        dadosAprovados = true;
+      }
+      rotasProntas: {
+      if (dadosAprovados) break rotasProntas;
       const campoDireto = modoRelatorioRef.current || apresentacaoRef.current ? null : receitaCampoLivre(pergunta);
       const cargaDireta = campoDireto || modoRelatorioRef.current || apresentacaoRef.current ? null : receitaItensCarga(pergunta, mensagens);
       const continuacao = modoRelatorioRef.current || apresentacaoRef.current ? null : receitaContinuacao(pergunta, mensagens);
@@ -3935,6 +4487,12 @@ export function ChatIa({
         !receita.some((passo) =>
           ["consultar_log", "explicar_itens_carga", "explicar_campo_livre", "monitoramentos_alterados", "log_recente"].includes(passo.nome),
         )
+      ) {
+        receita = null;
+      }
+      if (
+        receita?.some((passo) => ["consultar_log", "resultado_atual", "log_recente"].includes(passo.nome)) &&
+        !pedeLog(assuntoDaPergunta(pergunta, mensagens))
       ) {
         receita = null;
       }
@@ -4045,8 +4603,13 @@ export function ChatIa({
           const args = { ...passo.args };
           if (passo.nome === "consultar_log") Object.assign(args, completarConsultaLog(passo.args, pergunta));
           if (passo.nome === "executar_sql" && typeof args.sql === "string") {
-            args.sql = sqlComPeriodo(sqlSemRepetir(args.sql), pergunta);
-            args.pergunta = pergunta;
+            const eraAmostra = Boolean(args.previa);
+            delete args.previa;
+            let sql = consultaTotalRef.current || sqlComPeriodo(sqlSemRepetir(args.sql), pergunta);
+            if (!consultaTotalRef.current) args.pergunta = pergunta;
+            if (consultaTotalRef.current || eraAmostra || perguntaDeConjunto(pergunta)) sql = sqlAprovadoInteiro(sql);
+            if (!consultaTotalRef.current) args.previa = true;
+            args.sql = sql;
           }
           const resultado = await executar(passo.nome, args, controle.signal);
           if (resultado.startsWith("Erro:") || resultado.startsWith("Ferramenta desconhecida")) {
@@ -4062,6 +4625,27 @@ export function ChatIa({
           brutos.push({ nome: passo.nome, args, resultado });
           const secao = secaoDaFerramenta(passo.nome, resultado);
           if (secao) secoesDaPergunta.push(secao);
+          if (!consultaTotalRef.current && passo.nome === "executar_sql" && secao?.colunas.length && typeof args.sql === "string") {
+            historico = [
+              ...historico,
+              {
+                role: "assistant",
+                content: "",
+                tool_calls: [{ id: "previa-sql", type: "function", function: { name: "executar_sql", arguments: JSON.stringify(args) } }],
+              },
+              { role: "tool", tool_call_id: "previa-sql", content: resultado },
+              {
+                role: "assistant",
+                content: "Primeira linha da consulta. Confira se as informações batem antes de seguir.",
+                previa: { sql: args.sql, colunas: secao.colunas, linhas: secao.linhas.slice(0, 1) },
+                duracaoMs: duracaoConsulta(),
+              },
+            ];
+            setMensagens(historico);
+            setErro("");
+            avisarConclusao("Primeira linha pronta para conferir.", false);
+            return;
+          }
           if (passo.nome === "consultar_log") {
             const log = capturarLog();
             if (log) logDaPergunta = restringirAoProcesso(log, pergunta);
@@ -4100,8 +4684,9 @@ export function ChatIa({
         secoesDaPergunta.length = 0;
         logDaPergunta = null;
       }
+      }
       for (let passo = 0; passo < MAX_PASSOS; passo++) {
-        setStatus("Pensando…");
+        setStatus(consultaTotalRef.current ? (modoRelatorioRef.current ? "Montando o relatório…" : "Buscando o restante…") : modoRelatorioRef.current ? "Lendo a primeira linha…" : "Pensando…");
         if (canceladoRef.current) throw new DOMException("Cancelado", "AbortError");
         const resp = await fetch(`${api}/api/chat`, {
           method: "POST",
@@ -4116,6 +4701,8 @@ export function ChatIa({
           }),
           completo,
           relatorio: modoRelatorioRef.current,
+          etapa: etapaDaRodada(historico, modoRelatorioRef.current, consultaTotalRef.current),
+          sqlAprovado: consultaTotalRef.current,
           apresentacao: apresentacaoRef.current,
           email,
           nome,
@@ -4234,6 +4821,30 @@ export function ChatIa({
           }));
           continue;
         }
+        if (
+          consultaTotalRef.current &&
+          !resposta.tool_calls?.length &&
+          !trechoDaPergunta(historico).some((item) => item.role === "tool") &&
+          passo < MAX_PASSOS - 1
+        ) {
+          const sql = sqlAprovadoInteiro(consultaTotalRef.current);
+          setStatus(modoRelatorioRef.current ? "Montando o relatório…" : "Buscando o restante…");
+          const resultado = await executar("executar_sql", { sql }, controle.signal);
+          const id = `consulta-aprovada-${passo}`;
+          const secao = secaoDaFerramenta("executar_sql", resultado);
+          if (secao) secoesDaPergunta.push(secao);
+          historico = [
+            ...historico,
+            {
+              role: "assistant",
+              content: "",
+              tool_calls: [{ id, type: "function", function: { name: "executar_sql", arguments: JSON.stringify({ sql }) } }],
+            },
+            { role: "tool", tool_call_id: id, content: resultado },
+          ];
+          setMensagens(historico);
+          continue;
+        }
         historico = [...historico, { ...resposta, content: catalogoInterno(conteudo) ? "" : conteudo }];
         setMensagens(historico);
         if (!resposta.tool_calls?.length) break;
@@ -4260,28 +4871,41 @@ export function ChatIa({
             if (repetida) return { role: "tool" as const, tool_call_id: chamada.id, content: repetida };
             setStatus(`${ROTULO_FERRAMENTA[chamada.function.name] ?? "Trabalhando"}…`);
             let resultado: string;
+            const logIndevido =
+              ["consultar_log", "resultado_atual", "log_recente"].includes(chamada.function.name) &&
+              !pedeLog(assuntoDaPergunta(pergunta, mensagens));
             try {
               const args = JSON.parse(chamada.function.arguments || "{}");
               const pedido = [...historico].reverse().find((m) => m.role === "user")?.content ?? "";
-              if (chamada.function.name === "consultar_log") {
-                Object.assign(args, completarConsultaLog(args, pedido));
-                chamada.function.arguments = JSON.stringify(args);
-              }
-              if (chamada.function.name === "executar_sql" && typeof args.sql === "string") {
-                args.sql = sqlComPeriodo(sqlSemRepetir(args.sql), pergunta);
-                args.pergunta = pergunta;
-              }
-              if (canceladoRef.current) throw new DOMException("Cancelado", "AbortError");
-              resultado = await executar(chamada.function.name, args, controle.signal);
-              for (let tentativa = 0; tentativa < 2 && /^Erro:.*(timeout|conex|socket|interrompid|demorou)/i.test(resultado); tentativa += 1) {
-                setStatus("Lendo de novo…");
+              if (logIndevido) {
+                resultado = "Erro: a pergunta não pediu log nem histórico. Consulte os dados pedidos, sem abrir o log.";
+              } else {
+                if (chamada.function.name === "consultar_log") {
+                  Object.assign(args, completarConsultaLog(args, pedido));
+                  chamada.function.arguments = JSON.stringify(args);
+                }
+                if (chamada.function.name === "executar_sql" && typeof args.sql === "string") {
+                  const eraAmostra = Boolean(args.previa);
+                  delete args.previa;
+                  let sql = consultaTotalRef.current || sqlComPeriodo(sqlSemRepetir(args.sql), pergunta);
+                  if (!consultaTotalRef.current) args.pergunta = pergunta;
+                  if (consultaTotalRef.current || eraAmostra || perguntaDeConjunto(pergunta)) sql = sqlAprovadoInteiro(sql);
+                  if (!consultaTotalRef.current) args.previa = true;
+                  args.sql = sql;
+                  chamada.function.arguments = JSON.stringify(args);
+                }
+                if (canceladoRef.current) throw new DOMException("Cancelado", "AbortError");
                 resultado = await executar(chamada.function.name, args, controle.signal);
+                for (let tentativa = 0; tentativa < 2 && /^Erro:.*(timeout|conex|socket|interrompid|demorou)/i.test(resultado); tentativa += 1) {
+                  setStatus("Lendo de novo…");
+                  resultado = await executar(chamada.function.name, args, controle.signal);
+                }
               }
             } catch (e) {
               if (canceladoRef.current || (e instanceof DOMException && e.name === "AbortError")) throw e;
               resultado = `Erro: ${e instanceof Error ? e.message : String(e)}`;
             }
-            if (chamada.function.name === "consultar_log" || chamada.function.name === "resultado_atual") {
+            if (!logIndevido && (chamada.function.name === "consultar_log" || chamada.function.name === "resultado_atual")) {
               const log = capturarLog();
               const pedido = [...historico].reverse().find((m) => m.role === "user")?.content ?? "";
               if (log) logDaPergunta = restringirAoProcesso(log, pedido);
@@ -4295,11 +4919,43 @@ export function ChatIa({
             return { role: "tool" as const, tool_call_id: chamada.id, content: resultado };
           }),
         );
+        if (!consultaTotalRef.current) {
+          const amostra = resultados.find((item) => {
+            const chamada = resposta.tool_calls?.find((chamada) => chamada.id === item.tool_call_id);
+            return chamada?.function.name === "executar_sql" && !item.content.startsWith("Erro:");
+          });
+          if (amostra) {
+            const secao = secaoDaFerramenta("executar_sql", amostra.content);
+            const chamada = resposta.tool_calls?.find((chamada) => chamada.id === amostra.tool_call_id);
+            let sql = "";
+            try {
+              sql = String(JSON.parse(chamada?.function.arguments || "{}").sql || "");
+            } catch {
+              sql = "";
+            }
+            if (secao?.colunas.length && sql) {
+              historico = [
+                ...historico,
+                ...resultados,
+                {
+                  role: "assistant",
+                  content: "Primeira linha da consulta. Confira se as informações batem antes de seguir.",
+                  previa: { sql, colunas: secao.colunas, linhas: secao.linhas.slice(0, 1) },
+                  duracaoMs: duracaoConsulta(),
+                },
+              ];
+              setMensagens(historico);
+              setErro("");
+              avisarConclusao("Primeira linha pronta para conferir.", false);
+              return;
+            }
+          }
+        }
         historico = [...historico, ...resultados];
         setMensagens(historico);
         const pronta = respostaProntaDoHistorico(historico);
         if (pronta) {
-          const content = graficoSePedido(pronta, pergunta);
+          const content = graficoSePedido(pronta, assuntoDaPergunta(pergunta, mensagens));
           historico = [...historico, { role: "assistant", content, duracaoMs: duracaoConsulta() }];
           setMensagens(historico);
           setErro("");
@@ -4343,7 +4999,7 @@ export function ChatIa({
         }
       }
       const ultima = [...historico.slice(corte + 1)].reverse().find((m) => m.role === "assistant" && m.content.trim());
-      if (!ultima && logDaPergunta) {
+      if (!ultima && logDaPergunta && pedeLog(assuntoDaPergunta(pergunta, mensagens))) {
         const resposta: Extract<Mensagem, { role: "assistant" }> = {
           role: "assistant",
           content: resumoDoLog(logDaPergunta),
@@ -4419,18 +5075,25 @@ export function ChatIa({
         if (modoRelatorioRef.current && secoesDaPergunta.length) {
           const ultimaSecao = secoesDaPergunta[secoesDaPergunta.length - 1];
           ultima.relatorio = {
-            titulo: pergunta.replace(/\s+/g, " ").slice(0, 90),
+            titulo: (historico
+              .filter((item) => item.role === "user" && !/^a primeira linha est[aá] certa/i.test(item.content))
+              .at(-1)?.content || pergunta).replace(/\s+/g, " ").slice(0, 90),
             secoes: [ultimaSecao],
           };
           ultima.pedidoRelatorio = true;
         }
         const explicacao = textoItensDaRodada(historico, pergunta);
         if (explicacao) ultima.content = explicacao;
-        else if (logDaPergunta) {
+        else if (logDaPergunta && pedeLog(assuntoDaPergunta(pergunta, mensagens))) {
           ultima.log = logDaPergunta;
           ultima.content = resumoDoLog(logDaPergunta);
+        } else {
+          ultima.content = graficoSePedido(ultima.content, assuntoDaPergunta(pergunta, mensagens));
         }
-        const novas = receitasDaConversa(historico).filter((item) => !pedeLog(textoVisivel(pergunta)) || item.nome === "consultar_log");
+        const novas = receitasDaConversa(historico).filter((item) => {
+          if (["consultar_log", "resultado_atual", "log_recente"].includes(item.nome) && !pedeLog(assuntoDaPergunta(pergunta, mensagens))) return false;
+          return !pedeLog(textoVisivel(pergunta)) || item.nome === "consultar_log";
+        });
         if (novas.length) {
           guardarReceita(pergunta, novas);
           void fetch(`${api}/api/receitas`, {
@@ -4671,6 +5334,8 @@ export function ChatIa({
                   apresentacaoRef.current = true;
                   conversaIdRef.current = null;
                   setConversaId(null);
+                  conversaDeRef.current = "";
+                  setConversaDe("");
                   setMensagens([]);
                   setConsultaAberta(null);
                   setMemoriaAberta(false);
@@ -5101,7 +5766,7 @@ export function ChatIa({
         ) : null}
 
         {configAberta ? (
-          <div className={`chat-mensagens${abaConfig === "sqlite" ? " chat-mensagens-sqlite" : ""}`}>
+          <div className={`chat-mensagens${abaConfig === "sqlite" ? " chat-mensagens-sqlite" : abaConfig === "consumo" ? " chat-mensagens-consumo" : ""}`}>
             <div className={`chat-coluna${abaConfig === "sqlite" ? " chat-coluna-larga" : ""}`}>
               <div className="chat-config-abas" role="tablist" aria-label="Configurações">
                 <button type="button" className={abaConfig === "contas" ? "ativo" : ""} onClick={() => setAbaConfig("contas")}>
@@ -5112,7 +5777,7 @@ export function ChatIa({
                   className={abaConfig === "consumo" ? "ativo" : ""}
                   onClick={() => {
                     setAbaConfig("consumo");
-                    void carregarConsumo();
+                    void carregarConsumo(iaConsumo);
                   }}
                 >
                   Consumo
@@ -5131,12 +5796,33 @@ export function ChatIa({
               {abaConfig === "consumo" ? (
                 <section className="chat-secao chat-consumo-aba">
                   <div className="chat-consumo-marca">
-                    <img src={logoDeepSeek} alt="" />
+                    <span className={`chat-consumo-sigla ${iaConsumo}`} aria-hidden="true">{ROTULO_CONSUMO[iaConsumo].aba.slice(0, 2)}</span>
                     <div className="chat-memoria-topo">
-                      <h3>DeepSeek</h3>
-                      <p>Comparativo do gasto entre conversas. A barra mais longa é a que mais consumiu. A porcentagem é a fatia do total.</p>
+                      <div className="chat-consumo-cabeca">
+                        <h3>{ROTULO_CONSUMO[iaConsumo].nome}</h3>
+                        <div className="chat-consumo-ias" role="tablist" aria-label="Inteligência do consumo">
+                          {IAS_CONSUMO.map((modelo) => (
+                            <button
+                              key={modelo}
+                              type="button"
+                              role="tab"
+                              aria-selected={iaConsumo === modelo}
+                              className={iaConsumo === modelo ? "ativo" : ""}
+                              onClick={() => {
+                                if (iaConsumo === modelo) return;
+                                setConsumoIa(null);
+                                setIaConsumo(modelo);
+                              }}
+                            >
+                              {ROTULO_CONSUMO[modelo].aba}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <p>{ROTULO_CONSUMO[iaConsumo].texto}</p>
                     </div>
                   </div>
+                  <PainelSaldo saldo={saldoIa} />
                   <div className="chat-consumo">
                     <article>
                       <span>Tokens</span>
@@ -5155,7 +5841,12 @@ export function ChatIa({
                       </small>
                     </article>
                   </div>
-                  <GraficoConsumo conversas={consumoIa?.conversas ?? []} />
+                  <GraficoConsumo
+                    conversas={consumoIa?.conversas ?? []}
+                    onAbrir={(item) => {
+                      if (item.id) void abrirConversa(item.id, item.titulo);
+                    }}
+                  />
                 </section>
               ) : abaConfig === "sqlite" ? (
                 <section className="chat-secao chat-sqlite">
@@ -5357,7 +6048,7 @@ export function ChatIa({
               </form>
               <div className="chat-memoria-topo">
                 <h3>Revisão da semana</h3>
-                <p>Perguntas que falharam ou foram marcadas com 👎 nos últimos 7 dias. Use "Virar regra" para a IA seguir a correção com todos.</p>
+                <p>Perguntas marcadas com 👎 nos últimos 7 dias. Na próxima pergunta parecida, a IA corrige a resposta sozinha. "Virar regra" deixa essa correção valendo em todo pedido.</p>
                 {placar.length ? (
                   <p className="chat-placar">
                     {placar.map((item) => (
@@ -5622,115 +6313,6 @@ export function ChatIa({
                       })()}
                     </div>
                   </div>
-                  <div className="chat-abertura">
-                    {pode.relatorio ? (
-                    <div className="chat-abertura-troca" role="tablist" aria-label="Tipo de consulta">
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={abaAbertura === "consultas"}
-                        className={abaAbertura === "consultas" ? "ativa" : ""}
-                        onClick={() => setAbaAbertura("consultas")}
-                      >
-                        Consultas prontas
-                      </button>
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={abaAbertura === "relatorios"}
-                        className={abaAbertura === "relatorios" ? "ativa" : ""}
-                        onClick={() => setAbaAbertura("relatorios")}
-                      >
-                        Pedir relatório
-                      </button>
-                    </div>
-                    ) : null}
-                    {pode.relatorio && abaAbertura === "relatorios" ? (
-                      <>
-                        {relatoriosDaVisao(admin ? visao : setor, Boolean(permissoes?.semComissao)).map((grupo) => (
-                          <div key={grupo.nome} className="chat-abertura-grupo">
-                            <span>{grupo.nome}</span>
-                            <div className="chat-abertura-opcoes">
-                              {grupo.itens.map((item) => (
-                                <button
-                                  key={item.titulo}
-                                  type="button"
-                                  disabled={ocupado}
-                                  onClick={() => {
-                                    modoRelatorioRef.current = true;
-                                    void enviar(item.pergunta);
-                                  }}
-                                >
-                                  <span className="chat-abertura-icone">
-                                    <Icone nome={item.icone} tamanho={19} />
-                                  </span>
-                                  <span className="chat-abertura-texto">
-                                    <strong>{item.titulo}</strong>
-                                    <small>{item.descricao}</small>
-                                  </span>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                        <div className="chat-abertura-grupo">
-                          <span>Do seu jeito</span>
-                          <div className="chat-abertura-opcoes">
-                            <button
-                              type="button"
-                              disabled={ocupado}
-                              onClick={() => {
-                                modoRelatorioRef.current = true;
-                                void enviar("Pedir relatório");
-                              }}
-                            >
-                              <span className="chat-abertura-icone">
-                                <Icone nome="relatorio" tamanho={19} />
-                              </span>
-                              <span className="chat-abertura-texto">
-                                <strong>Montar outro</strong>
-                                <small>A IA pergunta o assunto, o período e as colunas, e mostra a tabela no chat.</small>
-                              </span>
-                            </button>
-                          </div>
-                        </div>
-                      </>
-                    ) : (
-                      [
-                        {
-                          nome: "",
-                          itens:
-                            SUGESTOES_SETOR[admin ? (visao === "inside" ? "comercial" : visao === "tudo" ? "gerencia" : visao) : setor] ??
-                            (pode.log ? SUGESTOES : SUGESTOES.filter((s) => s.titulo === "Cliente do processo")),
-                        },
-                      ].map((grupo) => {
-                        const itens = grupo.itens.filter((s) => !permissoes?.semComissao || !/comiss/i.test(s.titulo));
-                        if (!itens.length) return null;
-                        return (
-                          <div key={grupo.nome || "atalhos"} className="chat-abertura-grupo">
-                            {grupo.nome || !pode.relatorio ? <span>{grupo.nome || "Consultas prontas"}</span> : null}
-                            <div className="chat-abertura-opcoes">
-                              {comProcesso(
-                                itens,
-                                painel?.processos?.find((item) => item.processo && !/TESTE|DEMU/i.test(item.processo))?.processo ?? "",
-                                modalidade,
-                              ).map((s) => (
-                                <button key={s.titulo} type="button" onClick={() => void enviar(s.pergunta, s.receita)}>
-                                  <span className="chat-abertura-icone">
-                                    <Icone nome={s.icone} tamanho={19} />
-                                  </span>
-                                  <span className="chat-abertura-texto">
-                                    <strong>{s.titulo}</strong>
-                                    <small>{s.descricao}</small>
-                                  </span>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
                   </div>
                 </div>
               ) : null}
@@ -5752,19 +6334,26 @@ export function ChatIa({
                 (!normalizarCartoes(bloco.mensagem.content) || catalogoInterno(bloco.mensagem.content)) ? null : bloco.mensagem.role === "assistant" ? (
                   <div key={i} id={`chat-msg-${i}`} className={`chat-linha${buscaAlvo === i ? " busca-alvo" : ""}`}>
                     <div className="chat-msg chat-assistant">
+                      {"previa" in bloco.mensagem && bloco.mensagem.previa ? (
+                        <PreviaRelatorio
+                          previa={bloco.mensagem.previa}
+                          podeAprovar={i === blocos.length - 1 && !ocupado}
+                          onAprovar={() => aprovarPrevia(bloco.mensagem.role === "assistant" && bloco.mensagem.previa ? bloco.mensagem.previa.sql : "")}
+                        />
+                      ) : null}
                       {"log" in bloco.mensagem && bloco.mensagem.log ? (
                         <LogCard log={cartaoDoHistorico(bloco.mensagem.log)} />
-                      ) : pediuRelatorio ? null : (
+                      ) : pediuRelatorio || ("previa" in bloco.mensagem && bloco.mensagem.previa) ? null : (
                         <>
-                          {bloco.linhas.length > 12 ? <ListaConsulta linhas={bloco.linhas} /> : null}
+                          {bloco.linhas.length > 12 ? <ListaConsulta linhas={bloco.linhas} calculos={bloco.calculos} /> : null}
                           <Markdown
                             ocultarSql={!admin}
                             textoCorrido={pediuTextoParaEnviar(pedidoUsuario)}
                             texto={semMençãoPdf(
                               graficoSePedido(
-                                bloco.linhas.length > 12
-                                  ? textoSemListaGrande(respostaSemPayload(bloco.mensagem.content))
-                                  : respostaSemPayload(bloco.mensagem.content),
+                                (bloco.linhas.length > 12 ? textoSemListaGrande : (texto: string) => texto)(
+                                  garantirEncartes(respostaSemPayload(bloco.mensagem.content), bloco.encartes),
+                                ),
                                 blocos
                                   .slice(0, i)
                                   .filter((item) => item.mensagem.role === "user")
@@ -5878,6 +6467,136 @@ export function ChatIa({
           </div>
         )}
 
+        {inicioAberto || configAberta || blocos.length > 0 ? null : (
+          <div className={`chat-gaveta${consultasAbertas ? " aberta" : ""}`}>
+            <button
+              type="button"
+              className="chat-gaveta-seta"
+              aria-expanded={consultasAbertas}
+              aria-controls="chat-consultas"
+              aria-label={consultasAbertas ? "Recolher consultas" : "Mostrar consultas"}
+              onClick={() => setConsultasAbertas((aberta) => !aberta)}
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden>
+                <path fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" d="M6 14l6-6 6 6" />
+              </svg>
+            </button>
+            <div className="chat-gaveta-miolo" id="chat-consultas">
+              <div className="chat-coluna">
+                  <div className="chat-abertura">
+                    {pode.relatorio ? (
+                    <div className="chat-abertura-troca" role="tablist" aria-label="Tipo de consulta">
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={abaAbertura === "consultas"}
+                        className={abaAbertura === "consultas" ? "ativa" : ""}
+                        onClick={() => setAbaAbertura("consultas")}
+                      >
+                        Consultas prontas
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={abaAbertura === "relatorios"}
+                        className={abaAbertura === "relatorios" ? "ativa" : ""}
+                        onClick={() => setAbaAbertura("relatorios")}
+                      >
+                        Pedir relatório
+                      </button>
+                    </div>
+                    ) : null}
+                    {pode.relatorio && abaAbertura === "relatorios" ? (
+                      <>
+                        {relatoriosDaVisao(admin ? visao : setor, Boolean(permissoes?.semComissao)).map((grupo) => (
+                          <div key={grupo.nome} className="chat-abertura-grupo">
+                            <span>{grupo.nome}</span>
+                            <div className="chat-abertura-opcoes">
+                              {grupo.itens.map((item) => (
+                                <button
+                                  key={item.titulo}
+                                  type="button"
+                                  disabled={ocupado}
+                                  onClick={() => {
+                                    modoRelatorioRef.current = true;
+                                    void enviar(item.pergunta);
+                                  }}
+                                >
+                                  <span className="chat-abertura-icone">
+                                    <Icone nome={item.icone} tamanho={19} />
+                                  </span>
+                                  <span className="chat-abertura-texto">
+                                    <strong>{item.titulo}</strong>
+                                    <small>{item.descricao}</small>
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                        <div className="chat-abertura-grupo">
+                          <span>Do seu jeito</span>
+                          <div className="chat-abertura-opcoes">
+                            <button
+                              type="button"
+                              disabled={ocupado}
+                              onClick={() => {
+                                modoRelatorioRef.current = true;
+                                void enviar("Pedir relatório");
+                              }}
+                            >
+                              <span className="chat-abertura-icone">
+                                <Icone nome="relatorio" tamanho={19} />
+                              </span>
+                              <span className="chat-abertura-texto">
+                                <strong>Montar outro</strong>
+                                <small>A IA pergunta o assunto, o período e as colunas, e mostra a tabela no chat.</small>
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      [
+                        {
+                          nome: "",
+                          itens:
+                            SUGESTOES_SETOR[admin ? (visao === "inside" ? "comercial" : visao === "tudo" ? "gerencia" : visao) : setor] ??
+                            (pode.log ? SUGESTOES : SUGESTOES.filter((s) => s.titulo === "Cliente do processo")),
+                        },
+                      ].map((grupo) => {
+                        const itens = grupo.itens.filter((s) => !permissoes?.semComissao || !/comiss/i.test(s.titulo));
+                        if (!itens.length) return null;
+                        return (
+                          <div key={grupo.nome || "atalhos"} className="chat-abertura-grupo">
+                            {grupo.nome || !pode.relatorio ? <span>{grupo.nome || "Consultas prontas"}</span> : null}
+                            <div className="chat-abertura-opcoes">
+                              {comProcesso(
+                                itens,
+                                painel?.processos?.find((item) => item.processo && !/TESTE|DEMU/i.test(item.processo))?.processo ?? "",
+                                modalidade,
+                              ).map((s) => (
+                                <button key={s.titulo} type="button" onClick={() => void enviar(s.pergunta, s.receita)}>
+                                  <span className="chat-abertura-icone">
+                                    <Icone nome={s.icone} tamanho={19} />
+                                  </span>
+                                  <span className="chat-abertura-texto">
+                                    <strong>{s.titulo}</strong>
+                                    <small>{s.descricao}</small>
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {inicioAberto || configAberta ? null : <form
           className="chat-entrada"
           onSubmit={(e) => {
@@ -5891,7 +6610,8 @@ export function ChatIa({
                 ref={entradaRef}
                 value={texto}
                 rows={1}
-                placeholder="Pergunte sobre um processo, cliente, atividade ou período…"
+                placeholder={conversaDe ? `Conversa de ${conversaDe}. Só leitura.` : "Pergunte sobre um processo, cliente, atividade ou período…"}
+                disabled={Boolean(conversaDe)}
                 onChange={(e) => {
                   setTexto(e.target.value);
                   e.target.style.height = "auto";
@@ -5904,7 +6624,7 @@ export function ChatIa({
                   }
                 }}
               />
-              <button type="submit" className="chat-enviar" disabled={ocupado || !texto.trim()} title="Enviar">
+              <button type="submit" className="chat-enviar" disabled={ocupado || Boolean(conversaDe) || !texto.trim()} title="Enviar">
                 <Icone nome="enviar" tamanho={18} />
               </button>
             </div>

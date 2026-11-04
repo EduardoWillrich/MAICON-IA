@@ -227,6 +227,65 @@ test("ignora SQL antigo, lê argumentos em objeto e julga o texto copiado", () =
   assert.equal(rodadasDesdePergunta([{ role: "user", content: "oi" }]), 0);
 });
 
+function consultaDeValor(pergunta, sql, content) {
+  return [
+    { role: "user", content: pergunta },
+    ...volta(
+      "listar_colunas",
+      { tabelas: ["mov_Logistica_Taxa"] },
+      JSON.stringify([{ Tabela: "mov_Logistica_Taxa", Coluna: "Valor_Recebimento_Total" }]),
+      "cols",
+    ),
+    ...volta("executar_sql", { sql }, content, "sql"),
+  ];
+}
+
+test("reprova total calculado em cima da lista", () => {
+  const conferencia = conferirTabelas(
+    consultaDeValor(
+      "qual o total de recebimento deste ano",
+      "SELECT Tax.Valor_Recebimento_Total FROM mov_Logistica_Taxa Tax",
+      "| Valor_Recebimento_Total |\n| --- |\n| 10 |\n| 20 |\n\nMostrei 2 de 40.",
+    ),
+  );
+  assert.equal(conferencia.ok, false);
+  assert.match(conferencia.motivo, /Cálculo/);
+});
+
+test("manda usar o bloco de cálculos em vez de somar a amostra", () => {
+  const conferencia = conferirTabelas(
+    consultaDeValor(
+      "qual a soma do recebimento",
+      "SELECT Tax.Valor_Recebimento_Total FROM mov_Logistica_Taxa Tax",
+      "CÁLCULOS sobre 40 linhas.\n- Total de linhas: 40\n- Valor_Recebimento_Total: soma R$ 100,00",
+    ),
+  );
+  assert.equal(conferencia.ok, true);
+  assert.match(conferencia.aviso, /CÁLCULOS/);
+});
+
+test("aceita SELECT agregado e pede o número quando a lista não basta", () => {
+  const agregado = conferirTabelas(
+    consultaDeValor(
+      "qual a média de recebimento",
+      "SELECT AVG(Tax.Valor_Recebimento_Total) AS Media FROM mov_Logistica_Taxa Tax",
+      "| Media |\n| --- |\n| 15 |",
+    ),
+  );
+  assert.equal(agregado.ok, true);
+  assert.equal(agregado.aviso, "");
+
+  const lista = conferirTabelas(
+    consultaDeValor(
+      "liste as taxas e o total",
+      "SELECT Tax.Valor_Recebimento_Total FROM mov_Logistica_Taxa Tax",
+      "| Valor_Recebimento_Total |\n| --- |\n| 10 |\n| 20 |",
+    ),
+  );
+  assert.equal(lista.ok, true);
+  assert.match(lista.aviso, /SUM, COUNT ou AVG/);
+});
+
 test("catálogo relevante fica muito menor que o catálogo completo", () => {
   const recorte = textoConsultasRelevantes("taxas do processo");
   assert.match(recorte, /taxa/i);

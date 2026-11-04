@@ -4,6 +4,15 @@ import { SymbolLoader } from "./Loader";
 type Item = { titulo: string; detalhe: string; texto?: string; marca?: string; processo?: string; pergunta?: string; partes?: { texto: string; tom: string }[] };
 type Bloco = { titulo: string; itens: Item[]; vazio: string; pergunta?: string };
 type Ranking = { titulo: string; detalhe: string; vazio: string; itens: { nome: string; qtd: number }[] };
+type Encarte = {
+  nome: string;
+  nivel: string;
+  classificacao: string;
+  pagamento: string;
+  pagamentoTexto: string;
+  detalhe: string;
+  pergunta: string;
+};
 type Resumo = {
   rotulo: string;
   frase: string;
@@ -12,7 +21,49 @@ type Resumo = {
   aviso?: Bloco | null;
   secundarios: Bloco[];
   ranking?: Ranking | null;
+  relacionamento?: Encarte[] | null;
 };
+
+type Kpi = Resumo["kpis"][number];
+
+const GRUPOS_KPI = [
+  { id: "movimento", titulo: "Movimento", rotulos: ["Abertos", "Novos no mês", "Movimentados no mês"] },
+  { id: "atencao", titulo: "Precisa de atenção", rotulos: ["Sem proposta", "Atividades atrasadas", "Parados", "Prazos em 7 dias"] },
+  { id: "resultado", titulo: "Resultado", rotulos: ["Comissão do mês"] },
+];
+
+function gruposDeKpis(kpis: Kpi[]) {
+  const usados = new Set<string>();
+  const grupos = GRUPOS_KPI.map((grupo) => {
+    const itens = grupo.rotulos.flatMap((rotulo) => {
+      const item = kpis.find((atual) => atual.rotulo === rotulo);
+      if (!item) return [];
+      usados.add(item.rotulo);
+      return [item];
+    });
+    return { ...grupo, itens };
+  }).filter((grupo) => grupo.itens.length);
+  const resto = kpis.filter((item) => !usados.has(item.rotulo));
+  if (resto.length) grupos.push({ id: "outros", titulo: "Outros", rotulos: [], itens: resto });
+  return grupos.length > 1 ? grupos : null;
+}
+
+function CartaoGrupo({ grupo }: { grupo: { id: string; titulo: string; itens: Kpi[] } }) {
+  return (
+    <article className={`inicio-grupo ${grupo.id}`}>
+      <h3>{grupo.titulo}</h3>
+      <ul>
+        {grupo.itens.map((item) => (
+          <li key={item.rotulo} className={item.atencao ? "atencao" : ""}>
+            <span>{item.rotulo}</span>
+            <strong>{item.valor}</strong>
+            <small>{item.detalhe}</small>
+          </li>
+        ))}
+      </ul>
+    </article>
+  );
+}
 
 function colunasDoInicio(resumo: Resumo) {
   const secundarios = resumo.secundarios ?? [];
@@ -88,6 +139,30 @@ function Lista({ bloco, onPerguntar }: { bloco: Bloco; onPerguntar: (pergunta: s
             </li>
           );
         })}
+      </ul>
+    </section>
+  );
+}
+
+function Encartes({ itens, onPerguntar }: { itens: Encarte[]; onPerguntar: (pergunta: string) => void }) {
+  if (!itens.length) return null;
+  return (
+    <section className="inicio-encartes" aria-label="Relacionamento com o cliente">
+      <header>
+        <h3>Relacionamento</h3>
+        <span>Ouro, prata ou bronze, e se paga em dia</span>
+      </header>
+      <ul>
+        {itens.map((item) => (
+          <li key={item.nome} className={item.nivel ? `nivel-${item.nivel}` : ""}>
+            <button type="button" className="encarte" onClick={() => onPerguntar(item.pergunta)}>
+              <em>{item.classificacao}</em>
+              <strong>{item.nome}</strong>
+              <small className={item.pagamento}>{item.pagamentoTexto}</small>
+              {item.detalhe ? <span>{item.detalhe}</span> : null}
+            </button>
+          </li>
+        ))}
       </ul>
     </section>
   );
@@ -293,6 +368,10 @@ export function InicioPainel({
 
   const primeiro = nome.trim().split(" ")[0];
   const colunas = resumo ? colunasDoInicio(resumo) : null;
+  const grupos = resumo && visao === "gerencia" ? gruposDeKpis(resumo.kpis) : null;
+  const resultado = grupos?.find((grupo) => grupo.id === "resultado") ?? null;
+  const gruposDeCima = grupos?.filter((grupo) => grupo.id !== "resultado") ?? [];
+  const resultadoComRanking = Boolean(resultado && resumo?.ranking);
 
   return (
     <main className="inicio-tela">
@@ -315,16 +394,37 @@ export function InicioPainel({
         {!carregando && resumo?.kpis ? (
           <div className="inicio-conteudo">
             {mostrarFila ? <FilaInicio api={api} email={email} onPerguntar={onPerguntar} /> : null}
-            <section className="inicio-kpis" aria-label="Indicadores">
-              {resumo.kpis.map((item) => (
-                <article key={item.rotulo} className={`inicio-kpi${item.atencao ? " atencao" : ""}${item.tom ? ` ${item.tom}` : ""}`}>
-                  <span>{item.rotulo}</span>
-                  <strong>{item.valor}</strong>
-                  <small>{item.detalhe}</small>
-                </article>
-              ))}
-            </section>
-            {resumo.ranking ? <RankingFechamentos ranking={resumo.ranking} /> : null}
+            {grupos ? (
+              <>
+                <section className={`inicio-grupos${resultado ? " dupla" : ""}`} aria-label="Indicadores">
+                  {(resultado ? gruposDeCima : grupos).map((grupo) => (
+                    <CartaoGrupo key={grupo.id} grupo={grupo} />
+                  ))}
+                </section>
+                {resultadoComRanking && resultado && resumo.ranking ? (
+                  <section className="inicio-conjunto" aria-label="Resultado e vendedores">
+                    <CartaoGrupo grupo={resultado} />
+                    <RankingFechamentos ranking={resumo.ranking} />
+                  </section>
+                ) : resultado ? (
+                  <CartaoGrupo grupo={resultado} />
+                ) : null}
+              </>
+            ) : (
+              <section className="inicio-kpis" aria-label="Indicadores">
+                {resumo.kpis.map((item) => (
+                  <article key={item.rotulo} className={`inicio-kpi${item.atencao ? " atencao" : ""}${item.tom ? ` ${item.tom}` : ""}`}>
+                    <span>{item.rotulo}</span>
+                    <strong>{item.valor}</strong>
+                    <small>{item.detalhe}</small>
+                  </article>
+                ))}
+              </section>
+            )}
+            {resumo.ranking && !resultadoComRanking ? <RankingFechamentos ranking={resumo.ranking} /> : null}
+            {visao !== "comercial" && visao !== "inside" && resumo.relacionamento?.length ? (
+              <Encartes itens={resumo.relacionamento} onPerguntar={onPerguntar} />
+            ) : null}
             <div className={`inicio-grade${colunas?.equilibrada ? " equilibrada" : ""}`}>
               <div className="inicio-coluna">
                 {colunas?.esquerda.map((bloco) => (

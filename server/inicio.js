@@ -3,6 +3,8 @@ import { pessoaDaConta } from "./pessoaConta.js";
 import { nomeDe, pessoasPorLogin } from "./pessoas.js";
 import { parseCamposXml } from "./query.js";
 import { perfilDaConta } from "./setor.js";
+import { relacionamentoFinanceiro } from "./relacionamento.js";
+import { PROCESSO_REAL } from "./datasPedido.js";
 
 export async function painelDoUsuario(pool, email, nome, admin = false) {
   const conta = String(email ?? "").trim().toLowerCase();
@@ -15,7 +17,7 @@ export async function painelDoUsuario(pool, email, nome, admin = false) {
   const id = Number(pessoa.IdPessoa);
   const semTeste = admin
     ? ""
-    : "AND (Lhs.Numero_Processo IS NULL OR UPPER(Lhs.Numero_Processo) NOT LIKE '%TESTE%')";
+    : `AND (Lhs.Numero_Processo IS NULL OR (${PROCESSO_REAL}))`;
   const atividades = (
     await pool.request().input("id", sql.Int, id).query(`
       SELECT TOP 200
@@ -709,6 +711,18 @@ function perguntaCliente(nome) {
   return `Ficha do cliente ${limpo}: processos abertos, vendedor, quantos estão sem proposta, o último processo e a comissão deste mês.`;
 }
 
+function encarteDoCliente(rel, detalhe) {
+  return {
+    nome: rel.nome,
+    nivel: rel.nivel || "",
+    classificacao: rel.classificacao || "Sem classificação",
+    pagamento: rel.pagamento || "sem",
+    pagamentoTexto: rel.pagamentoTexto || "Sem faturas recentes",
+    detalhe,
+    pergunta: perguntaCliente(rel.nome),
+  };
+}
+
 async function cadastroDaPessoa(pool, email) {
   return pessoaDaConta(pool, email);
 }
@@ -771,7 +785,7 @@ async function telaFinanceiro(pool) {
   const mes = `
     Lhs.Data_Abertura_Processo >= DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
     AND Lhs.Data_Abertura_Processo < DATEADD(month, 1, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))`;
-  const [comissao, taxasTotais, taxas, maiores] = await Promise.all([
+  const [comissao, taxasTotais, taxas, maiores, relacao] = await Promise.all([
     pool.request().query(`
       SELECT SUM(Com.Valor_Comissao) AS Comissao, COUNT(*) AS Qtd
       FROM mov_Logistica_House Lhs
@@ -805,6 +819,7 @@ async function telaFinanceiro(pool) {
       LEFT JOIN cad_Pessoa Pes ON Pes.IdPessoa = Com.IdPessoa
       WHERE ${mes}
       ORDER BY Com.Valor_Comissao DESC`),
+    relacionamentoFinanceiro(pool, 8),
   ]);
   const casa = comissao.recordset[0] ?? {};
   const totais = taxasTotais.recordset[0] ?? {};
@@ -814,7 +829,7 @@ async function telaFinanceiro(pool) {
   return {
     setor: "financeiro",
     rotulo: "Financeiro",
-    frase: "Comissão, pagamento e recebimento dos processos abertos neste mês.",
+    frase: "Comissão, pagamento e recebimento deste mês, e o relacionamento com o cliente.",
     kpis: [
       kpi("Comissão do mês", reais(casa.Comissao), `${Number(casa.Qtd) || 0} lançamentos`),
       kpi("Pagamento", reais(pagamento), "taxas do mês", false, "pagamento"),
@@ -844,6 +859,10 @@ async function telaFinanceiro(pool) {
         "Qual a comissão de vendedor neste mês, com os valores?",
       ),
     ],
+    relacionamento: relacao.map((item) => encarteDoCliente(
+      item,
+      item.aberto > 0 ? `Em aberto ${reais(item.aberto)}` : item.pagamento === "em-dia" ? "Nada vencido" : "",
+    )),
   };
 }
 
@@ -855,7 +874,7 @@ async function telaDocumental(pool) {
     WHERE Ati.Data_Termino IS NULL
       AND Ati.Situacao NOT IN (4, 6)
       AND Lhs.Data_Fechamento_Processo IS NULL
-      AND Lhs.Data_Cancelamento IS NULL
+      AND ${PROCESSO_REAL}
       AND Lhs.Numero_Processo LIKE '%-${String(new Date().getFullYear()).slice(-2)}'`;
   const existe = (filtro) => `AND EXISTS (
     SELECT 1 FROM mov_Projeto_Atividade_Responsavel Pap
@@ -919,7 +938,7 @@ async function telaDocumental(pool) {
 
 async function telaOperacional(pool, email, nome, modalidade) {
   const filtro = modalidadeSql(modalidade);
-  const ondeAberto = `Lhs.Data_Fechamento_Processo IS NULL AND Lhs.Data_Cancelamento IS NULL AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date)) ${filtro}`;
+  const ondeAberto = `Lhs.Data_Fechamento_Processo IS NULL AND ${PROCESSO_REAL} AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date)) ${filtro}`;
   const ondePrazo = `(
     (Lms.Data_Embarque IS NULL AND Lms.Data_Previsao_Embarque IS NOT NULL AND Lms.Data_Previsao_Embarque < DATEADD(day, 7, CAST(GETDATE() AS date)))
     OR (Lms.Data_Desembarque IS NULL AND Lms.Data_Previsao_Desembarque IS NOT NULL AND Lms.Data_Previsao_Desembarque < DATEADD(day, 7, CAST(GETDATE() AS date)))
@@ -935,7 +954,7 @@ async function telaOperacional(pool, email, nome, modalidade) {
         FROM mov_Logistica_House Lhs
         LEFT JOIN mov_Logistica_Master Lms ON Lms.IdLogistica_Master = Lhs.IdLogistica_Master
         LEFT JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
-        WHERE Lhs.Data_Cancelamento IS NULL
+        WHERE ${PROCESSO_REAL}
           AND Lhs.Numero_Processo LIKE '${modal}%'
           AND CAST(${coluna} AS date) = CAST(GETDATE() AS date)`;
     })
@@ -1034,10 +1053,8 @@ async function rankingFechamentos(pool) {
         COUNT(*) AS Qtd
       FROM mov_Logistica_House Lhs
       JOIN cad_Pessoa Ven ON Ven.IdPessoa = Lhs.IdVendedor
-      WHERE Lhs.Data_Cancelamento IS NULL
+      WHERE ${PROCESSO_REAL}
         AND Lhs.IdVendedor IS NOT NULL
-        AND Lhs.Numero_Processo NOT LIKE 'DEMU%'
-        AND Lhs.Numero_Processo NOT LIKE 'TESTE%'
         AND Lhs.Data_Abertura_Processo >= DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
         AND Lhs.Data_Abertura_Processo < DATEADD(month, 1, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))
       GROUP BY LTRIM(RTRIM(Ven.Nome))
@@ -1079,11 +1096,12 @@ async function telaComercial(pool, email, nome, inside, escondeComissao, admin) 
         bloco("Sem movimento", [], vazioCarteira, ""),
       ],
       ranking: null,
+      relacionamento: [],
     };
   }
 
   const filtro = id ? "AND Lhs.IdVendedor = @id" : "";
-  const real = "Lhs.Data_Cancelamento IS NULL AND Lhs.Numero_Processo NOT LIKE '%TESTE%' AND Lhs.Numero_Processo NOT LIKE 'DEMU%'";
+  const real = PROCESSO_REAL;
   const aberto = `${real} AND Lhs.Data_Fechamento_Processo IS NULL AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))`;
   const inicioMes = "DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)";
   const doMes = `${inicioMes} AND Lhs.Data_Abertura_Processo < DATEADD(month, 1, ${inicioMes})`;
@@ -1147,8 +1165,8 @@ async function telaComercial(pool, email, nome, inside, escondeComissao, admin) 
     frase: admin
       ? inside
         ? "Processos sem proposta, clientes e as atividades que estão com você."
-        : "Clientes, comissão do mês e as suas pendências."
-      : "Sua carteira: clientes, comissão do mês e as suas pendências.",
+        : "Clientes da empresa e as suas pendências."
+      : "Sua carteira e as suas pendências.",
     kpis: [
       kpi("Sem proposta", totalSemProposta, `abertos nos últimos 6 meses, ${recorte}`, totalSemProposta > 0),
       kpi("Comissão do mês", escondeComissao ? "—" : reais(casa.Comissao), escondeComissao ? "fora deste acesso" : recorte),
@@ -1187,6 +1205,7 @@ async function telaComercial(pool, email, nome, inside, escondeComissao, admin) 
           itens: fechamentos,
         }
       : null,
+    relacionamento: [],
   };
 }
 
@@ -1216,13 +1235,13 @@ async function telaGeral(pool, email, nome) {
 
 async function telaTudo(pool) {
   const [abertos, semProposta, atrasadas, parados] = await Promise.all([
-    contar(pool, `SELECT COUNT(*) AS Total FROM mov_Logistica_House Lhs WHERE Lhs.Data_Fechamento_Processo IS NULL AND Lhs.Data_Cancelamento IS NULL AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))`),
-    contar(pool, `SELECT COUNT(*) AS Total FROM mov_Logistica_House Lhs WHERE Lhs.Data_Fechamento_Processo IS NULL AND Lhs.Data_Cancelamento IS NULL AND Lhs.IdOferta_Frete IS NULL AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))`),
+    contar(pool, `SELECT COUNT(*) AS Total FROM mov_Logistica_House Lhs WHERE Lhs.Data_Fechamento_Processo IS NULL AND ${PROCESSO_REAL} AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))`),
+    contar(pool, `SELECT COUNT(*) AS Total FROM mov_Logistica_House Lhs WHERE Lhs.Data_Fechamento_Processo IS NULL AND ${PROCESSO_REAL} AND Lhs.IdOferta_Frete IS NULL AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))`),
     contar(pool, `SELECT COUNT(*) AS Total FROM mov_Atividade Ati WHERE Ati.Data_Termino IS NULL AND Ati.Situacao NOT IN (4, 6) AND Ati.Previsao_Termino IS NOT NULL AND CAST(Ati.Previsao_Termino AS date) < CAST(GETDATE() AS date) AND Ati.Previsao_Termino >= DATEADD(month, -6, CAST(GETDATE() AS date))`),
     contar(pool, `
       SELECT COUNT(*) AS Total FROM mov_Logistica_House Lhs
       OUTER APPLY (SELECT MAX(A.Data) AS Data FROM mov_Acompanhamento A WHERE A.IdProjeto_Atividade = Lhs.IdProjeto_Atividade) Ult
-      WHERE Lhs.Data_Fechamento_Processo IS NULL AND Lhs.Data_Cancelamento IS NULL
+      WHERE Lhs.Data_Fechamento_Processo IS NULL AND ${PROCESSO_REAL}
         AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))
         AND (Ult.Data IS NULL OR Ult.Data < DATEADD(day, -7, GETDATE()))`),
   ]);
@@ -1250,7 +1269,7 @@ const NOMES_MODAL = { IA: "importação aérea", EA: "exportação aérea", IM: 
 
 async function telaGerencia(pool, modalidade) {
   const filtro = modalidadeSql(modalidade);
-  const real = `Lhs.Data_Cancelamento IS NULL AND Lhs.Numero_Processo NOT LIKE '%TESTE%' AND Lhs.Numero_Processo NOT LIKE 'DEMU%' ${filtro}`;
+  const real = `${PROCESSO_REAL} ${filtro}`;
   const aberto = `${real} AND Lhs.Data_Fechamento_Processo IS NULL AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))`;
   const inicioMes = "DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)";
   const doMes = (coluna) => `${coluna} >= ${inicioMes} AND ${coluna} < DATEADD(month, 1, ${inicioMes})`;

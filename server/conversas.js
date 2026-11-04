@@ -89,16 +89,23 @@ function daPessoa(id, email) {
   return db.prepare(`SELECT id, titulo, atualizado FROM conversas WHERE id = ? AND email = ?`).get(id, email);
 }
 
+function mensagensDe(id) {
+  return db
+    .prepare(`SELECT conteudo FROM mensagens WHERE conversa_id = ? ORDER BY ordem`)
+    .all(id)
+    .map((linha) => JSON.parse(linha.conteudo));
+}
+
 export function lerConversa(id, email) {
   const conversa = daPessoa(id, email);
   if (!conversa) return null;
-  const linhas = db
-    .prepare(`SELECT conteudo FROM mensagens WHERE conversa_id = ? ORDER BY ordem`)
-    .all(id);
-  return {
-    ...conversa,
-    mensagens: linhas.map((linha) => JSON.parse(linha.conteudo)),
-  };
+  return { ...conversa, mensagens: mensagensDe(id) };
+}
+
+export function lerConversaAlheia(id) {
+  const conversa = db.prepare(`SELECT id, email, titulo, atualizado FROM conversas WHERE id = ?`).get(id);
+  if (!conversa) return null;
+  return { ...conversa, somenteLeitura: true, mensagens: mensagensDe(id) };
 }
 
 export function salvarConversa(id, email, titulo, mensagens) {
@@ -143,13 +150,27 @@ try {
 } catch {
   /* a coluna já existe */
 }
+try {
+  db.exec(`ALTER TABLE consumo_ia ADD COLUMN modelo TEXT NOT NULL DEFAULT 'deepseek'`);
+} catch {
+  /* a coluna já existe */
+}
+db.exec(`
+  CREATE TABLE IF NOT EXISTS cota_ia (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provedor TEXT NOT NULL,
+    criado TEXT NOT NULL
+  );
+`);
+const MODELOS_CONSUMO = new Set(["deepseek", "glm", "google", "openrouter"]);
 
 export function registrarConsumo(email, uso, conversaId = "") {
   const total = Number(uso?.total) || 0;
   const contexto = Number(uso?.contexto) || 0;
   if (total <= 0 || contexto <= 0) return;
+  const modelo = MODELOS_CONSUMO.has(uso?.modelo) ? uso.modelo : "google";
   db.prepare(
-    `INSERT INTO consumo_ia (email, conversa_id, entrada, saida, total, raciocinio, contexto, criado) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO consumo_ia (email, conversa_id, entrada, saida, total, raciocinio, contexto, criado, modelo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     String(email || "").slice(0, 180),
     String(conversaId || "").slice(0, 80),
@@ -159,10 +180,39 @@ export function registrarConsumo(email, uso, conversaId = "") {
     Number(uso.raciocinio) || 0,
     contexto,
     agora(),
+    modelo,
   );
 }
 
-export function resumoConsumo() {
+export function registrarPedidoIa(provedor) {
+  const nome = MODELOS_CONSUMO.has(provedor) ? provedor : "";
+  if (!nome) return;
+  db.prepare(`INSERT INTO cota_ia (provedor, criado) VALUES (?, ?)`).run(nome, agora());
+}
+
+export function usoIaDesde(modelo, desde) {
+  const chave = MODELOS_CONSUMO.has(modelo) ? modelo : "google";
+  const pedidos = db.prepare(
+    `SELECT COUNT(*) AS n FROM cota_ia WHERE provedor = ? AND criado >= ?`,
+  ).get(chave, desde);
+  const tokens = db.prepare(
+    `SELECT
+       COALESCE(SUM(total), 0) AS total,
+       COALESCE(SUM(entrada), 0) AS entrada,
+       COALESCE(SUM(saida), 0) AS saida
+     FROM consumo_ia
+     WHERE modelo = ? AND criado >= ?`,
+  ).get(chave, desde);
+  return {
+    pedidos: Number(pedidos?.n) || 0,
+    tokens: Number(tokens?.total) || 0,
+    entrada: Number(tokens?.entrada) || 0,
+    saida: Number(tokens?.saida) || 0,
+  };
+}
+
+export function resumoConsumo(modelo = "google") {
+  const chave = MODELOS_CONSUMO.has(modelo) ? modelo : "google";
   const linha = db.prepare(
     `SELECT
        COUNT(*) AS chamadas,
@@ -173,13 +223,15 @@ export function resumoConsumo() {
        COALESCE(AVG(entrada * 1.0 / contexto), 0) AS ocupacao,
        COALESCE(MAX(entrada * 1.0 / contexto), 0) AS pico,
        COALESCE(MAX(contexto), 0) AS contexto
-     FROM consumo_ia`,
-  ).get();
+     FROM consumo_ia
+     WHERE modelo = ?`,
+  ).get(chave);
   const totalGeral = Number(linha.total) || 0;
   const conversas = db.prepare(
     `SELECT
        c.conversa_id AS id,
        COALESCE(NULLIF(v.titulo, ''), 'Consultas anteriores') AS titulo,
+       COALESCE(NULLIF(MAX(v.email), ''), MAX(c.email), '') AS email,
        SUM(c.total) AS total,
        SUM(c.entrada) AS entrada,
        SUM(c.saida) AS saida,
@@ -188,10 +240,11 @@ export function resumoConsumo() {
        AVG(c.entrada * 1.0 / c.contexto) AS ocupacao
      FROM consumo_ia c
      LEFT JOIN conversas v ON v.id = c.conversa_id
+     WHERE c.modelo = ?
      GROUP BY c.conversa_id
      ORDER BY total DESC
      LIMIT 12`,
-  ).all();
+  ).all(chave);
   return {
     chamadas: Number(linha.chamadas) || 0,
     entrada: Number(linha.entrada) || 0,
@@ -201,8 +254,10 @@ export function resumoConsumo() {
     ocupacao: Number(linha.ocupacao) || 0,
     pico: Number(linha.pico) || 0,
     contexto: Number(linha.contexto) || 0,
+    modelo: chave,
     conversas: conversas.map((item) => ({
       id: String(item.id || ""),
+      email: String(item.email || ""),
       titulo: String(item.titulo || "Consultas anteriores"),
       total: Number(item.total) || 0,
       entrada: Number(item.entrada) || 0,

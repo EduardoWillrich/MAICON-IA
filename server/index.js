@@ -9,9 +9,10 @@ import { montarSelect, montarXpaths, tabelasDaLinha } from "./query.js";
 import { enriquecerNomes, nomearSql } from "./nomes.js";
 import { compararComCadastro } from "./atual.js";
 import { conversar } from "./ia.js";
-import { calendarioAtual, sqlDoPeriodo } from "./datasPedido.js";
+import { calendarioAtual, sqlDoPeriodo, sqlParaExecutar, sqlSemExcecao } from "./datasPedido.js";
+import { textoCalculos } from "./calculos.js";
 import { resumirGmail } from "./gmail.js";
-import { pedeHistorico, responderPorRegra } from "./regras.js";
+import { pedeHistorico, pedidoFichaCliente, pedidoRelacionamento, responderPorRegra } from "./regras.js";
 import { executarFuncao, chaveConsulta, consultaEmCache, consultaFresca, guardarConsulta, perguntaMeuDia } from "./funcoes.js";
 import { painelDoUsuario, resumoInicial } from "./inicio.js";
 import { apagarConta, fotoDaConta, fotoPadrao, listarContas, permissaoDe, registrarConta, salvarConta } from "./acesso.js";
@@ -50,6 +51,7 @@ import {
   criarChave,
   criarConversa,
   lerConversa,
+  lerConversaAlheia,
   listarChaves,
   listarConversas,
   provedoresCompartilhados,
@@ -58,6 +60,7 @@ import {
   resumoConsumo,
   salvarConversa,
 } from "./conversas.js";
+import { saldoIa } from "./saldoIa.js";
 
 const app = express();
 
@@ -816,6 +819,58 @@ app.post("/api/chat", async (req, res) => {
         await poolDia.close().catch(() => {});
       }
     }
+    const relacaoClientes = !jaConsultou && !req.body?.relatorio && !req.body?.apresentacao ? pedidoRelacionamento(ultimaPergunta) : null;
+    if (relacaoClientes) {
+      const poolRelacao = await conectar();
+      try {
+        const resultado = await executarFuncao(poolRelacao, "relacionamento_clientes", { nivel: relacaoClientes.niveis.join(",") }, {
+          recorte: recorteDaVisao(visao, perfil),
+          email: emailChat,
+          nome: nomeDaSessao(req),
+          acesso: acessoChat,
+        });
+        const texto = typeof resultado?.texto === "string" ? resultado.texto : "";
+        if (texto) {
+          encerrado = true;
+          await escreverAosPoucos(enviar, texto);
+          enviar({ tipo: "fim", mensagem: { role: "assistant", content: texto } });
+          res.end();
+          return;
+        }
+      } finally {
+        await poolRelacao.close().catch(() => {});
+      }
+    }
+    const fichaCliente = !jaConsultou && !req.body?.relatorio && !req.body?.apresentacao ? pedidoFichaCliente(mensagens) : null;
+    if (fichaCliente?.perguntar) {
+      const texto = "Qual cliente você quer na ficha?";
+      encerrado = true;
+      await escreverAosPoucos(enviar, texto);
+      enviar({ tipo: "fim", mensagem: { role: "assistant", content: texto } });
+      res.end();
+      return;
+    }
+    if (fichaCliente?.cliente) {
+      const poolFicha = await conectar();
+      try {
+        const resultado = await executarFuncao(poolFicha, "processos_abertos_cliente", { cliente: fichaCliente.cliente }, {
+          recorte: recorteDaVisao(visao, perfil),
+          email: emailChat,
+          nome: nomeDaSessao(req),
+          acesso: acessoChat,
+        });
+        const texto = typeof resultado?.texto === "string" ? resultado.texto : "";
+        if (texto) {
+          encerrado = true;
+          await escreverAosPoucos(enviar, texto);
+          enviar({ tipo: "fim", mensagem: { role: "assistant", content: texto } });
+          res.end();
+          return;
+        }
+      } finally {
+        await poolFicha.close().catch(() => {});
+      }
+    }
     const pedidoLog = pedidoLogDePessoa(mensagens);
     if (!jaConsultou && pedidoLog && visao === "ti" && !req.body?.relatorio) {
       const poolLog = await conectar();
@@ -841,6 +896,8 @@ app.post("/api/chat", async (req, res) => {
     const mensagem = await conversar(mensagens, (texto) => enviar({ tipo: "texto", texto }), {
       completo: Boolean(req.body?.completo),
       relatorio: Boolean(req.body?.relatorio),
+      etapa: ["consulta", "previa", "relatorio", "resposta"].includes(req.body?.etapa) ? req.body.etapa : "",
+      sqlAprovado: String(req.body?.sqlAprovado || "").slice(0, 8000),
       apresentacao: Boolean(req.body?.apresentacao),
       sinal: controle.signal,
       chaves: chavesParaUso(emailChat),
@@ -851,7 +908,7 @@ app.post("/api/chat", async (req, res) => {
       modalidade: modalidadeEfetiva(acessoChat, perfil, visao),
     });
     gravarPreferenciaDita(emailChat, mensagem?.content, ultimaPergunta);
-    if (mensagem?.uso?.total > 0) registrarConsumo(emailChat, mensagem.uso, req.body?.conversaId);
+    if (mensagem?.uso?.total > 0) registrarConsumo(emailChat, { ...mensagem.uso, modelo: mensagem.modelo || mensagem.uso.modelo }, req.body?.conversaId);
     encerrado = true;
     const visivel = acessoChat.papel === "admin" || !mensagem?.uso
       ? mensagem
@@ -1197,15 +1254,12 @@ function registrarConsultaDoPedido(req, origem, sql) {
   }
 }
 
-function semTopDeLista(sql) {
-  return sql.replace(/\btop\s+(?!1\b)\d+\s+/gi, "");
-}
-
 app.post("/api/sql", async (req, res) => {
   let pool;
   try {
     const pedido = String(req.body?.pergunta ?? "");
-    const texto = semTopDeLista(sqlDoPeriodo(String(req.body?.sql ?? ""), pedido, calendarioAtual()).trim().replace(/;\s*$/, ""));
+    const base = sqlSemExcecao(sqlDoPeriodo(String(req.body?.sql ?? ""), pedido, calendarioAtual()), pedido);
+    const texto = sqlParaExecutar(base, pedido, Boolean(req.body?.previa));
     if (!texto) throw new Error("SQL vazio.");
     if (/\blimit\s+\d/i.test(texto)) throw new Error("No SQL Server use TOP, não LIMIT.");
     if (/select\s+(top\s+\d+\s+)?\*\s+from/i.test(texto)) {
@@ -1233,17 +1287,22 @@ app.post("/api/sql", async (req, res) => {
     }
     salvarConsulta(sqlExecutado, "executar_sql");
     registrarConsultaDoPedido(req, "executar_sql", sqlExecutado);
-    const linhas = r.recordset ?? [];
+    const linhas = filtrarLinhas(
+      (r.recordset ?? []).map((l) =>
+        Object.fromEntries(Object.entries(l).map(([k, v]) => [k, v instanceof Date ? iso(v) : v])),
+      ),
+      recorte,
+    );
+    const calculos = textoCalculos(linhas, {
+      truncado: linhas.length > LIMITE_LINHAS_SQL,
+      janela: /\bover\s*\(/i.test(sqlExecutado),
+    });
     res.json({
       sql: sqlExecutado,
       total: linhas.length,
       truncado: linhas.length > LIMITE_LINHAS_SQL,
-      linhas: filtrarLinhas(
-        linhas.slice(0, LIMITE_LINHAS_SQL).map((l) =>
-          Object.fromEntries(Object.entries(l).map(([k, v]) => [k, v instanceof Date ? iso(v) : v])),
-        ),
-        recorte,
-      ),
+      ...(calculos ? { calculos } : {}),
+      linhas: linhas.slice(0, LIMITE_LINHAS_SQL),
     });
   } catch (erro) {
     res.status(400).json({ erro: mensagemErro(erro) });
@@ -1254,7 +1313,14 @@ app.post("/api/sql", async (req, res) => {
 
 app.get("/api/ia/consumo", (req, res) => {
   if (!soAdmin(emailDaSessao(req))) return res.status(403).json({ erro: "Só o administrador vê o consumo." });
-  res.json(resumoConsumo());
+  const pedido = String(req.query.modelo || "");
+  const modelo = ["glm", "deepseek", "google", "openrouter"].includes(pedido) ? pedido : "google";
+  res.json(resumoConsumo(modelo));
+});
+
+app.get("/api/ia/saldo", async (req, res) => {
+  if (!soAdmin(emailDaSessao(req))) return res.status(403).json({ erro: "Só o administrador vê o consumo." });
+  res.json(await saldoIa());
 });
 
 function modalidadeEfetiva(acesso, perfil, visao) {
@@ -1319,7 +1385,7 @@ app.post("/api/conversas", (req, res) => {
 
 app.get("/api/conversas/:id", (req, res) => {
   const email = emailDaSessao(req);
-  const conversa = lerConversa(req.params.id, email);
+  const conversa = lerConversa(req.params.id, email) || (soAdmin(email) ? lerConversaAlheia(req.params.id) : null);
   if (!conversa) return res.status(404).json({ erro: "Conversa não encontrada." });
   res.json(conversa);
 });

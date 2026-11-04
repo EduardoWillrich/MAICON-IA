@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extrairChamadasDoTexto } from "../server/chamadaTexto.js";
+import { extrairChamadasDoTexto, criarFiltroDePensamento, textoSemPensamento } from "../server/chamadaTexto.js";
 
 const vazada =
   '< | DSML | calls> < | DSML | invoke name="executar_sql"> < | DSML | parameter name="sql" string="true">' +
@@ -23,6 +23,17 @@ test("texto normal segue inteiro", () => {
   const extraida = extrairChamadasDoTexto("Olá. A data é 29/10/2026.");
   assert.equal(extraida.texto, "Olá. A data é 29/10/2026.");
   assert.deepEqual(extraida.chamadas, []);
+});
+
+test("o rascunho do Gemma não aparece na resposta", () => {
+  assert.equal(textoSemPensamento("<thought>vou checar a fatura</thought>ok"), "ok");
+  let visivel = "";
+  const filtro = criarFiltroDePensamento((texto) => { visivel += texto; });
+  filtro.receber("<tho");
+  filtro.receber("ught>interno</thought>A fatura");
+  filtro.receber(" está aberta.");
+  filtro.finalizar();
+  assert.equal(visivel, "A fatura está aberta.");
 });
 
 test("marcação com barra larga também vira chamada", () => {

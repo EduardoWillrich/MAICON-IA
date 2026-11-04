@@ -7,11 +7,12 @@ import {
   rodadasDesdePergunta,
 } from "./avaliacaoConsulta.js";
 import { textoConsultasRelevantes } from "./consultas.js";
-import { criarFiltroDeChamada, extrairChamadasDoTexto } from "./chamadaTexto.js";
-import { anotarPedido } from "./datasPedido.js";
+import { criarFiltroDeChamada, criarFiltroDePensamento, extrairChamadasDoTexto, textoSemPensamento } from "./chamadaTexto.js";
+import { anotarPedido, ultimaSemana } from "./datasPedido.js";
 import { executarFilaComFallback, filaDeChaves } from "./filaIa.js";
 import { ferramentaDaVisao } from "./funcoes.js";
-import { modelosOpenRouter } from "./openrouter.js";
+import { registrarPedidoIa } from "./conversas.js";
+import { modeloDaEtapa, modelosOpenRouter } from "./openrouter.js";
 
 const FERRAMENTAS = [
   {
@@ -52,7 +53,8 @@ const FERRAMENTAS = [
         "Padrão obrigatório: SELECT sem TOP de lista, uma coluna por linha, apelido AS em português " +
         "(Cia.Nome AS Companhia_Transporte), CASE WHEN para códigos, apelido curto da tabela (Lhs, Lms, Cia), " +
         "LEFT OUTER JOIN, WHERE com filtro de data e ORDER BY. " +
-        "Não use TOP 50 nem TOP 500 para cortar a lista. TOP 1 só para achar um único registro pela chave.",
+        "Não use TOP 50 nem TOP 500 para cortar a lista. TOP 1 só para achar um único registro pela chave. " +
+        "Quantidade, soma, média, mínimo, máximo e ranking usam COUNT, SUM, AVG, MIN, MAX e GROUP BY no próprio SELECT.",
       parameters: {
         type: "object",
         properties: { sql: { type: "string" } },
@@ -338,6 +340,22 @@ const FERRAMENTAS = [
   {
     type: "function",
     function: {
+      name: "relacionamento_clientes",
+      description:
+        "Relacionamento dos clientes ouro, prata e bronze, em cartões coloridos, dizendo se cada um paga em dia. " +
+        "Use quando pedirem o relacionamento dessas classificações, e não a ficha de um cliente só. " +
+        "nivel é ouro, prata, bronze ou uma lista separada por vírgula. Sem nivel, traz os três. Copie cada bloco encarte inteiro.",
+      parameters: {
+        type: "object",
+        properties: {
+          nivel: { type: "string", description: "ouro, prata, bronze ou lista separada por vírgula" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "taxas_processo",
       description: "Taxas de um processo, com pagamento e recebimento. Só na visão financeira.",
       parameters: {
@@ -366,7 +384,8 @@ const FERRAMENTAS = [
     function: {
       name: "processos_abertos_cliente",
       description:
-        "Ficha do cliente pelo nome: processos abertos, vendedor, quantos estão sem proposta, último processo e comissão do mês. " +
+        "Ficha do cliente pelo nome: processos abertos, vendedor, quantos estão sem proposta, último processo, comissão do mês, " +
+        "se ele é ouro, prata ou bronze e se paga em dia. O bloco encarte pinta o cartão. Copie o bloco inteiro. " +
         "Se a busca achar mais de um cliente e nenhum for o nome exato, a ferramenta pergunta qual. Copie a pergunta e não escolha sozinho. " +
         "foco=abertos, sem_proposta ou sem_movimento monta o ranking da carteira e não precisa de cliente.",
       parameters: {
@@ -624,7 +643,8 @@ function textoSetor(setor) {
   if (setor === "inside") {
     return (
       "SETOR INSIDE SALES: mostre cliente, proposta, oferta, vendedor e comissão de vendedor. " +
-      "Ficha de cliente → processos_abertos_cliente e copie o texto. " +
+      "Ficha de cliente → processos_abertos_cliente e copie o texto, inclusive o bloco encarte. " +
+      "O encarte diz se o cliente é ouro, prata ou bronze e se paga em dia. A cor do cartão segue essa classificação. " +
       "Para atividades pendentes e o motivo, use atividades_pendentes com setor=inside e reproduza o texto. " +
       "Não detalhe desembaraço operacional (averbação, canal de liberação, coleta ou entrega no destino, transportadora de destino). " +
       "Se pedirem isso, diga que essa informação é do setor operacional.\n"
@@ -702,7 +722,8 @@ function textoSetor(setor) {
   if (setor === "comercial") {
     return (
       "SETOR VENDEDOR: mostre cliente, proposta, oferta, comissão e os processos comerciais. " +
-      "Ficha de cliente → processos_abertos_cliente e copie o texto. " +
+      "Ficha de cliente → processos_abertos_cliente e copie o texto, inclusive o bloco encarte. " +
+      "O encarte diz se o cliente é ouro, prata ou bronze e se paga em dia. A cor do cartão segue essa classificação. " +
       "Para atividades pendentes e o motivo, use atividades_pendentes com setor=comercial e reproduza o texto. " +
       "Não detalhe desembaraço operacional (averbação, canal de liberação, coleta ou entrega no destino). " +
       "Se pedirem isso, diga que essa informação é do setor operacional.\n"
@@ -753,6 +774,7 @@ function textoCalendario(agora = new Date()) {
   const semana = new Intl.DateTimeFormat("pt-BR", { timeZone: zona, weekday: "long" }).format(agora);
   const hojeBr = fmt(hoje);
   const ontemBr = fmt(ontem);
+  const passada = ultimaSemana(hojeBr);
   return {
     hoje: hojeBr,
     ontem: ontemBr,
@@ -763,6 +785,8 @@ function textoCalendario(agora = new Date()) {
       `DATA DE HOJE: ${semana}, ${hojeBr}, fuso America/Sao_Paulo. ` +
       `Ontem é ${ontemBr}. Este mês vai de ${fmt(inicioMes)} até ${hojeBr}. ` +
       `Esta semana começa em ${fmt(inicioSemana)}. ` +
+      `Última semana, semana passada e semana anterior são de sábado ${passada.inicioBr} a sexta ${passada.sextaBr}. ` +
+      `No SQL: >= '${passada.inicio}' AND < '${passada.fim}'. Não conte sete dias a partir de hoje. ` +
       "hoje, ontem, esse mês, este mês, neste mês e esta semana usam exatamente essas datas. " +
       "Não pergunte a data de novo. Uma lista por período não reaproveita o processo da mensagem anterior. " +
       "Referência de cliente, como 136.763, não é número de processo. Número de processo tem letras, hífen e ano, como IM5944-26.",
@@ -826,8 +850,9 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     (setor === "ti"
       ? "Nesta aba, cite tabela e campo quando isso ajudar o TI. "
       : setor === "financeiro"
-        ? "VISÃO FINANCEIRA: responda com valores em real, taxas, comissões e prazos. Não cite nome de tabela. " +
+        ? "VISÃO FINANCEIRA: responda com valores em real, taxas, comissões, prazos e relacionamento do cliente. Não cite nome de tabela. " +
           "Use painel_financeiro para o mês, taxas_processo para um processo, comissao_periodo e prazos. " +
+          "O relacionamento mostra se o cliente é ouro, prata ou bronze e se paga em dia. Mantenha os blocos encarte: a cor do cartão segue a classificação. " +
           "Relatório: quando pedirem relatório, consulte e responda no chat. Nunca mencione Excel, planilha nem download. " +
           "GRÁFICO só quando pedirem gráfico. Sem esse pedido, não inclua o bloco. Quando pedirem, mantenha a tabela e acrescente ```grafico.\n"
         : "Nunca responda ao usuário com nomes de tabela: buscar_tabelas e listar_colunas são passos internos. ") +
@@ -855,6 +880,14 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "Não troque um período escrito pelo usuário por uma data calculada, como 90 dias atrás. " +
     "'este ano', 'esse ano' ou 'no ano' = Data >= 'ano-01-01' AND Data < 'ano seguinte-01-01'. " +
     "Se não houver período, use o ano atual inteiro.\n" +
+    "CÁLCULOS: quantidade, soma, média, mínimo, máximo, percentual, margem, lucro e ranking saem do SQL, " +
+    "com COUNT, SUM, AVG, MIN, MAX e GROUP BY quando a pergunta separar por cliente, mês ou modalidade. " +
+    "consultar_dados devolve no máximo 20 linhas e não serve para total nem soma. " +
+    "A tabela do chat mostra no máximo 30 linhas. É proibido somar, tirar média ou calcular percentual dessa amostra. " +
+    "Se o retorno começar com CÁLCULOS, responda com esses números: eles valem para todas as linhas. Não copie o título CÁLCULOS. " +
+    "Lucro é recebimento menos pagamento. Margem é esse lucro dividido pelo recebimento, em percentual com uma casa, " +
+    "e só existe quando o recebimento é maior que zero. " +
+    "Percentual é a parte dividida pelo total do conjunto inteiro. Um número que não está no retorno não entra na resposta.\n" +
     "Regras: uma coluna por linha; apelido AS em português com underscore; CASE para campos de código; " +
     "apelido da tabela com 2 a 4 letras (Lhs, Lms, Cia, Pai, Con); sempre LEFT OUTER JOIN, nunca só JOIN; " +
     "FROM, WHERE e ORDER BY em linha própria; sem SELECT * e sem LIMIT. Qualifique a tabela com dbo. " +
@@ -894,7 +927,8 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "Meu dia, o que fazer hoje ou a abertura do turno → meu_dia e copie o texto. " +
     "É proibido responder 'como está o meu dia' com pendencias: isso só lista a pessoa logada e perde o panorama da visão. " +
     "Gráfico de faturas → se o número do processo não veio na mensagem, pergunte qual processo e não consulte. " +
-    "Não use processo de exemplo nem processo com TESTE no nome. " +
+    "Não inclua processo TESTE, cliente com TESTE no nome, processo DEMU nem processo cancelado " +
+    "(IdStatus_Processo_Logistico = 6 ou Data_Cancelamento preenchida), a menos que o usuário peça esses registros. " +
     "Com o número informado pelo usuário, consulte as faturas e desenhe o gráfico. " +
     "Log técnico de um processo: se o número não veio na mensagem, pergunte qual processo e pare. " +
     "Não chame log_recente, executar_sql nem consultar_log nesse caso. " +
@@ -906,7 +940,8 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "acompanhamentos_processo lista as notas. pendencias lista a pessoa logada: sem período, escopo=abertas; hoje, atrasadas e semana só quando pedirem. " +
     "o_que_mudou mostra alterações desde uma data. proposta_processo lê a proposta de um processo. " +
     "propostas_periodo lista propostas pela data, em mov_Proposta_Frete. comissao_periodo é do comercial. " +
-    "processos_abertos_cliente monta a ficha do cliente: abertos, vendedor, sem proposta, último processo e comissão do mês. " +
+    "processos_abertos_cliente monta a ficha do cliente: abertos, vendedor, sem proposta, último processo, comissão do mês, " +
+    "classificação ouro, prata ou bronze e se paga em dia. Copie o bloco encarte inteiro. " +
     "Se a ferramenta perguntar qual cliente, copie a pergunta. foco=abertos, sem_proposta ou sem_movimento é o ranking, sem nome. " +
     "prazos aceita marco, modo e modalidade. " +
     "processos_parados lista quem está sem acompanhamento. rota_processo monta o cartão da rota de um processo. " +
@@ -931,7 +966,7 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
       : "Depois da consulta, responda em português claro, para alguém não técnico. Use somente os dados retornados; " +
         "se algo não constar, diga isso. Não invente cliente, valor, data, processo ou tabela.\n\n") +
     "FORMATO: responda em Markdown (GFM). Frases curtas. Use lista, negrito e tabela quando houver vários itens ou colunas. " +
-    "Se a ferramenta devolver um bloco ```log, ```painel, ```dia ou ```rota, copie o bloco inteiro, sem reescrever em lista ou parágrafo. " +
+    "Se a ferramenta devolver um bloco ```log, ```painel, ```dia, ```rota ou ```encarte, copie o bloco inteiro, sem reescrever em lista ou parágrafo. " +
     "Não use a frase 'Atualização em data, por usuário. N campos.'. " +
     "Cada processo, atividade ou registro fica num item de lista, começando com '- '. " +
     "É proibido juntar vários processos no mesmo parágrafo. " +
@@ -947,9 +982,11 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "Omita campos vazios e códigos internos. Datas como dd/mm/aaaa hh:mm, nunca 2026-10-29T14:14:32.000Z. " +
     "Nomes de usuário como nome próprio (mario.tobias → Mario Tobias).\n" +
     "LISTA: no chat, no máximo 30 registros. Se houver mais, diga o total e escreva Mostrei 30 de N. " +
-    "Não cole a lista inteira. O total conta, mesmo que só 30 linhas apareçam. " +
+    "Não cole a lista inteira. O total e as somas vêm do bloco CÁLCULOS ou de um SELECT agregado, nunca da conta das 30 linhas. " +
     "monitoramentos_alterados: copie as tabelas inteiras, com todas as linhas e colunas. " +
     "rota_processo: copie o bloco ```rota inteiro, sem resumir os trechos. " +
+    "processos_abertos_cliente, relacionamento_clientes e painel_financeiro: copie cada bloco ```encarte inteiro. A cor do cartão é ouro, prata ou bronze. " +
+    "Relacionamento dos clientes ouro, prata ou bronze → relacionamento_clientes e copie os blocos encarte. Não troque os cartões por uma lista. " +
     "Não diga que não consegue, que a lista é parcial, que o total não pode ser confirmado, ou mande abrir outra tela do sistema.\n" +
     "IMPRESSÃO: se o usuário pedir formatado para imprimir, não reescreva o texto. " +
     "O histórico sai no modelo padrão de log, com o botão de imprimir.\n" +
@@ -961,6 +998,8 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
         "Nunca selecione coluna Id* nem código interno. Não inclua localizar_processo no relatório. " +
         "Não use consultar_log para o relatório. A tabela também aparece no chat. Nunca fale de Excel, planilha nem de arquivo para baixar.\n"
       : "") +
+    "AUTOCORREÇÃO: se o texto abaixo trouxer AUTOCORREÇÃO OBRIGATÓRIA, ela manda na forma da resposta. " +
+    "Faça o que o comentário pede e não repita a resposta recusada.\n" +
     "\n" +
     (extra || "") +
     "\n" +
@@ -987,6 +1026,15 @@ async function lerStream(body, aoTexto) {
   let resto = "";
   const acc = { content: "", reasoning: "", tools: [] };
   const filtro = criarFiltroDeChamada(aoTexto);
+  const pensamento = criarFiltroDePensamento(
+    (texto) => {
+      acc.content += texto;
+      filtro.receber(texto);
+    },
+    (texto) => {
+      acc.reasoning += texto;
+    },
+  );
   while (true) {
     const { done, value } = await leitor.read();
     if (done) break;
@@ -1009,10 +1057,7 @@ async function lerStream(body, aoTexto) {
       const pedacoTexto = textoDe(delta.content) || textoDe(escolha.message?.content);
       const usoBruto = pedaco.usage;
       if (usoBruto) acc.uso = lerUso(usoBruto);
-      if (pedacoTexto) {
-        acc.content += pedacoTexto;
-        filtro.receber(pedacoTexto);
-      }
+      if (pedacoTexto) pensamento.receber(pedacoTexto);
       const raciocinio = textoDe(delta.reasoning) || textoDe(delta.reasoning_content);
       if (raciocinio) acc.reasoning += raciocinio;
       const chamadasDoPedaco = delta.tool_calls?.length ? delta.tool_calls : (escolha.message?.tool_calls ?? []);
@@ -1026,6 +1071,7 @@ async function lerStream(body, aoTexto) {
       }
     }
   }
+  pensamento.finalizar();
   filtro.finalizar();
   const doTexto = extrairChamadasDoTexto(acc.content);
   const doRaciocinio = extrairChamadasDoTexto(acc.reasoning);
@@ -1094,126 +1140,88 @@ function corpoAberto(corpo) {
   return aberto;
 }
 
-async function chamarOpenRouter(chave, corpo, aoTexto, maxTokens) {
-  const modelos = modelosOpenRouter();
-  let ultimoErro;
-  for (let indice = 0; indice < modelos.length; indice += 1) {
-    const model = modelos[indice];
-    let resp;
-    try {
-      resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${chave}`,
-          "HTTP-Referer": "https://maicon.conlinebr.com.br",
-          "X-Title": "Maicon AI",
-        },
-        body: JSON.stringify(corpoComSaida({
-          ...corpo,
-          model,
-          stream: true,
-          stream_options: { include_usage: true },
-          temperature: corpo.temperature ?? 0.2,
-          reasoning: { effort: "high" },
-          provider: { sort: "latency" },
-        }, maxTokens)),
-      });
-    } catch (erro) {
-      ultimoErro = erroDoProvedor(erro?.message || "O OpenRouter não respondeu.", 503);
-      console.warn(`[IA] OpenRouter indisponível no modelo ${model}; status 503.`);
-      continue;
-    }
-    if (!resp.ok && corpo.tool_choice && resp.status === 400) {
-      const recusa = await resp.clone().json().catch(() => ({}));
-      const aviso = String(recusa?.error?.message || "");
-      if (/tool_choice|tools/i.test(aviso)) {
-        const deNovo = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${chave}`,
-            "HTTP-Referer": "https://maicon.conlinebr.com.br",
-            "X-Title": "Maicon AI",
-          },
-          body: JSON.stringify(corpoComSaida({
-            ...corpo,
-            tool_choice: "auto",
-            model,
-            stream: true,
-            stream_options: { include_usage: true },
-            temperature: corpo.temperature ?? 0.2,
-            reasoning: { effort: "high" },
-            provider: { sort: "latency" },
-          }, maxTokens)),
-        });
-        if (deNovo.ok && deNovo.body) resp = deNovo;
-      }
-    }
-    if (resp.ok && resp.body) {
-      const temReserva = indice < modelos.length - 1;
-      let guardado = "";
-      try {
-        const mensagem = await lerStream(resp.body, temReserva ? (texto) => { guardado += texto; } : aoTexto);
-        if (mensagem) {
-          if (guardado) aoTexto?.(guardado);
-          return mensagem;
-        }
-        const deNovo = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${chave}`,
-            "HTTP-Referer": "https://maicon.conlinebr.com.br",
-            "X-Title": "Maicon AI",
-          },
-          body: JSON.stringify(corpoComSaida({
-            ...corpo,
-            model,
-            stream: true,
-            stream_options: { include_usage: true },
-            temperature: corpo.temperature ?? 0.2,
-            reasoning: { enabled: false },
-            provider: { sort: "latency" },
-          }, maxTokens)),
-        });
-        if (deNovo.ok && deNovo.body) {
-          const segunda = await lerStream(deNovo.body, aoTexto);
-          if (segunda) return segunda;
-        }
-      } catch (erro) {
-        ultimoErro = erroDoProvedor(erro?.message || "A resposta do OpenRouter foi interrompida.", 503);
-        console.warn(`[IA] OpenRouter interrompeu o modelo ${model}; status 503.`);
-        continue;
-      }
-      ultimoErro = erroDoProvedor("A IA não devolveu texto.", 503);
-      continue;
-    }
-    const dados = await resp.json().catch(() => ({}));
-    const mensagem = dados?.error?.message || `OpenRouter respondeu ${resp.status}`;
-    ultimoErro = erroDoProvedor(mensagem, resp.status);
-    console.warn(`[IA] OpenRouter recusou o modelo ${model}; status ${resp.status}.`);
-    if ([401, 403].includes(resp.status)) throw ultimoErro;
-  }
-  throw ultimoErro || new Error("O OpenRouter não respondeu.");
-}
-
-async function chamarProvedor(item, corpo, aoTexto) {
-  if (item.provedor !== "openrouter") throw new Error(`Provedor de IA não suportado: ${item.provedor}`);
-  return chamarOpenRouter(item.chave, corpoAberto(corpo), aoTexto, corpo.limiteTokens);
-}
-
-async function completarCurto(chave, sistemaTexto, usuario, maxTokens) {
-  const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
+const DESTINOS = {
+  openrouter: {
+    url: "https://openrouter.ai/api/v1/chat/completions",
+    nome: "OpenRouter",
+    cabecalhos: (chave) => ({
       "Content-Type": "application/json",
       Authorization: `Bearer ${chave}`,
       "HTTP-Referer": "https://maicon.conlinebr.com.br",
       "X-Title": "Maicon AI",
-    },
+    }),
+  },
+};
+
+async function pedirUmModelo(destino, chave, corpo, model, aoTexto, maxTokens) {
+  const cfg = DESTINOS[destino];
+  const pedir = (extra) => fetch(cfg.url, {
+    method: "POST",
+    headers: cfg.cabecalhos(chave),
+    body: JSON.stringify(corpoComSaida({
+      ...corpo,
+      ...extra,
+      model,
+      stream: true,
+      temperature: corpo.temperature ?? 0.2,
+    }, maxTokens)),
+  });
+  let resp;
+  try {
+    resp = await pedir({});
+  } catch (erro) {
+    throw erroDoProvedor(erro?.message || `O ${cfg.nome} não respondeu.`, 503);
+  }
+  if (!resp.ok && corpo.tool_choice && resp.status === 400) {
+    const recusa = await resp.clone().json().catch(() => ({}));
+    const aviso = String(recusa?.error?.message || "");
+    if (/tool_choice|tools/i.test(aviso)) {
+      const deNovo = await pedir({ tool_choice: "auto" });
+      if (deNovo.ok && deNovo.body) resp = deNovo;
+    }
+  }
+  if (resp.ok && resp.body) {
+    try {
+      const mensagem = await lerStream(resp.body, aoTexto);
+      if (mensagem) {
+        registrarPedidoIa(destino);
+        return comModelo(mensagem, destino);
+      }
+      const deNovo = await pedir({});
+      if (deNovo.ok && deNovo.body) {
+        const segunda = await lerStream(deNovo.body, aoTexto);
+        if (segunda) {
+          registrarPedidoIa(destino);
+          return comModelo(segunda, destino);
+        }
+      }
+    } catch (erro) {
+      throw erroDoProvedor(erro?.message || `A resposta do ${cfg.nome} foi interrompida.`, 503);
+    }
+    throw erroDoProvedor("A IA não devolveu texto.", 503);
+  }
+  const dados = await resp.json().catch(() => ({}));
+  throw erroDoProvedor(mensagemDoCorpo(dados) || `O ${cfg.nome} respondeu ${resp.status}`, resp.status);
+}
+
+function mensagemDoCorpo(dados) {
+  const corpo = Array.isArray(dados) ? dados[0] : dados;
+  return String(corpo?.error?.message || corpo?.message || "").trim();
+}
+
+async function chamarProvedor(item, corpo, aoTexto) {
+  const aberto = corpoAberto(corpo);
+  const modelo = String(corpo.model || "").trim() || modelosOpenRouter()[0];
+  return pedirUmModelo("openrouter", item.chave, aberto, modelo, aoTexto, corpo.limiteTokens);
+}
+
+async function completarNoDestino(destino, chave, sistemaTexto, usuario, maxTokens, model) {
+  const cfg = DESTINOS[destino];
+  const resp = await fetch(cfg.url, {
+    method: "POST",
+    headers: cfg.cabecalhos(chave),
     body: JSON.stringify({
-      model: modelosOpenRouter()[0],
+      model,
       messages: [
         { role: "system", content: sistemaTexto },
         { role: "user", content: usuario },
@@ -1221,18 +1229,32 @@ async function completarCurto(chave, sistemaTexto, usuario, maxTokens) {
       max_tokens: maxTokens,
       temperature: 0,
       stream: false,
-      reasoning: { enabled: false },
     }),
   });
   const dados = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw erroDoProvedor(dados?.error?.message || `O DeepSeek respondeu ${resp.status}`, resp.status);
-  return String(dados?.choices?.[0]?.message?.content || "");
+  if (!resp.ok) throw erroDoProvedor(mensagemDoCorpo(dados) || `O ${cfg.nome} respondeu ${resp.status}`, resp.status);
+  registrarPedidoIa(destino);
+  return textoSemPensamento(String(dados?.choices?.[0]?.message?.content || ""));
+}
+
+async function completarCurto(chave, sistemaTexto, usuario, maxTokens, model = modelosOpenRouter()[0]) {
+  return completarNoDestino("openrouter", chave, sistemaTexto, usuario, maxTokens, model);
+}
+
+function comModelo(mensagem, destino) {
+  const modelo = destino === "openrouter" ? "openrouter" : "google";
+  return {
+    ...mensagem,
+    modelo,
+    ...(mensagem?.uso ? { uso: { ...mensagem.uso, modelo } } : {}),
+  };
 }
 
 function mensagemPronta(msg) {
   return {
     role: "assistant",
     content: msg?.content ?? "",
+    ...(msg?.modelo ? { modelo: msg.modelo } : {}),
     ...(msg?.uso ? { uso: msg.uso } : {}),
     ...(msg?.tool_calls?.length ? { tool_calls: msg.tool_calls } : {}),
   };
@@ -1282,7 +1304,7 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
     }
   }
   const temRetorno = mensagens.slice(inicioRodada).some((item) => item?.role === "tool");
-  const filaBase = filaDeChaves(opcoes.chaves);
+  const filaBase = filaDeChaves([]);
   const chaveDeepSeek = filaBase[0]?.chave || "";
   const calendarioPedido = textoCalendario();
   const usuarios = mensagens.filter((item) => item?.role === "user");
@@ -1328,12 +1350,42 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
   } else if (mensagens.filter((item) => item?.role === "user").length > 1) {
     instrucoes +=
       "\nA última mensagem do usuário é a única pergunta a responder. Não repita a resposta anterior. " +
-      "Se pediram um dado, responda esse dado. Não monte de novo a ficha do processo, a menos que tenham pedido o resumo.";
+      "Se pediram um dado, responda esse dado. Não monte de novo a ficha do processo, a menos que tenham pedido o resumo. " +
+      "Ficha de cliente é outro pedido: se a pergunta for a ficha de um cliente, ou a mensagem for só o nome depois dessa pergunta, " +
+      "chame processos_abertos_cliente e copie o bloco ```encarte inteiro.";
   }
   if (conferencia.aviso && !corrigindo) instrucoes += `\n${conferencia.aviso}\n`;
+  const soNumero = /^[A-Za-z]{1,4}\d{2,6}-\d{2}$/i.test(String(pedido).trim());
+  const assunto = soNumero && pedidoAnterior ? `${pedidoAnterior}\n${pedido}` : String(pedido);
+  const pediuHistorico = /quem (?:inclu|alter|excl|mud|lan[cç]|cri|apag|cadastr|mexeu)|hist[oó]rico|\blogs?\b|antes e depois|mudan[cç]a|altera[cç]/i.test(assunto);
+  if (soNumero && pedidoAnterior && !pediuHistorico) {
+    instrucoes +=
+      "\nCONTINUAÇÃO: a última mensagem é só o número do processo da pergunta anterior. " +
+      "Responda essa pergunta com esse número. É proibido chamar consultar_log, log_recente ou resultado_atual. " +
+      "Não mostre histórico de alterações, inclusão ou atualização. " +
+      "Se a pergunta for gráfico de faturas, consulte as faturas com número, valor e data.";
+  }
+  const etapaPedida = ["consulta", "previa", "relatorio", "resposta"].includes(opcoes.etapa) ? opcoes.etapa : "";
+  const etapa = corrigindo ? "consulta" : etapaPedida || (opcoes.relatorio ? "previa" : "consulta");
+  const escrevendo = etapa === "resposta" || etapa === "relatorio";
+  const ferramentasDaEtapa = escrevendo
+    ? []
+    : ferramentas.filter((item) => pediuHistorico || !["consultar_log", "resultado_atual", "log_recente"].includes(item.function.name));
+  if (etapa === "previa") {
+    instrucoes +=
+      "\nPRÉVIA: chame executar_sql uma vez, com as colunas pedidas. O sistema mostra só a primeira linha, como TOP 1, " +
+      "para o usuário ver se as informações batem. Não escreva a lista completa nem diga que a consulta terminou.";
+  } else if (escrevendo) {
+    instrucoes +=
+      "\nMOSTRAR A RESPOSTA: não chame ferramenta e não monte outra consulta. Use só os dados que já vieram. " +
+      "Escreva em português claro, só o que foi pedido. Se for relatório, mantenha as mesmas colunas, no máximo 30 linhas e o total. " +
+      "Sem SQL e sem nome de tabela." +
+      (pediuHistorico ? "" : " A pergunta não pediu log. É proibido falar de histórico, alteração, inclusão ou atualização de campos.");
+  }
   const corpo = {
-    temperature: 0.3,
-    tools: ferramentas,
+    model: modeloDaEtapa(etapa),
+    temperature: escrevendo ? 0.2 : 0.3,
+    ...(ferramentasDaEtapa.length ? { tools: ferramentasDaEtapa } : {}),
     messages: [
       { role: "system", content: instrucoes },
       ...prepararMensagens(base.map(({ uso: _uso, relatorio: _relatorio, log: _log, ...resto }) => resto)),
@@ -1341,9 +1393,9 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
   };
   const permitidas = ferramentasDoPedido(opcoes);
   const corpoUsado = corrigindo ? corpoDeCorrecao(corpo, conferencia.instrucao, permitidas) : corpo;
-  const querJulgar = temRetorno && !opcoes.apresentacao && !opcoes.relatorio;
+  const querJulgar = temRetorno && !opcoes.apresentacao && !opcoes.relatorio && !escrevendo;
   const silencioso = corrigindo || querJulgar;
-  console.warn(`[IA] rota ${corrigindo ? "conferencia" : "resposta"}; instrucoes ${instrucoes.length} caracteres; ferramentas ${corpoUsado.tools.length}.`);
+  console.warn(`[IA] rota ${etapa}; modelo ${corpo.model}; instrucoes ${instrucoes.length} caracteres; ferramentas ${corpoUsado.tools?.length || 0}.`);
   if (corrigindo) console.warn(`[IA] Autoavaliação reprovou a consulta: ${conferencia.motivo}`);
 
   async function pedir(corpoAtual, filaAtual, transmitir) {
@@ -1411,6 +1463,7 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
             "Não invente número, nome, data ou valor. Não diga que a lista é parcial nem que o total não pode ser confirmado. Sem SQL e sem nome de tabela.",
           `Pergunta: ${String(pedido).slice(0, 500)}\n\nProblema: ${veredito.motivo}\n\nTrecho da consulta:\n${amostraDaConsulta(mensagens)}\n\nResposta a reescrever:\n${String(dados?.content || "").slice(0, 1800)}`,
           700,
+          modeloDaEtapa("resposta"),
         )).trim()
         : "";
       if (novo) {

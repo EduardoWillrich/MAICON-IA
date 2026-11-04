@@ -111,6 +111,41 @@ function sqlDaChamada(chamada) {
   return String(argumentos(chamada).sql ?? "");
 }
 
+export function pedeCalculo(texto) {
+  return /\b(quantos|quantas|quanto|soma|somar|total|m[eé]dia|percentual|porcentagem|margem|lucro|profit)\b/i.test(String(texto ?? ""));
+}
+
+export function sqlAgrega(sql) {
+  return /\b(count|sum|avg|min|max)\s*\(|\bgroup\s+by\b/i.test(String(sql ?? ""));
+}
+
+function pedidoDaPergunta(mensagens) {
+  for (let i = (mensagens ?? []).length - 1; i >= 0; i--) {
+    if (mensagens[i]?.role !== "user") continue;
+    const texto = String(mensagens[i].content ?? "").trim();
+    if (/^(Consulte o banco|Consulte de novo|Não liste nomes|LISTA COMPLETA|AUTOAVALIAÇÃO)/i.test(texto)) continue;
+    return texto;
+  }
+  return "";
+}
+
+function pedeLista(texto) {
+  return /\b(liste|lista|listar|quais|quem|mostre|mostra)\b/i.test(texto);
+}
+
+function variasLinhas(content) {
+  const dados = parseJson(content);
+  if (dados && Array.isArray(dados.linhas)) return dados.linhas.length > 1;
+  if (/Mostrei \d+ de \d+/.test(String(content ?? ""))) return true;
+  const tabela = String(content ?? "")
+    .split("\n")
+    .filter((linha) => {
+      const texto = linha.trim();
+      return texto.startsWith("|") && !/^\|\s*-+/.test(texto);
+    });
+  return tabela.length > 2;
+}
+
 function reprova(motivo, instrucao) {
   return { ok: false, motivo, instrucao };
 }
@@ -162,9 +197,25 @@ export function conferirTabelas(mensagens) {
   }
   const dados = parseJson(ultimo.content);
   const vazio = (dados && Array.isArray(dados.linhas) && dados.linhas.length === 0) || /nenhum registro|nenhuma linha/i.test(ultimo.content);
+  const pedido = pedidoDaPergunta(mensagens);
+  const temCalculos = /CÁLCULOS/.test(ultimo.content);
+  let avisoCalculo = "";
+  if (!vazio && pedeCalculo(pedido)) {
+    if (temCalculos) {
+      avisoCalculo = "Use os números do bloco CÁLCULOS. Eles cobrem todas as linhas da consulta. Não some nem faça média da tabela.";
+    } else if (!sqlAgrega(sql) && variasLinhas(ultimo.content) && !pedeLista(pedido)) {
+      return reprova(
+        "Cálculo em cima da lista",
+        "AUTOAVALIAÇÃO: a pergunta pede quantidade, total, soma, média, margem ou lucro, e o SELECT devolveu várias linhas sem SUM, COUNT, AVG, MIN, MAX ou GROUP BY. Reescreva agregando o período inteiro. Não some a amostra. Não responda ao usuário ainda.",
+      );
+    } else if (!sqlAgrega(sql) && variasLinhas(ultimo.content)) {
+      avisoCalculo = "A lista não fecha o número pedido. Faça outro SELECT com SUM, COUNT ou AVG antes de responder. Não some as linhas mostradas.";
+    }
+  }
+  const avisoVazio = vazio ? "A última consulta não devolveu registros. Diga isso com clareza. Não invente cliente, valor, data ou processo." : "";
   return {
     ok: true,
-    aviso: vazio ? "A última consulta não devolveu registros. Diga isso com clareza. Não invente cliente, valor, data ou processo." : "",
+    aviso: [avisoVazio, avisoCalculo].filter(Boolean).join(" "),
     sql,
     tabelas: usadas,
   };

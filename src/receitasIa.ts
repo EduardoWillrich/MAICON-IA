@@ -205,14 +205,13 @@ export function guardarReceita(pergunta: string, ferramentas: Receita[]) {
 
 const LINHAS_NO_CHAT = 30;
 
-function colunaDeData(colunas: string[]): string {
-  return colunas.find((coluna) => /data|abertura|quando/i.test(coluna)) ?? "";
-}
-
-function recentePrimeiro(linhas: Record<string, unknown>[], colunas: string[]): Record<string, unknown>[] {
-  const data = colunaDeData(colunas);
-  if (!data) return [...linhas].reverse();
-  return [...linhas].sort((a, b) => String(b[data] ?? "").localeCompare(String(a[data] ?? "")));
+export function calculosDaConsulta(resultado: string): string {
+  try {
+    const dados = JSON.parse(resultado) as { calculos?: unknown };
+    return typeof dados.calculos === "string" ? dados.calculos.trim() : "";
+  } catch {
+    return "";
+  }
 }
 
 export function linhasDaConsulta(resultado: string): Record<string, unknown>[] {
@@ -229,27 +228,29 @@ export function textoDaConsulta(resultado: string): string {
   const limpo = resultado.trim();
   if (!limpo) return "";
   try {
-    const dados = JSON.parse(limpo) as { texto?: unknown; linhas?: unknown; sql?: unknown; house?: unknown };
+    const dados = JSON.parse(limpo) as { texto?: unknown; linhas?: unknown; sql?: unknown; house?: unknown; calculos?: unknown; total?: unknown };
     if (typeof dados.texto === "string" && dados.texto.trim()) return formatarDatasNoTexto(dados.texto.trim());
+    const calculos = typeof dados.calculos === "string" ? dados.calculos.trim() : "";
     if (Array.isArray(dados.linhas) && dados.linhas.length) {
       const linhas = dados.linhas.filter((linha) => linha && typeof linha === "object") as Record<string, unknown>[];
       const colunas = Object.keys(linhas[0] ?? {})
         .filter((coluna) => !/^id/i.test(coluna))
         .slice(0, 8);
-      if (!colunas.length) return limpo;
+      if (!colunas.length) return calculos || limpo;
       const celula = (valor: unknown) =>
         formatarDatasNoTexto(String(valor ?? "")).replace(/\|/g, "/").replace(/\s+/g, " ").trim();
-      const ordenadas = recentePrimeiro(linhas, colunas);
+      const total = typeof dados.total === "number" ? dados.total : linhas.length;
+      const amostra = linhas.slice(0, LINHAS_NO_CHAT);
       const cabeca = `| ${colunas.join(" | ")} |`;
       const traco = `| ${colunas.map(() => "---").join(" | ")} |`;
-      const corpo = ordenadas
-        .slice(0, LINHAS_NO_CHAT)
-        .map((linha) => `| ${colunas.map((coluna) => celula(linha[coluna])).join(" | ")} |`);
-      const extra = ordenadas.length > LINHAS_NO_CHAT
-        ? `\n\nMostrei ${LINHAS_NO_CHAT} de ${ordenadas.length}, os mais recentes.`
+      const corpo = amostra.map((linha) => `| ${colunas.map((coluna) => celula(linha[coluna])).join(" | ")} |`);
+      const extra = total > LINHAS_NO_CHAT
+        ? `\n\nMostrei ${amostra.length} de ${total}, na ordem da consulta.`
         : "";
-      return `${cabeca}\n${traco}\n${corpo.join("\n")}${extra}`;
+      const prefixo = calculos ? `${calculos}\n\n` : "";
+      return `${prefixo}${cabeca}\n${traco}\n${corpo.join("\n")}${extra}`;
     }
+    if (calculos) return calculos;
     if ("sql" in dados || "house" in dados) return "";
   } catch {
     /* a ferramenta já devolveu texto */

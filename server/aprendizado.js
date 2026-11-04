@@ -516,6 +516,65 @@ function observacoesRelevantes(visao, pergunta) {
     .slice(0, 4);
 }
 
+function comunsDe(a, b) {
+  const x = palavras(a);
+  const y = palavras(b);
+  let n = 0;
+  for (const p of x) if (y.has(p)) n += 1;
+  return n;
+}
+
+export function escolherAutocorrecoes(pergunta, linhas, email = "") {
+  const dono = emailDe(email);
+  const pedido = chavePergunta(pergunta);
+  return (Array.isArray(linhas) ? linhas : [])
+    .map((item) => {
+      const comparado = chavePergunta(item?.pergunta);
+      return {
+        ...item,
+        nota: parecido(pedido, comparado),
+        comuns: comunsDe(pedido, comparado),
+        mesma: Boolean(dono) && emailDe(item?.email) === dono,
+      };
+    })
+    .filter((item) => {
+      if (item.comuns < 2) return false;
+      const temComentario = String(item.comentario || "").trim().length > 0;
+      if (temComentario) return item.nota >= 0.18 || (item.mesma && item.nota >= 0.12);
+      return item.nota >= 0.45;
+    })
+    .sort((a, b) => b.nota - a.nota)
+    .slice(0, 3);
+}
+
+export function textoDasAutocorrecoes(itens) {
+  const lista = Array.isArray(itens) ? itens : [];
+  if (!lista.length) return "";
+  const linhas = [
+    "AUTOCORREÇÃO OBRIGATÓRIA: uma pergunta parecida já foi recusada. Obedeça o comentário nesta resposta e não repita a resposta recusada.",
+    "Se pediram um único valor, responda só esse valor, sem tabela, sem cliente e sem lista.",
+  ];
+  for (const item of lista) {
+    const pedido = String(item.pergunta || "").replace(/\s+/g, " ").trim();
+    const motivo = String(item.comentario || "").replace(/\s+/g, " ").trim();
+    const recusada = String(item.resposta || "").replace(/\s+/g, " ").trim().slice(0, 180);
+    linhas.push(`- Pedido recusado: "${pedido}"`);
+    if (motivo) linhas.push(`  O que fazer: ${motivo}`);
+    if (recusada) linhas.push(`  Não repita: ${recusada}`);
+  }
+  return linhas.join("\n");
+}
+
+function avaliacoesRecusadas() {
+  const desde = new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString();
+  return db
+    .prepare(
+      `SELECT email, visao, pergunta, resposta, comentario FROM avaliacoes
+       WHERE nota < 0 AND criado >= ? ORDER BY id DESC LIMIT 80`,
+    )
+    .all(desde);
+}
+
 export function textoObservado(email, visao, pergunta) {
   const linhas = [];
   for (const item of observacoesRelevantes(visao, pergunta)) {
@@ -549,12 +608,14 @@ const EXEMPLOS = {
     "Pendências da semana → pendencias { escopo: semana }.",
     "Proposta do processo → proposta_processo { numero }.",
     "Lista de propostas de ontem, de hoje ou deste mês → propostas_periodo { quando, situacao }.",
-    "Ficha do cliente → processos_abertos_cliente { cliente }.",
+    "Ficha do cliente, ouro, prata, bronze ou se paga em dia → processos_abertos_cliente { cliente }.",
+    "Relacionamento dos clientes ouro, prata e bronze → relacionamento_clientes { nivel }. Copie os blocos encarte.",
     "Meu dia → meu_dia {}.",
     "Ficha de um processo → ficha_processo { numero }.",
   ],
   comercial: [
-    "Ficha do cliente → processos_abertos_cliente { cliente }.",
+    "Ficha do cliente, ouro, prata, bronze ou se paga em dia → processos_abertos_cliente { cliente }.",
+    "Relacionamento dos clientes ouro, prata e bronze → relacionamento_clientes { nivel }. Copie os blocos encarte.",
     "Comissão deste mês → comissao_periodo {}.",
     "Proposta do processo → proposta_processo { numero }.",
     "Lista de propostas de ontem, de hoje ou deste mês → propostas_periodo { quando, situacao }.",
@@ -576,7 +637,9 @@ const EXEMPLOS = {
   ],
   financeiro: [
     "Meu dia → meu_dia {}.",
-    "Painel do mês → painel_financeiro {}.",
+    "Painel do mês → painel_financeiro {}. Ele inclui o relacionamento do cliente.",
+    "Ficha do cliente, ouro, prata, bronze ou se paga em dia → processos_abertos_cliente { cliente }.",
+    "Relacionamento dos clientes ouro, prata e bronze → relacionamento_clientes { nivel }. Copie os blocos encarte.",
     "Taxas de um processo → taxas_processo { numero }.",
     "Comissão do mês → comissao_periodo {}.",
     "Prazos em 7 dias → prazos { dias: 7 }.",
@@ -647,9 +710,11 @@ export function textoAprendizado({ email, visao, mensagens }) {
   const linhas = [textoFixoAprendizado(email, visao)];
   const correcoes = correcoesRelevantes(email, pergunta, visao);
   if (correcoes.proprias.length) {
-    linhas.push("CORREÇÕES JÁ FEITAS POR ESTA PESSOA (não repita o erro):");
+    linhas.push("CORREÇÕES JÁ FEITAS POR ESTA PESSOA (a próxima resposta tem de seguir a correção, sem repetir o erro):");
     for (const item of correcoes.proprias) linhas.push(`- Depois de "${item.pergunta}", a correção foi: ${item.correcao}`);
   }
+  const autocorrecao = textoDasAutocorrecoes(escolherAutocorrecoes(pergunta, avaliacoesRecusadas(), email));
+  if (autocorrecao) linhas.push(autocorrecao);
   if (correcoes.daVisao.length) {
     linhas.push("CORREÇÕES JÁ CONFIRMADAS NESTA VISÃO (valem para perguntas parecidas):");
     for (const item of correcoes.daVisao) linhas.push(`- Depois de "${item.pergunta}", a correção foi: ${item.correcao}`);
