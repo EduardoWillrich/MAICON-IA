@@ -3,6 +3,7 @@ import { LIMITE_EVENTOS_AVISO, normalizarCadastro, normalizarEventos } from "./n
 import { montarRelatorio, nomeDaChave } from "./relatorio";
 import type { LogPdf } from "./PdfHistorico";
 import type { CadastroAtual, ChavePrimaria, EventoLog, FiltrosLog, TipoLog } from "./types";
+import { lerTokenGmail } from "./sessao";
 import { renovarTokenGmail } from "./tokenGmail";
 
 const API = "";
@@ -146,6 +147,7 @@ export async function executarFerramentaIa(
     "fila_setor",
     "painel_ti",
     "painel_financeiro",
+    "passagens_aereas",
     "relacionamento_clientes",
     "taxas_processo",
     "log_recente",
@@ -176,6 +178,29 @@ export async function executarFerramentaIa(
       texto: typeof dados.texto === "string" ? dados.texto : "",
     };
     if (dados.log && typeof dados.log === "object") pacote.log = dados.log;
+    if (nome === "ficha_processo") {
+      const numero = texto(args.numero).toUpperCase();
+      if (/^[A-Z]{1,4}\d{2,6}-\d{2}$/.test(numero)) {
+        try {
+          const token = lerTokenGmail();
+          if (token) {
+            const extra = await fetch(`${API}/api/gmail/resumo`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              signal: sinal,
+              body: JSON.stringify({ token, email: conta?.email, visao: conta?.visao, processo: numero }),
+            });
+            const lido = await extra.json();
+            const trecho = typeof lido.texto === "string" ? lido.texto.trim() : "";
+            if (extra.ok && trecho && !/não foi autorizada|expirou|recusou|desligada/i.test(trecho)) {
+              pacote.texto = [pacote.texto, trecho].filter(Boolean).join("\n\n");
+            }
+          }
+        } catch {
+          /* a ficha segue sem a caixa de entrada */
+        }
+      }
+    }
     return JSON.stringify(pacote);
   }
   if (nome === "emails_gmail") {
@@ -183,7 +208,12 @@ export async function executarFerramentaIa(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: sinal,
-      body: JSON.stringify({ token: await renovarTokenGmail(), email: conta?.email, visao: conta?.visao }),
+      body: JSON.stringify({
+        token: await renovarTokenGmail(),
+        email: conta?.email,
+        visao: conta?.visao,
+        processo: texto(args.processo),
+      }),
     });
     const dados = await resp.json();
     if (!resp.ok) return `Erro: ${dados.erro || "falha ao ler o Gmail"}`;

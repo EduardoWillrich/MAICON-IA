@@ -8,25 +8,25 @@ import {
 } from "../server/filaIa.js";
 
 const ambienteCompleto = {
-  OPENROUTER_API_KEY: "teste-openrouter",
+  GOOGLE_API_KEY: "teste-google",
 };
 
-test("a fila usa somente a chave do DeepSeek", () => {
+test("a fila usa somente a chave do Google", () => {
   const fila = filaDeChaves(
     [
-      { provedor: "gemini", chave: "teste-gemini" },
+      { provedor: "openrouter", chave: "teste-openrouter" },
       { provedor: "outro", chave: "teste-outro" },
     ],
     ambienteCompleto,
   );
-  assert.deepEqual(fila.map((item) => item.provedor), ["openrouter"]);
-  assert.deepEqual(fila.map((item) => item.chave), ["teste-openrouter"]);
+  assert.deepEqual(fila.map((item) => item.provedor), ["google"]);
+  assert.deepEqual(fila.map((item) => item.chave), ["teste-google"]);
 });
 
 test("chaves vazias não entram na fila", () => {
   const fila = filaDeChaves(
-    [{ provedor: "openrouter", chave: "  " }],
-    { ...ambienteCompleto, OPENROUTER_API_KEY: "" },
+    [{ provedor: "google", chave: "  " }],
+    { ...ambienteCompleto, GOOGLE_API_KEY: "" },
   );
   assert.deepEqual(fila, []);
 });
@@ -34,16 +34,16 @@ test("chaves vazias não entram na fila", () => {
 test("chave pessoal vem antes da chave do ambiente e duplicatas não se repetem", () => {
   const fila = filaDeChaves(
     [
-      { provedor: "openrouter", chave: "teste-pessoal" },
-      { provedor: "openrouter", chave: "teste-pessoal" },
+      { provedor: "google", chave: "teste-pessoal" },
+      { provedor: "google", chave: "teste-pessoal" },
+      { provedor: "google", chave: "teste-google" },
       { provedor: "openrouter", chave: "teste-openrouter" },
-      { provedor: "gemini", chave: "teste-gemini" },
     ],
     ambienteCompleto,
   );
   assert.deepEqual(
     fila.map((item) => item.chave),
-    ["teste-pessoal", "teste-openrouter"],
+    ["teste-pessoal", "teste-google"],
   );
 });
 
@@ -116,6 +116,20 @@ test("erro que não é falta de crédito não vira mensagem genérica", async ()
   );
 });
 
+test("limite por minuto não parece cota esgotada", async () => {
+  await assert.rejects(
+    executarFilaComFallback(
+      [{ provedor: "google", chave: "teste-google" }],
+      async () => {
+        const erro = new Error("Quota exceeded for metric: input_token_count, limit: 16000. Please retry in 50s.");
+        erro.status = 429;
+        throw erro;
+      },
+    ),
+    /Espere um minuto/,
+  );
+});
+
 test("falta de crédito avisa para recarregar a chave", async () => {
   await assert.rejects(
     executarFilaComFallback(
@@ -126,7 +140,7 @@ test("falta de crédito avisa para recarregar a chave", async () => {
         throw erro;
       },
     ),
-    /créditos da IA acabaram/,
+    /cota do Google acabou/,
   );
 });
 

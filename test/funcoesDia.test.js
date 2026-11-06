@@ -9,6 +9,7 @@ import {
   montarPainelDia,
   passosDaFicha,
   perguntaMeuDia,
+  textoParaCliente,
   sufixoDoAno,
 } from "../server/funcoes.js";
 import { esquemaDaFerramenta } from "../server/ia.js";
@@ -138,6 +139,13 @@ test("ficha de cliente ambígua pergunta qual nome antes de montar a ficha", asy
   assert.match(resultado.texto, /Qual deles você quer na ficha/);
   assert.match(resultado.texto, /Silva Log/);
   assert.doesNotMatch(resultado.texto, /^Ficha de /);
+});
+
+test("a ficha gera um texto curto para o cliente", () => {
+  const texto = textoParaCliente("Processo IM1000-26\nCliente: Acme Log\nSituação: Em andamento\nPendência: Liberar BL");
+  assert.match(texto, /Acme/);
+  assert.match(texto, /IM1000-26/);
+  assert.match(texto, /Liberar BL/);
 });
 
 test("ficha do processo junta a situação e os próximos passos", async () => {

@@ -1,7 +1,7 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
 import { SymbolLoader } from "./Loader";
 
-type Item = { titulo: string; detalhe: string; texto?: string; marca?: string; processo?: string; pergunta?: string; partes?: { texto: string; tom: string }[] };
+type Item = { titulo: string; detalhe: string; texto?: string; quando?: string; marca?: string; processo?: string; pergunta?: string; partes?: { texto: string; tom: string }[] };
 type Bloco = { titulo: string; itens: Item[]; vazio: string; pergunta?: string };
 type Ranking = { titulo: string; detalhe: string; vazio: string; itens: { nome: string; qtd: number }[] };
 type Encarte = {
@@ -22,6 +22,8 @@ type Resumo = {
   secundarios: Bloco[];
   ranking?: Ranking | null;
   relacionamento?: Encarte[] | null;
+  favoritos?: Bloco | null;
+  placar?: { visao: string; boas: number; ruins: number }[] | null;
 };
 
 type Kpi = Resumo["kpis"][number];
@@ -322,6 +324,186 @@ function FilaInicio({
   );
 }
 
+function MarcarProcesso({ api, onMarcado }: { api: string; onMarcado: (processo: string) => void }) {
+  const [numero, setNumero] = useState("");
+  const [erro, setErro] = useState("");
+  const [enviando, setEnviando] = useState(false);
+
+  async function marcar(event: FormEvent) {
+    event.preventDefault();
+    const processo = numero.trim().toUpperCase();
+    if (!/^[A-Z]{1,4}\d{2,6}-\d{2}$/.test(processo)) {
+      setErro("Use o número do processo, como IM5223-26.");
+      return;
+    }
+    setEnviando(true);
+    setErro("");
+    try {
+      const resp = await fetch(`${api}/api/favoritos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ processo }),
+      });
+      const texto = await resp.text();
+      let dados: { erro?: string } = {};
+      try {
+        dados = texto ? (JSON.parse(texto) as { erro?: string }) : {};
+      } catch {
+        dados = {};
+      }
+      if (!resp.ok) {
+        setErro(dados.erro || "Não marquei o processo.");
+        return;
+      }
+      setNumero("");
+      onMarcado(processo);
+    } catch {
+      setErro("Não marquei o processo.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <form className="pa-form" onSubmit={(event) => void marcar(event)}>
+      <input
+        className="pa-input"
+        value={numero}
+        onChange={(event) => setNumero(event.target.value.toUpperCase())}
+        placeholder="IM5328-26"
+        aria-label="Número do processo para acompanhar"
+      />
+      <button className="pa-btn-primary" type="submit" disabled={enviando}>{enviando ? "Acompanhando" : "Acompanhar"}</button>
+      {erro ? <small className="pa-erro">{erro}</small> : null}
+    </form>
+  );
+}
+
+function perguntaDoProcesso(numero: string) {
+  return `Quais os acompanhamentos do processo ${numero}?`;
+}
+
+function perguntaDeTodos(itens: Item[]) {
+  const numeros = itens.map((item) => item.processo || item.titulo).filter(Boolean);
+  if (numeros.length <= 1) return perguntaDoProcesso(numeros[0] || "");
+  const ultimo = numeros[numeros.length - 1];
+  const antes = numeros.slice(0, -1).join(", ");
+  return `Monte o acompanhamento dos processos ${antes} e ${ultimo}.`;
+}
+
+function empresaDoAcompanhado(detalhe: string) {
+  return detalhe
+    .replace(/\s*·\s*mudou desde ontem/i, "")
+    .replace(/\s*·\s*sem novidade desde ontem/i, "")
+    .replace(/^acompanhando$/i, "")
+    .trim();
+}
+
+function ProcessosAcompanhados({
+  bloco,
+  onPerguntar,
+  onMarcado,
+  onRemover,
+  api,
+}: {
+  bloco: Bloco;
+  onPerguntar: (pergunta: string) => void;
+  onMarcado: (processo: string) => void;
+  onRemover: (processo: string) => void;
+  api: string;
+}) {
+  const [recolhido, setRecolhido] = useState(true);
+  return (
+    <section className={`pa-card${recolhido ? " recolhido" : ""}`} aria-label="Processos acompanhados">
+      <header className="pa-header">
+        <h3 className="pa-title">{bloco.titulo || "Processos acompanhados"}</h3>
+        {bloco.itens.length ? <span className="pa-count">{bloco.itens.length}</span> : null}
+        <div className="pa-acoes">
+          {bloco.itens.length ? (
+            <button type="button" className="pa-btn-chat" onClick={() => onPerguntar(perguntaDeTodos(bloco.itens))}>
+              Levar ao chat
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="pa-recolher"
+            aria-expanded={!recolhido}
+            aria-label={recolhido ? "Mostrar processos acompanhados" : "Recolher processos acompanhados"}
+            onClick={() => setRecolhido((atual) => !atual)}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden>
+              <path fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" d="M6 14l6-6 6 6" />
+            </svg>
+          </button>
+        </div>
+      </header>
+      {recolhido ? null : <MarcarProcesso api={api} onMarcado={onMarcado} />}
+      {recolhido || !bloco.vazio ? null : <p className="pa-vazio">{bloco.vazio}</p>}
+      {!recolhido && bloco.itens.length ? (
+        <ul className="pa-list">
+          {bloco.itens.map((item) => {
+            const empresa = empresaDoAcompanhado(item.detalhe);
+            const mudou = /mudou desde ontem/i.test(item.detalhe);
+            return (
+              <li key={`${item.processo || item.titulo}-${item.detalhe}`} className="pa-item">
+                <button
+                  type="button"
+                  className="pa-main"
+                  onClick={() => onPerguntar(perguntaDoProcesso(item.processo || item.titulo))}
+                >
+                  <span className="pa-code">{item.titulo}</span>
+                  {empresa ? (
+                    <span className="pa-company">
+                      {empresa}
+                      {mudou ? <span className="pa-changed">mudou desde ontem</span> : null}
+                    </span>
+                  ) : null}
+                  {item.texto ? (
+                    <span className="pa-note">
+                      {item.quando ? <span className="pa-note-quando">{item.quando}</span> : null}
+                      <span className="pa-note-texto">{item.texto}</span>
+                    </span>
+                  ) : null}
+                </button>
+                <div className="pa-side">
+                  <span className="pa-tags">
+                    {item.processo ? <span className="pa-tag pa-tag--danger">{item.processo}</span> : null}
+                    {item.marca ? <span className="pa-tag">{item.marca}</span> : null}
+                  </span>
+                  {item.processo ? (
+                    <button type="button" className="pa-btn-remove" onClick={() => onRemover(item.processo || "")}>
+                      Tirar
+                    </button>
+                  ) : null}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+function PlacarIa({ itens }: { itens: { visao: string; boas: number; ruins: number }[] }) {
+  if (!itens.length) return null;
+  return (
+    <section className="inicio-bloco inicio-placar">
+      <header>
+        <h3>Avaliações da semana</h3>
+      </header>
+      <ul>
+        {itens.map((item) => (
+          <li key={item.visao}>
+            <strong>{item.visao || "geral"}</strong>
+            <small>{Number(item.boas) || 0} úteis · {Number(item.ruins) || 0} para corrigir</small>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function InicioPainel({
   api,
   email,
@@ -340,6 +522,8 @@ export function InicioPainel({
   const [resumo, setResumo] = useState<Resumo | null>(null);
   const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(true);
+  const [marcados, setMarcados] = useState<string[]>([]);
+  const [ocultos, setOcultos] = useState<string[]>([]);
 
   useEffect(() => {
     let ativo = true;
@@ -367,6 +551,23 @@ export function InicioPainel({
   }, [api, email, nome, visao]);
 
   const primeiro = nome.trim().split(" ")[0];
+  const favoritosBase = resumo?.favoritos ?? { titulo: "Processos acompanhados", itens: [], vazio: "Nenhum processo marcado.", pergunta: "" };
+  const jaMarcados = new Set(favoritosBase.itens.map((item) => (item.processo || item.titulo).toUpperCase()));
+  const favoritos = {
+    ...favoritosBase,
+    itens: [
+      ...marcados.filter((processo) => !jaMarcados.has(processo)).map((processo) => ({
+        titulo: processo,
+        detalhe: "acompanhando",
+        texto: "",
+        processo,
+        pergunta: `Quais os acompanhamentos do processo ${processo}?`,
+      })),
+      ...favoritosBase.itens,
+    ].filter((item) => !ocultos.includes((item.processo || item.titulo).toUpperCase())),
+    vazio: "",
+  };
+  if (!favoritos.itens.length) favoritos.vazio = favoritosBase.vazio || "Nenhum processo marcado.";
   const colunas = resumo ? colunasDoInicio(resumo) : null;
   const grupos = resumo && visao === "gerencia" ? gruposDeKpis(resumo.kpis) : null;
   const resultado = grupos?.find((grupo) => grupo.id === "resultado") ?? null;
@@ -394,6 +595,27 @@ export function InicioPainel({
         {!carregando && resumo?.kpis ? (
           <div className="inicio-conteudo">
             {mostrarFila ? <FilaInicio api={api} email={email} onPerguntar={onPerguntar} /> : null}
+            <ProcessosAcompanhados
+              api={api}
+              bloco={favoritos}
+              onPerguntar={onPerguntar}
+              onMarcado={(processo) => {
+                const alvo = processo.toUpperCase();
+                setOcultos((atual) => atual.filter((item) => item !== alvo));
+                setMarcados((atual) => atual.includes(alvo) ? atual : [alvo, ...atual]);
+              }}
+              onRemover={(processo) => {
+                const alvo = processo.toUpperCase();
+                setOcultos((atual) => atual.includes(alvo) ? atual : [...atual, alvo]);
+                setMarcados((atual) => atual.filter((item) => item.toUpperCase() !== alvo));
+                void fetch(`${api}/api/favoritos`, {
+                  method: "DELETE",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ processo: alvo }),
+                });
+              }}
+            />
+            {(visao === "ti" || visao === "gerencia") && resumo.placar?.length ? <PlacarIa itens={resumo.placar} /> : null}
             {grupos ? (
               <>
                 <section className={`inicio-grupos${resultado ? " dupla" : ""}`} aria-label="Indicadores">
@@ -422,7 +644,7 @@ export function InicioPainel({
               </section>
             )}
             {resumo.ranking && !resultadoComRanking ? <RankingFechamentos ranking={resumo.ranking} /> : null}
-            {visao !== "comercial" && visao !== "inside" && resumo.relacionamento?.length ? (
+            {visao !== "comercial" && visao !== "inside" && visao !== "financeiro" && resumo.relacionamento?.length ? (
               <Encartes itens={resumo.relacionamento} onPerguntar={onPerguntar} />
             ) : null}
             <div className={`inicio-grade${colunas?.equilibrada ? " equilibrada" : ""}`}>

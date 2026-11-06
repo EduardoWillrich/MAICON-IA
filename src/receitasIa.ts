@@ -96,6 +96,10 @@ const VARIAVEIS: { re: RegExp; montar: (m: RegExpMatchArray) => Receita[] }[] = 
     montar: (m) => [{ nome: "andamento_atividade", args: { codigo: m[1].trim(), numero: m[2].trim().toUpperCase() } }],
   },
   {
+    re: new RegExp(`^e-mails do processo ${PROCESSO}\\.?$`, "i"),
+    montar: (m) => [{ nome: "emails_gmail", args: { processo: m[1].toUpperCase() } }],
+  },
+  {
     re: new RegExp(`^monte a ficha do processo ${PROCESSO}\\.?$`, "i"),
     montar: (m) => [{ nome: "ficha_processo", args: { numero: m[1].toUpperCase() } }],
   },
@@ -118,6 +122,13 @@ const VARIAVEIS: { re: RegExp; montar: (m: RegExpMatchArray) => Receita[] }[] = 
   {
     re: new RegExp(`^quais os acompanhamentos do processo ${PROCESSO}\\?$`, "i"),
     montar: (m) => [{ nome: "acompanhamentos_processo", args: { numero: m[1].toUpperCase() } }],
+  },
+  {
+    re: /^monte o acompanhamento dos processos (.+)$/i,
+    montar: (m) => {
+      const numeros = [...m[1].toUpperCase().matchAll(/\b[A-Z]{1,4}\d{2,6}-\d{2}\b/g)].map((item) => item[0]);
+      return numeros.slice(0, 8).map((numero) => ({ nome: "acompanhamentos_processo", args: { numero } }));
+    },
   },
   {
     re: new RegExp(`(?:rota|navio|rastre)[\\s\\S]{0,80}${PROCESSO}|${PROCESSO}[\\s\\S]{0,80}(?:rota|navio|rastre)`, "i"),

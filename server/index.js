@@ -12,6 +12,7 @@ import { conversar } from "./ia.js";
 import { calendarioAtual, sqlDoPeriodo, sqlParaExecutar, sqlSemExcecao } from "./datasPedido.js";
 import { textoCalculos } from "./calculos.js";
 import { resumirGmail } from "./gmail.js";
+import { pedidoPassagemDaConversa, pesquisarPassagens, respostaPassagemIncompleta } from "./passagens.js";
 import { pedeHistorico, pedidoFichaCliente, pedidoRelacionamento, responderPorRegra } from "./regras.js";
 import { executarFuncao, chaveConsulta, consultaEmCache, consultaFresca, guardarConsulta, perguntaMeuDia } from "./funcoes.js";
 import { painelDoUsuario, resumoInicial } from "./inicio.js";
@@ -32,6 +33,9 @@ import {
   ordenarTabelas,
   pareceCorrecao,
   placarAvaliacoes,
+  listarFavoritos,
+  salvarFavorito,
+  apagarFavorito,
   registrarAvaliacao,
   revisarAvaliacoes,
   observarConversa,
@@ -102,6 +106,7 @@ app.get("/api/ia/saude", (_req, res) => {
     ok: true,
     commit: process.env.MAICON_GIT_SHA || "",
     provedores: {
+      google: Boolean(String(process.env.GOOGLE_API_KEY || "").trim()) || compartilhados.has("google"),
       deepseek: Boolean(String(process.env.OPENROUTER_API_KEY || "").trim()) || compartilhados.has("openrouter"),
     },
   });
@@ -818,6 +823,23 @@ app.post("/api/chat", async (req, res) => {
       } finally {
         await poolDia.close().catch(() => {});
       }
+    }
+    const faltaPassagem = !jaConsultou && !req.body?.relatorio && !req.body?.apresentacao ? respostaPassagemIncompleta(ultimaPergunta) : "";
+    if (faltaPassagem) {
+      encerrado = true;
+      await escreverAosPoucos(enviar, faltaPassagem);
+      enviar({ tipo: "fim", mensagem: { role: "assistant", content: faltaPassagem } });
+      res.end();
+      return;
+    }
+    const pedidoVoo = !jaConsultou && !req.body?.relatorio && !req.body?.apresentacao ? pedidoPassagemDaConversa(mensagens) : null;
+    if (pedidoVoo) {
+      const texto = await pesquisarPassagens(pedidoVoo);
+      encerrado = true;
+      await escreverAosPoucos(enviar, texto);
+      enviar({ tipo: "fim", mensagem: { role: "assistant", content: texto } });
+      res.end();
+      return;
     }
     const relacaoClientes = !jaConsultou && !req.body?.relatorio && !req.body?.apresentacao ? pedidoRelacionamento(ultimaPergunta) : null;
     if (relacaoClientes) {
@@ -1583,7 +1605,7 @@ function saudacaoDoDia(nome) {
 app.post("/api/gmail/resumo", async (req, res) => {
   try {
     const visao = String(req.body?.visao ?? "");
-    const lido = await resumirGmail(await tokenParaGmail(req), visao);
+    const lido = await resumirGmail(await tokenParaGmail(req), visao, req.body?.processo);
     let pendencias = "";
     if (lido.processos?.length) {
       try {
@@ -1598,6 +1620,22 @@ app.post("/api/gmail/resumo", async (req, res) => {
   } catch (erro) {
     res.status(400).json({ erro: mensagemErro(erro) });
   }
+});
+
+app.get("/api/favoritos", (req, res) => {
+  res.json({ favoritos: listarFavoritos(emailDaSessao(req)) });
+});
+
+app.post("/api/favoritos", (req, res) => {
+  try {
+    res.json({ favoritos: salvarFavorito(emailDaSessao(req), req.body?.processo) });
+  } catch (erro) {
+    res.status(400).json({ erro: mensagemErro(erro) });
+  }
+});
+
+app.delete("/api/favoritos", (req, res) => {
+  res.json({ favoritos: apagarFavorito(emailDaSessao(req), req.body?.processo) });
 });
 
 app.get("/api/memoria", (req, res) => {

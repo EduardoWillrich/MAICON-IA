@@ -1,4 +1,4 @@
-﻿import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+﻿import { useEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import logoMaiconPng from "./assets/maicon-logo.png";
@@ -124,9 +124,9 @@ const IAS_CONSUMO = ["google", "openrouter"] as const;
 type IaConsumo = (typeof IAS_CONSUMO)[number];
 const ROTULO_CONSUMO: Record<IaConsumo, { nome: string; aba: string; texto: string }> = {
   google: {
-    nome: "Gemma 4 31B",
+    nome: "Gemma 4",
     aba: "Google",
-    texto: "Pedidos de hoje na chave do Google. O dia zera à meia-noite da Califórnia. Quando essa cota acaba, a mesma Gemma 4 31B segue pela OpenRouter.",
+    texto: "Pedidos de hoje no Gemma 4, pela API do Google. O dia zera à meia-noite da Califórnia.",
   },
   openrouter: {
     nome: "Gemma 4 31B · OpenRouter",
@@ -308,43 +308,43 @@ type Mensagem =
 const MAX_PASSOS = 12;
 
 const SUGESTOES_COMERCIAL: { titulo: string; descricao: string; pergunta: string; icone: keyof typeof ICONES }[] = [
-  { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "resumo" },
-  { titulo: "Ficha do processo", descricao: "Situação, proposta e o que fazer agora neste processo.", pergunta: "Monte a ficha do processo {processo}.", icone: "resumo" },
-  { titulo: "Pendências", descricao: "Atividades pendentes deste ano do comercial e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do comercial deste ano e qual o motivo de cada uma?", icone: "busca" },
-  { titulo: "Pendências do inside", descricao: "Atividades pendentes deste ano do inside e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do inside deste ano e qual o motivo de cada uma?", icone: "busca" },
-  { titulo: "Resumo do processo", descricao: "Cliente, vendedor responsável e a situação atual.", pergunta: "Faça o resumo do processo {processo}.", icone: "resumo" },
-  { titulo: "Buscar cliente", descricao: "Ficha do cliente: vendedor, sem proposta, último processo, comissão e se paga em dia.", pergunta: "Se eu informar uma referência de processo, busque os processos. Se eu informar o nome do cliente, monte a ficha: processos abertos, vendedor, quantos estão sem proposta, o último processo, a comissão deste mês, se ele é ouro, prata ou bronze e se paga em dia. Se eu não disse nem o nome nem a referência, pergunte qual cliente.", icone: "busca" },
-  { titulo: "Proposta", descricao: "Oferta comercial e as datas da proposta.", pergunta: "Qual a proposta e a oferta do processo {processo}?", icone: "busca" },
-  { titulo: "Comissão do mês", descricao: "Comissões já calculadas neste mês.", pergunta: "Qual a comissão neste mês?", icone: "check" },
-  { titulo: "Processos do cliente", descricao: "Ficha com os processos abertos, o vendedor, a comissão e o relacionamento.", pergunta: "Monte a ficha do cliente com os processos abertos. Se eu não disse o nome, pergunte qual cliente. Inclua vendedor, quantos estão sem proposta, o último processo, a comissão deste mês, se ele é ouro, prata ou bronze e se paga em dia.", icone: "resumo" },
-  { titulo: "Ouro, prata e bronze", descricao: "Relacionamento desses clientes, em cartões coloridos.", pergunta: "Qual o relacionamento dos clientes ouro, prata e bronze?", icone: "resumo" },
-  { titulo: "Minhas pendências", descricao: "O que está atrasado e o que vence nos próximos 7 dias.", pergunta: "Quais são minhas pendências atrasadas e as dos próximos 7 dias?", icone: "check" },
+  { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "meudia" },
+  { titulo: "Ficha do processo", descricao: "Situação, proposta e o que fazer agora neste processo.", pergunta: "Monte a ficha do processo {processo}.", icone: "fichaProcesso" },
+  { titulo: "Pendências", descricao: "Atividades pendentes deste ano do comercial e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do comercial deste ano e qual o motivo de cada uma?", icone: "pendencias" },
+  { titulo: "Pendências do inside", descricao: "Atividades pendentes deste ano do inside e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do inside deste ano e qual o motivo de cada uma?", icone: "pendenciasInside" },
+  { titulo: "Resumo do processo", descricao: "Cliente, vendedor responsável e a situação atual.", pergunta: "Faça o resumo do processo {processo}.", icone: "resumoProcesso" },
+  { titulo: "Buscar cliente", descricao: "Ficha do cliente: vendedor, sem proposta, último processo, comissão e se paga em dia.", pergunta: "Se eu informar uma referência de processo, busque os processos. Se eu informar o nome do cliente, monte a ficha: processos abertos, vendedor, quantos estão sem proposta, o último processo, a comissão deste mês, se ele é ouro, prata ou bronze e se paga em dia. Se eu não disse nem o nome nem a referência, pergunte qual cliente.", icone: "buscarCliente" },
+  { titulo: "Proposta", descricao: "Oferta comercial e as datas da proposta.", pergunta: "Qual a proposta e a oferta do processo {processo}?", icone: "proposta" },
+  { titulo: "Comissão do mês", descricao: "Comissões já calculadas neste mês.", pergunta: "Qual a comissão neste mês?", icone: "comissaoMes" },
+  { titulo: "Processos do cliente", descricao: "Ficha com os processos abertos, o vendedor, a comissão e o relacionamento.", pergunta: "Monte a ficha do cliente com os processos abertos. Se eu não disse o nome, pergunte qual cliente. Inclua vendedor, quantos estão sem proposta, o último processo, a comissão deste mês, se ele é ouro, prata ou bronze e se paga em dia.", icone: "processosCliente" },
+  { titulo: "Ouro, prata e bronze", descricao: "Relacionamento desses clientes, em cartões coloridos.", pergunta: "Qual o relacionamento dos clientes ouro, prata e bronze?", icone: "ouroPrata" },
+  { titulo: "Minhas pendências", descricao: "O que está atrasado e o que vence nos próximos 7 dias.", pergunta: "Quais são minhas pendências atrasadas e as dos próximos 7 dias?", icone: "minhasPendencias" },
 ];
 
 const SUGESTOES_SETOR: Record<string, { titulo: string; descricao: string; pergunta: string; icone: keyof typeof ICONES }[]> = {
   inside: SUGESTOES_COMERCIAL,
   comercial: SUGESTOES_COMERCIAL,
   operacional: [
-    { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "resumo" },
-    { titulo: "Ficha do processo", descricao: "Situação, documental e o que fazer agora neste processo.", pergunta: "Monte a ficha do processo {processo}.", icone: "resumo" },
-    { titulo: "Pendências", descricao: "Atividades pendentes deste ano e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do operacional deste ano e qual o motivo de cada uma?", icone: "busca" },
-    { titulo: "Divergências", descricao: "Desembarque deste ano com 15 dias ou mais de diferença da previsão.", pergunta: "Quais processos deste ano têm o desembarque real muito diferente da previsão?", icone: "troca" },
-    { titulo: "Resumo do processo", descricao: "Situação, prazos e a pendência atual.", pergunta: "Faça o resumo operacional do processo {processo}.", icone: "resumo" },
+    { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "meudia" },
+    { titulo: "Ficha do processo", descricao: "Situação, documental e o que fazer agora neste processo.", pergunta: "Monte a ficha do processo {processo}.", icone: "fichaProcesso" },
+    { titulo: "Pendências", descricao: "Atividades pendentes deste ano e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do operacional deste ano e qual o motivo de cada uma?", icone: "pendencias" },
+    { titulo: "Divergências", descricao: "Desembarque deste ano com 15 dias ou mais de diferença da previsão.", pergunta: "Quais processos deste ano têm o desembarque real muito diferente da previsão?", icone: "divergencias" },
+    { titulo: "Resumo do processo", descricao: "Situação, prazos e a pendência atual.", pergunta: "Faça o resumo operacional do processo {processo}.", icone: "resumoProcesso" },
     { titulo: "Rota do navio", descricao: "Navio, portos e as datas de cada trecho da viagem.", pergunta: "Como está a rota do navio no processo {processo}?", icone: "navio" },
-    { titulo: "Acompanhamentos", descricao: "As notas de acompanhamento mais recentes.", pergunta: "Quais os acompanhamentos do processo {processo}?", icone: "busca" },
-    { titulo: "Prazos", descricao: "Embarque, desembarque e entrega que vencem nos próximos 7 dias.", pergunta: "Quais prazos de embarque, desembarque e entrega vencem nos próximos 7 dias?", icone: "check" },
-    { titulo: "Processos parados", descricao: "Sem nenhuma nota de acompanhamento há 7 dias.", pergunta: "Quais processos estão parados há 7 dias sem acompanhamento?", icone: "resumo" },
-    { titulo: "O que mudou", descricao: "Campos alterados neste processo nos últimos 30 dias.", pergunta: "O que mudou no processo {processo} nos últimos 30 dias?", icone: "troca" },
+    { titulo: "Acompanhamentos", descricao: "As notas de acompanhamento mais recentes.", pergunta: "Quais os acompanhamentos do processo {processo}?", icone: "acompanhamentos" },
+    { titulo: "Prazos", descricao: "Embarque, desembarque e entrega que vencem nos próximos 7 dias.", pergunta: "Quais prazos de embarque, desembarque e entrega vencem nos próximos 7 dias?", icone: "prazos" },
+    { titulo: "Processos parados", descricao: "Sem nenhuma nota de acompanhamento há 7 dias.", pergunta: "Quais processos estão parados há 7 dias sem acompanhamento?", icone: "Processosparados" },
+    { titulo: "O que mudou", descricao: "Campos alterados neste processo nos últimos 30 dias.", pergunta: "O que mudou no processo {processo} nos últimos 30 dias?", icone: "oQueMudou" },
   ],
   documental: [
-    { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "resumo" },
-    { titulo: "Ficha do processo", descricao: "Atividades, liberação do CE e o que fazer agora.", pergunta: "Monte a ficha do processo {processo}.", icone: "resumo" },
-    { titulo: "Fila do CE", descricao: "Atividades abertas que estão com o documental CE.", pergunta: "Quais atividades estão agora com o documental CE?", icone: "check" },
-    { titulo: "Fila do IM", descricao: "Atividades abertas que estão com o documental IM.", pergunta: "Quais atividades estão agora com o documental IM?", icone: "check" },
-    { titulo: "Pendências", descricao: "Tudo que está pendente no CE e no IM, e o que falta para concluir.", pergunta: "Quais são todas as atividades pendentes do documental CE e do documental IM, e o que falta para concluir cada uma?", icone: "busca" },
-    { titulo: "CE ainda não liberado", descricao: "Atividades do CE e do IM que ainda não estão com CE liberado.", pergunta: "Quais atividades do documental CE e do documental IM ainda não têm o CE liberado?", icone: "busca" },
-    { titulo: "Do processo", descricao: "Atividades do CE e do IM, envolvidos, liberação e o que falta.", pergunta: "No processo {processo}, quais atividades estão com o documental CE e com o documental IM, quem são os envolvidos, o CE já está liberado e o que falta para concluir?", icone: "resumo" },
-    { titulo: "Campos livres", descricao: "Campos livres que já estão preenchidos neste processo.", pergunta: "Quais campos livres estão preenchidos no processo {processo}?", icone: "troca" },
+    { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "meudia" },
+    { titulo: "Ficha do processo", descricao: "Atividades, liberação do CE e o que fazer agora.", pergunta: "Monte a ficha do processo {processo}.", icone: "fichaProcesso" },
+    { titulo: "Fila do CE", descricao: "Atividades abertas que estão com o documental CE.", pergunta: "Quais atividades estão agora com o documental CE?", icone: "filaCe" },
+    { titulo: "Fila do IM", descricao: "Atividades abertas que estão com o documental IM.", pergunta: "Quais atividades estão agora com o documental IM?", icone: "filaIm" },
+    { titulo: "Pendências", descricao: "Tudo que está pendente no CE e no IM, e o que falta para concluir.", pergunta: "Quais são todas as atividades pendentes do documental CE e do documental IM, e o que falta para concluir cada uma?", icone: "pendencias" },
+    { titulo: "CE ainda não liberado", descricao: "Atividades do CE e do IM que ainda não estão com CE liberado.", pergunta: "Quais atividades do documental CE e do documental IM ainda não têm o CE liberado?", icone: "ceNaoLiberado" },
+    { titulo: "Do processo", descricao: "Atividades do CE e do IM, envolvidos, liberação e o que falta.", pergunta: "No processo {processo}, quais atividades estão com o documental CE e com o documental IM, quem são os envolvidos, o CE já está liberado e o que falta para concluir?", icone: "doProcesso" },
+    { titulo: "Campos livres", descricao: "Campos livres que já estão preenchidos neste processo.", pergunta: "Quais campos livres estão preenchidos no processo {processo}?", icone: "camposLivres" },
   ],
   admin: [
     { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "resumo" },
@@ -355,38 +355,40 @@ const SUGESTOES_SETOR: Record<string, { titulo: string; descricao: string; pergu
     { titulo: "Rota do navio", descricao: "Navio, portos e as datas de cada trecho da viagem.", pergunta: "Como está a rota do navio no processo {processo}?", icone: "navio" },
   ],
   gerencia: [
-    { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "resumo" },
-    { titulo: "Ficha do processo", descricao: "Situação, proposta, documental e o que fazer agora.", pergunta: "Monte a ficha do processo {processo}.", icone: "resumo" },
-    { titulo: "Fila dos setores", descricao: "Abertos, sem proposta, atrasados e parados, por setor.", pergunta: "Como está a fila dos setores: processos abertos, sem proposta, atrasados e parados?", icone: "resumo" },
-    { titulo: "Processos parados", descricao: "Sem nenhuma nota de acompanhamento há 7 dias.", pergunta: "Quais processos estão parados há 7 dias sem acompanhamento?", icone: "busca" },
-    { titulo: "Prazos vencendo", descricao: "Embarque, desembarque e entrega que vencem nos próximos 7 dias.", pergunta: "Quais prazos de embarque, desembarque e entrega vencem nos próximos 7 dias?", icone: "check" },
-    { titulo: "Pendências do operacional", descricao: "Atividades pendentes deste ano e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do operacional deste ano e qual o motivo de cada uma?", icone: "busca" },
-    { titulo: "Pendências do comercial", descricao: "Atividades pendentes deste ano e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do comercial deste ano e qual o motivo de cada uma?", icone: "busca" },
-    { titulo: "Documental", descricao: "Tudo que está pendente no CE e no IM, e o que falta para concluir.", pergunta: "Quais são todas as atividades pendentes do documental CE e do documental IM, e o que falta para concluir cada uma?", icone: "check" },
-    { titulo: "Painel financeiro", descricao: "Comissões, taxas e prazos do mês, com valores.", pergunta: "Monte o painel financeiro deste mês, com valores.", icone: "grafico" },
-    { titulo: "Comissões da equipe", descricao: "Comissões de vendedor já calculadas neste mês.", pergunta: "Qual a comissão de vendedor neste mês, com os valores?", icone: "check" },
-    { titulo: "Divergências", descricao: "Desembarque deste ano com 15 dias ou mais de diferença da previsão.", pergunta: "Quais processos deste ano têm o desembarque real muito diferente da previsão?", icone: "troca" },
+    { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "meudia" },
+    { titulo: "Ficha do processo", descricao: "Situação, proposta, documental e o que fazer agora.", pergunta: "Monte a ficha do processo {processo}.", icone: "fichaProcesso" },
+    { titulo: "Fila dos setores", descricao: "Abertos, sem proposta, atrasados e parados, por setor.", pergunta: "Como está a fila dos setores: processos abertos, sem proposta, atrasados e parados?", icone: "filaCe" },
+    { titulo: "Processos parados", descricao: "Sem nenhuma nota de acompanhamento há 7 dias.", pergunta: "Quais processos estão parados há 7 dias sem acompanhamento?", icone: "Processosparados" },
+    { titulo: "Prazos vencendo", descricao: "Embarque, desembarque e entrega que vencem nos próximos 7 dias.", pergunta: "Quais prazos de embarque, desembarque e entrega vencem nos próximos 7 dias?", icone: "prazos" },
+    { titulo: "Pendências do operacional", descricao: "Atividades pendentes deste ano e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do operacional deste ano e qual o motivo de cada uma?", icone: "pendencias" },
+    { titulo: "Pendências do comercial", descricao: "Atividades pendentes deste ano e o motivo de cada uma.", pergunta: "Quais são as atividades pendentes do comercial deste ano e qual o motivo de cada uma?", icone: "pendencias" },
+    { titulo: "Documental", descricao: "Tudo que está pendente no CE e no IM, e o que falta para concluir.", pergunta: "Quais são todas as atividades pendentes do documental CE e do documental IM, e o que falta para concluir cada uma?", icone: "filaIm" },
+    { titulo: "Painel financeiro", descricao: "Comissões, taxas e prazos do mês, com valores.", pergunta: "Monte o painel financeiro deste mês, com valores.", icone: "painelMes" },
+    { titulo: "Passagens", descricao: "Melhor preço na data de embarque e no destino.", pergunta: "Compare os preços de passagem aérea. Se eu não informei o destino ou a data de embarque, pergunte só o que falta.", icone: "passagens" },
+    { titulo: "Comissões da equipe", descricao: "Comissões de vendedor já calculadas neste mês.", pergunta: "Qual a comissão de vendedor neste mês, com os valores?", icone: "comissoes" },
+    { titulo: "Divergências", descricao: "Desembarque deste ano com 15 dias ou mais de diferença da previsão.", pergunta: "Quais processos deste ano têm o desembarque real muito diferente da previsão?", icone: "divergencias" },
   ],
   financeiro: [
-    { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "resumo" },
-    { titulo: "Painel do mês", descricao: "Comissões, taxas e prazos dos próximos 7 dias.", pergunta: "Monte o painel financeiro deste mês, com valores.", icone: "resumo" },
-    { titulo: "Gráfico", descricao: "Linha das faturas do processo, com valor e data.", pergunta: "Me mostre em um gráfico de linhas as faturas de um processo, com número, valor e data. Se eu não informei o número, pergunte qual processo.", icone: "grafico" },
-    { titulo: "Comissões", descricao: "Comissões de vendedor já calculadas neste mês.", pergunta: "Qual a comissão de vendedor neste mês, com os valores?", icone: "check" },
-    { titulo: "Taxas do processo", descricao: "Pagamento e recebimento de cada taxa.", pergunta: "Quais as taxas do processo {processo}, com pagamento e recebimento?", icone: "busca" },
-    { titulo: "Prazos", descricao: "Embarque, desembarque e entrega que vencem nos próximos 7 dias.", pergunta: "Quais prazos de embarque, desembarque e entrega vencem nos próximos 7 dias?", icone: "check" },
-    { titulo: "Relatório de taxas", descricao: "Taxas do mês com nome, pagamento e recebimento.", pergunta: "Pedir relatório das taxas deste mês, com nome, pagamento e recebimento.", icone: "relatorio" },
-    { titulo: "Relacionamento", descricao: "Se o cliente é ouro, prata ou bronze e se paga em dia.", pergunta: "Monte a ficha do cliente. Se eu não disse o nome, pergunte qual. Diga se ele é ouro, prata ou bronze e se paga em dia.", icone: "resumo" },
-    { titulo: "Ouro, prata e bronze", descricao: "Relacionamento desses clientes, em cartões coloridos.", pergunta: "Qual o relacionamento dos clientes ouro, prata e bronze?", icone: "resumo" },
+    { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "meudia" },
+    { titulo: "Painel do mês", descricao: "Comissões, taxas e prazos dos próximos 7 dias.", pergunta: "Monte o painel financeiro deste mês, com valores.", icone: "painelMes" },
+    { titulo: "Gráfico", descricao: "Linha das faturas do processo, com valor e data.", pergunta: "Me mostre em um gráfico de linhas as faturas de um processo, com número, valor e data. Se eu não informei o número, pergunte qual processo.", icone: "graficoLinha" },
+    { titulo: "Comissões", descricao: "Comissões de vendedor já calculadas neste mês.", pergunta: "Qual a comissão de vendedor neste mês, com os valores?", icone: "comissoes" },
+    { titulo: "Taxas do processo", descricao: "Pagamento e recebimento de cada taxa.", pergunta: "Quais as taxas do processo {processo}, com pagamento e recebimento?", icone: "taxasProcesso" },
+    { titulo: "Prazos", descricao: "Embarque, desembarque e entrega que vencem nos próximos 7 dias.", pergunta: "Quais prazos de embarque, desembarque e entrega vencem nos próximos 7 dias?", icone: "prazos" },
+    { titulo: "Relatório de taxas", descricao: "Taxas do mês com nome, pagamento e recebimento.", pergunta: "Pedir relatório das taxas deste mês, com nome, pagamento e recebimento.", icone: "relatorioTaxas" },
+    { titulo: "Relacionamento", descricao: "Se o cliente é ouro, prata ou bronze e se paga em dia.", pergunta: "Monte a ficha do cliente. Se eu não disse o nome, pergunte qual. Diga se ele é ouro, prata ou bronze e se paga em dia.", icone: "relacionamento" },
+    { titulo: "Ouro, prata e bronze", descricao: "Relacionamento desses clientes, em cartões coloridos.", pergunta: "Qual o relacionamento dos clientes ouro, prata e bronze?", icone: "ouroPrata" },
+    { titulo: "Passagens (BETA)", descricao: "Melhor preço na data de embarque e no destino.", pergunta: "Compare os preços de passagem aérea. Se eu não informei o destino ou a data de embarque, pergunte só o que falta.", icone: "passagens" },
   ],
   ti: [
-    { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "resumo" },
-    { titulo: "Painel do TI", descricao: "Resumo das últimas 24 horas: volume, quem alterou e quais tabelas.", pergunta: "Monte o painel do TI das últimas 24 horas.", icone: "resumo" },
-    { titulo: "Log recente", descricao: "Eventos das últimas 24 horas, com usuário, tabela, tipo e computador.", pergunta: "Mostre o log das últimas 24 horas, com usuário, tabela, tipo e computador.", icone: "troca" },
-    { titulo: "Monitoramentos", descricao: "Quem mudou o projeto de tarefas e a atividade nos registros recentes.", pergunta: "Quais foram os últimos monitoramentos alterados e quem alterou, no projeto de tarefas e na atividade?", icone: "troca" },
-    { titulo: "Exclusões", descricao: "O que foi apagado nas últimas 24 horas e quem excluiu.", pergunta: "Quais exclusões aconteceram nas últimas 24 horas?", icone: "busca" },
-    { titulo: "Quem mais alterou", descricao: "Ranking de quem mais gravou log nas últimas 24 horas.", pergunta: "Quem mais gravou log nas últimas 24 horas?", icone: "check" },
-    { titulo: "Contas da IA", descricao: "Quem entrou na IA e qual o papel de cada conta.", pergunta: "Quais contas acessaram a IA e qual o papel de cada uma?", icone: "busca" },
-    { titulo: "Log de um processo", descricao: "Histórico técnico de um processo. Se faltar o número, a IA pergunta.", pergunta: "Consulte o log técnico de um processo. Se eu não informei o número, pergunte qual processo.", icone: "resumo" },
+    { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "meudia" },
+    { titulo: "Painel do TI", descricao: "Resumo das últimas 24 horas: volume, quem alterou e quais tabelas.", pergunta: "Monte o painel do TI das últimas 24 horas.", icone: "TI" },
+    { titulo: "Log recente", descricao: "Eventos das últimas 24 horas, com usuário, tabela, tipo e computador.", pergunta: "Mostre o log das últimas 24 horas, com usuário, tabela, tipo e computador.", icone: "Relogiolista" },
+    { titulo: "Monitoramentos", descricao: "Quem mudou o projeto de tarefas e a atividade nos registros recentes.", pergunta: "Quais foram os últimos monitoramentos alterados e quem alterou, no projeto de tarefas e na atividade?", icone: "Monitoramento" },
+    { titulo: "Exclusões", descricao: "O que foi apagado nas últimas 24 horas e quem excluiu.", pergunta: "Quais exclusões aconteceram nas últimas 24 horas?", icone: "lixo" },
+    { titulo: "Quem mais alterou", descricao: "Ranking de quem mais gravou log nas últimas 24 horas.", pergunta: "Quem mais gravou log nas últimas 24 horas?", icone: "Rank" },
+    { titulo: "Contas da IA", descricao: "Quem entrou na IA e qual o papel de cada conta.", pergunta: "Quais contas acessaram a IA e qual o papel de cada uma?", icone: "ContaIA" },
+    { titulo: "Log de um processo", descricao: "Histórico técnico de um processo. Se faltar o número, a IA pergunta.", pergunta: "Consulte o log técnico de um processo. Se eu não informei o número, pergunte qual processo.", icone: "LogProcesso" },
   ],
 };
 
@@ -404,7 +406,7 @@ const RELATORIOS_PRONTOS: RelatorioPronto[] = [
     titulo: "Processos abertos",
     descricao: "Abertos neste mês, com cliente, situação e responsável.",
     pergunta: "Pedir relatório dos processos abertos neste mês. Colunas: número do processo, cliente, situação, data de abertura e responsável.",
-    icone: "resumo",
+    icone: "processosCliente",
     grupo: "Operação",
     visoes: ["*"],
   },
@@ -412,7 +414,7 @@ const RELATORIOS_PRONTOS: RelatorioPronto[] = [
     titulo: "Prazos da semana",
     descricao: "Embarque, desembarque e entrega que vencem nos próximos 7 dias.",
     pergunta: "Pedir relatório dos prazos de embarque, desembarque e entrega que vencem nos próximos 7 dias. Colunas: número do processo, cliente, previsão de embarque, previsão de desembarque e previsão de entrega.",
-    icone: "check",
+    icone: "prazos",
     grupo: "Operação",
     visoes: ["*"],
   },
@@ -420,7 +422,7 @@ const RELATORIOS_PRONTOS: RelatorioPronto[] = [
     titulo: "Atividades pendentes",
     descricao: "O que ainda está aberto neste ano, com previsão e responsável.",
     pergunta: "Pedir relatório das atividades pendentes deste ano. Colunas: número do processo, atividade, responsável, previsão de término e situação.",
-    icone: "busca",
+    icone: "pendencias",
     grupo: "Operação",
     visoes: ["*"],
   },
@@ -428,7 +430,7 @@ const RELATORIOS_PRONTOS: RelatorioPronto[] = [
     titulo: "Processos parados",
     descricao: "Sem acompanhamento há 7 dias ou mais.",
     pergunta: "Pedir relatório dos processos parados há 7 dias ou mais, sem nota de acompanhamento. Colunas: número do processo, cliente, data do último acompanhamento e dias sem acompanhamento.",
-    icone: "resumo",
+    icone: "Processosparados",
     grupo: "Operação",
     visoes: ["operacional", "gerencia"],
   },
@@ -436,7 +438,7 @@ const RELATORIOS_PRONTOS: RelatorioPronto[] = [
     titulo: "Divergências de desembarque",
     descricao: "Desembarque deste ano longe da previsão.",
     pergunta: "Pedir relatório dos processos deste ano em que o desembarque real está 15 dias ou mais diferente da previsão. Colunas: número do processo, cliente, desembarque previsto, desembarque real e diferença em dias.",
-    icone: "troca",
+    icone: "divergencias",
     grupo: "Operação",
     visoes: ["operacional", "gerencia"],
   },
@@ -444,7 +446,7 @@ const RELATORIOS_PRONTOS: RelatorioPronto[] = [
     titulo: "Propostas do mês",
     descricao: "Situação e valor das propostas deste mês.",
     pergunta: "Pedir relatório das propostas deste mês. Colunas: número do processo, cliente, vendedor, situação da proposta e valor.",
-    icone: "busca",
+    icone: "proposta",
     grupo: "Comercial",
     visoes: ["inside", "comercial", "gerencia"],
   },
@@ -452,7 +454,7 @@ const RELATORIOS_PRONTOS: RelatorioPronto[] = [
     titulo: "Comissões do mês",
     descricao: "Comissões de vendedor já calculadas neste mês.",
     pergunta: "Pedir relatório das comissões de vendedor deste mês. Colunas: vendedor, número do processo, cliente e valor da comissão.",
-    icone: "check",
+    icone: "comissoes",
     grupo: "Comercial",
     visoes: ["inside", "comercial", "financeiro", "gerencia"],
   },
@@ -460,7 +462,7 @@ const RELATORIOS_PRONTOS: RelatorioPronto[] = [
     titulo: "Clientes com processos abertos",
     descricao: "Quem tem mais processos abertos, com vendedor e quantos estão sem proposta.",
     pergunta: "Pedir relatório dos clientes com processos abertos nos últimos 6 meses. Colunas: cliente, vendedor, processos abertos e sem proposta. Na carteira, só os clientes do vendedor logado. Na visão de administrador, todos.",
-    icone: "resumo",
+    icone: "buscarCliente",
     grupo: "Comercial",
     visoes: ["inside", "comercial", "gerencia"],
   },
@@ -468,7 +470,7 @@ const RELATORIOS_PRONTOS: RelatorioPronto[] = [
     titulo: "Clientes sem movimento",
     descricao: "Quem já abriu processo e não abre há 90 dias.",
     pergunta: "Pedir relatório dos clientes que já abriram processo e não abrem há 90 dias ou mais. Colunas: cliente, vendedor, data do último processo e dias sem abrir. Na carteira, só os clientes do vendedor logado. Na visão de administrador, todos.",
-    icone: "busca",
+    icone: "oQueMudou",
     grupo: "Comercial",
     visoes: ["inside", "comercial", "gerencia"],
   },
@@ -476,7 +478,7 @@ const RELATORIOS_PRONTOS: RelatorioPronto[] = [
     titulo: "Taxas do mês",
     descricao: "Nome da taxa, pagamento e recebimento.",
     pergunta: "Pedir relatório das taxas deste mês. Colunas: número do processo, cliente, nome da taxa, valor de pagamento e valor de recebimento.",
-    icone: "relatorio",
+    icone: "relatorioTaxas",
     grupo: "Financeiro",
     visoes: ["financeiro", "gerencia"],
   },
@@ -484,7 +486,7 @@ const RELATORIOS_PRONTOS: RelatorioPronto[] = [
     titulo: "Fila do documental",
     descricao: "CE e IM em aberto, com liberação e o que falta.",
     pergunta: "Pedir relatório das atividades pendentes do documental CE e do documental IM. Colunas: número do processo, atividade, responsável, CE liberado e o que falta para concluir.",
-    icone: "check",
+    icone: "filaCe",
     grupo: "Documental",
     visoes: ["documental", "gerencia"],
   },
@@ -492,7 +494,7 @@ const RELATORIOS_PRONTOS: RelatorioPronto[] = [
     titulo: "Log das últimas 24 horas",
     descricao: "Quem alterou, em qual tabela e em qual computador.",
     pergunta: "Pedir relatório do log das últimas 24 horas. Colunas: data, usuário, tabela, tipo e computador.",
-    icone: "troca",
+    icone: "Relogiolista",
     grupo: "TI",
     visoes: ["ti"],
   },
@@ -500,7 +502,7 @@ const RELATORIOS_PRONTOS: RelatorioPronto[] = [
     titulo: "Exclusões recentes",
     descricao: "O que foi apagado nas últimas 24 horas e quem excluiu.",
     pergunta: "Pedir relatório das exclusões das últimas 24 horas. Colunas: data, usuário, tabela, registro e computador.",
-    icone: "busca",
+    icone: "lixo",
     grupo: "TI",
     visoes: ["ti"],
   },
@@ -572,6 +574,7 @@ const SUGESTOES: { titulo: string; descricao: string; pergunta: string; icone: k
 ];
 
 const ICONES = {
+  lixo: "M9.38 1C9.09 1 8.86 1.23 8.86 1.52C8.86 1.81 9.09 2.05 9.38 2.05L14.62 2.05C14.91 2.05 15.14 1.81 15.14 1.52C15.14 1.23 14.91 1 14.62 1L9.38 1zM5.02 3.44C3.76 3.44 2.75 4.46 2.75 5.71C2.75 6.97 3.76 7.98 5.02 7.98L18.46 7.98L18.46 18.98C18.46 20.62 17.13 21.95 15.49 21.95L8.51 21.95C6.87 21.95 5.54 20.62 5.54 18.98L5.54 9.9C5.54 9.61 5.31 9.38 5.02 9.38C4.73 9.38 4.49 9.61 4.49 9.9L4.49 18.98C4.49 21.2 6.29 23 8.51 23L15.49 23C17.71 23 19.51 21.2 19.51 18.98L19.51 7.92C20.51 7.68 21.25 6.79 21.25 5.71C21.25 4.46 20.24 3.44 18.98 3.44L5.02 3.44zM5.02 4.49L18.98 4.49C19.66 4.49 20.21 5.04 20.21 5.71C20.21 6.39 19.66 6.94 18.98 6.94L5.02 6.94C4.34 6.94 3.79 6.39 3.79 5.71C3.79 5.04 4.34 4.49 5.02 4.49zM9.56 10.43C9.27 10.43 9.03 10.66 9.03 10.95L9.03 18.98C9.03 19.27 9.27 19.51 9.56 19.51C9.85 19.51 10.08 19.27 10.08 18.98L10.08 10.95C10.08 10.66 9.85 10.43 9.56 10.43zM14.44 10.43C14.15 10.43 13.92 10.66 13.92 10.95L13.92 18.98C13.92 19.27 14.15 19.51 14.44 19.51C14.73 19.51 14.97 19.27 14.97 18.98L14.97 10.95C14.97 10.66 14.73 10.43 14.44 10.43z",
   ia: "M12 2l1.8 5.2L19 9l-5.2 1.8L12 16l-1.8-5.2L5 9l5.2-1.8L12 2zm6 12l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9L18 14zM6 15l.7 1.6L8.3 17l-1.6.7L6 19.3l-.7-1.6L3.7 17l1.6-.4L6 15z",
   busca: "M10 4a6 6 0 104.47 10.03l4.75 4.75 1.41-1.41-4.75-4.75A6 6 0 0010 4zm0 2a4 4 0 110 8 4 4 0 010-8z",
   resumo: "M5 4h14v2H5V4zm0 4h14v2H5V8zm0 4h9v2H5v-2zm0 4h11v2H5v-2z",
@@ -594,15 +597,57 @@ const ICONES = {
   novoAqui: "M12 12a4 4 0 100-8 4 4 0 000 8zm-7 9a7 7 0 0114 0H5z",
   painel: "M12 3 2 12h3v8h6v-6h2v6h6v-8h3L12 3z",
   email: "M3 5h18a1 1 0 011 1v12a1 1 0 01-1 1H3a1 1 0 01-1-1V6a1 1 0 011-1zm9.3 6.9L20 7.2V6.8l-7.7 4.8L4 6.8v.4l8.3 4.7z",
+  TI: "M5.35709 16V5.78571c0-.43393.34822-.78571.77777-.78571H18.5793c.4296 0 .7778.35178.7778.78571V16M5.35709 16h-1c-.55229 0-1 .4477-1 1v1c0 .5523.44771 1 1 1H20.3571c.5523 0 1-.4477 1-1v-1c0-.5523-.4477-1-1-1h-1M5.35709 16H19.3571M9.35709 8l2.62501 2.5L9.35709 13m4.00001 0h2",
+  Monitoramento: "M5 19h4m6 0h4m-6.9627-4.3843V8.63418L17 5.93918m-4.9298 2.66213L7.04175 5.93919M12 2.99719l5.033 2.90583v5.81168L12 14.6205l-5.03303-2.9058V5.90302L12 2.99719ZM14 19c0 1.1045-.8954 2-2 2s-2-.8955-2-2c0-1.1046.8954-2 2-2s2 .8954 2 2Z",
+  meudia:"M12 2v2M4.93 4.93l1.41 1.41M19.07 4.93l-1.41 1.41M20 12h2M15.947 12.65a4 4 0 0 0-5.925-4.128M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z",
+  ContaIA: "M13.5 8a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0ZM3 20v-1a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v1M19 2c.3 2.2 1.8 3.7 4 4-2.2.3-3.7 1.8-4 4-.3-2.2-1.8-3.7-4-4 2.2-.3 3.7-1.8 4-4Z",
+  LogProcesso: "M6.5 5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0ZM6.5 12a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0ZM6.5 19a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0ZM5 6.5v4M5 13.5v4M10 5h11M10 12h8M10 19h11",
+  Relogiolista: "M22 16.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0ZM16.5 14v2.5l1.5 1M3 5h14M3 10h6M3 15h5",
+  Rank: "M3 21v-9h5V4h8v11h5v6ZM8 12v9M16 15v6",
+  fichaProcesso: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8ZM14 3v5h5M9 13h6M9 17h4",
+  pendencias: "M6 3h12M6 21h12M7 3v3.5a5 5 0 0 0 1.5 3.5L12 12l-3.5 2A5 5 0 0 0 7 17.5V21M17 3v3.5a5 5 0 0 1-1.5 3.5L12 12l3.5 2a5 5 0 0 1 1.5 3.5V21",
+  pendenciasInside: "M7 7a3 3 0 1 1 6 0 3 3 0 0 1-6 0ZM4 20v-1a5 5 0 0 1 5-5M21 17a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM17 15v2l1.5 1",
+  resumoProcesso: "M7 4h10a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2ZM10 2h4a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1ZM9 11h6M9 15h6",
+  buscarCliente: "M7 7a3 3 0 1 1 6 0 3 3 0 0 1-6 0ZM4 20v-1a5 5 0 0 1 5-5M20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM19.2 18.2 21 20",
+  proposta: "M21 3 3 10.5l7 3 3 7ZM10 13.5 21 3",
+  comissaoMes: "M6 5h12M5 9h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2ZM14.5 14.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0ZM6.5 14.5h.01M17.5 14.5h.01",
+  processosCliente: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2ZM14 11a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM8.5 17a3.5 3 0 0 1 7 0",
+  ouroPrata: "M8 2.5 12 9l4-6.5M17.5 15a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0ZM14 15a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z",
+  minhasPendencias: "M12 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM3 19v-1a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v1M19.5 9a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0ZM17.5 14a4 4 0 0 1 3.5 4v1",
+  divergencias: "M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0ZM12 9v4M12 17h.01",
+  acompanhamentos: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7ZM15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
+  prazos: "M8 2v4M16 2v4M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2ZM3 10h18M9 16l2 2 4-4",
+  oQueMudou: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5M12 7v5l4 2",
+  Processosparados: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM10 9v6M14 9v6",
+  painelMes: "M3 4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1ZM13 4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1ZM13 14a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1ZM3 17a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z",
+  graficoLinha: "M3 3v16a2 2 0 0 0 2 2h16M7 14l4-4 3 3 5-6",
+  comissoes: "M6 5h12M5 9h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2ZM14.5 14.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0ZM6.5 14.5h.01M17.5 14.5h.01",
+  taxasProcesso: "M5 21V4a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v17l-3.5-2-3.5 2-3.5-2ZM9 8h6M9 12h6",
+  relatorioTaxas: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8ZM14 3v5h5M9 17v-3M12 17v-5M15 17v-7",
+  relacionamento: "M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z",
+  passagens: "M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2Z",
+  filaCe: "M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2ZM8 12l3 3 5-6",
+  filaIm: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM8 12l3 3 5-6",
+  ceNaoLiberado: "M5 11h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1ZM8 11V7a4 4 0 0 1 8 0v4M12 15v2",
+  doProcesso: "M4 6h16M4 12h12M4 18h8",
+  camposLivres: "M17 3l4 4-4 4M21 7H3M7 13l-4 4 4 4M3 17h18",
 } as const;
 
 const RESUMO_ENTRADA = false;
+const CONTORNO = ["TI", "Monitoramento", "meudia", "ContaIA", "LogProcesso", "Relogiolista", "Rank", "fichaProcesso", "pendencias", "pendenciasInside", "resumoProcesso", "buscarCliente", "proposta", "comissaoMes", "processosCliente", "ouroPrata", "minhasPendencias", "divergencias", "acompanhamentos", "prazos", "oQueMudou", "Processosparados", "painelMes", "graficoLinha", "comissoes", "taxasProcesso", "relatorioTaxas", "relacionamento", "passagens", "filaCe", "filaIm", "ceNaoLiberado", "doProcesso", "camposLivres"] as const;
 
 function textoVisivel(content: string) {
   return content.split("\n\nTexto lido da imagem:\n")[0] ?? content;
 }
 
 function Icone({ nome, tamanho = 18 }: { nome: keyof typeof ICONES; tamanho?: number }) {
+  if ((CONTORNO as readonly string[]).includes(nome)) {
+    return (
+      <svg viewBox="0 0 24 24" width={tamanho} height={tamanho} aria-hidden fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d={ICONES[nome]} />
+      </svg>
+    );
+  }
   if (nome === "novo") {
     return (
       <svg viewBox="0 0 24 24" width={tamanho} height={tamanho} aria-hidden fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -626,6 +671,7 @@ const ROTULO_FERRAMENTA: Record<string, string> = {
   explicar_campo_livre: "Lendo o campo livre",
   painel_ti: "Montando o painel do TI",
   painel_financeiro: "Montando o painel financeiro",
+  passagens_aereas: "Comparando passagens",
   relacionamento_clientes: "Montando o relacionamento",
   taxas_processo: "Lendo as taxas do processo",
   log_recente: "Lendo o log recente",
@@ -1056,6 +1102,7 @@ const FERRAMENTAS_PRONTAS = new Set([
   "fila_setor",
   "painel_ti",
   "painel_financeiro",
+  "passagens_aereas",
   "relacionamento_clientes",
   "taxas_processo",
   "log_recente",
@@ -1097,6 +1144,7 @@ function soNomesDeTabela(texto: string): boolean {
 }
 
 function catalogoInterno(texto: string): boolean {
+  if (/```(?:log|painel|dia)\b/i.test(texto)) return false;
   if (/"Coluna"\s*:/.test(texto) && /"(?:Tabela|Ref_Tabela)"\s*:/.test(texto)) return true;
   return soNomesDeTabela(texto) || (texto.match(/\b(?:cad|mov|sys|aux|imp|vis)_[A-Za-z0-9_]+\b/g) ?? []).length >= 6;
 }
@@ -1295,6 +1343,30 @@ function pedidoSemProcesso(texto: string) {
   const fala = textoVisivel(texto);
   if (processosDoTexto(fala).length || numerosContainer(fala).length || idsMaritimos(fala).length || idsTaxa(fala).length) return false;
   return /pergunte qual processo|n[aã]o informei o n[uú]mero|log t[eé]cnico de um processo/i.test(fala);
+}
+
+function pedePassagem(texto: string) {
+  return /passag(?:em|ens)\s+a[eé]rea/i.test(textoVisivel(texto));
+}
+
+function destinoDaPassagem(fala: string) {
+  const achado = fala.match(/\bpara\s+(?:o\s+|a\s+)?([A-Za-zÀ-ú][\p{L}.' -]{1,40})/iu);
+  if (!achado) return "";
+  const nome = achado[1].replace(/\s+(?:em|no|na|dia|de)\b[\s\S]*$/i, "").trim();
+  if (!nome || /^(?:o|a|um|uma|eu|mim|hoje|amanh[aã]|esse|essa|este|esta)$/i.test(nome)) return "";
+  if (/\b(?:destino|embarque|passagem|pre[cç]o|data)\b/i.test(nome)) return "";
+  return nome;
+}
+
+function respostaPassagemIncompleta(texto: string) {
+  const fala = textoVisivel(texto).replace(/\s+/g, " ").trim();
+  if (!pedePassagem(fala)) return "";
+  const temData = /\b\d{1,2}\/\d{1,2}\/\d{4}\b/.test(fala);
+  const destino = destinoDaPassagem(fala);
+  if (temData && destino) return "";
+  if (!temData && !destino) return "Informe o destino e a data de embarque, no formato dd/mm/aaaa. Se quiser, diga a origem e a volta.";
+  if (!temData) return `Informe a data de embarque para ${destino}, no formato dd/mm/aaaa.`;
+  return "Informe o destino da passagem.";
 }
 
 function pedeSoAData(texto: string) {
@@ -1677,122 +1749,111 @@ function seriesDoGrafico(texto: string) {
   return { titulo, itens: serie, moeda: serie.some((item) => item.moeda) };
 }
 
-function curvaSuave(pontos: { x: number; y: number }[]) {
-  if (!pontos.length) return "";
-  if (pontos.length === 1) return `M ${pontos[0].x} ${pontos[0].y}`;
-  let caminho = `M ${pontos[0].x} ${pontos[0].y}`;
-  for (let i = 0; i < pontos.length - 1; i += 1) {
-    const p0 = pontos[i - 1] || pontos[i];
-    const p1 = pontos[i];
-    const p2 = pontos[i + 1];
-    const p3 = pontos[i + 2] || p2;
-    const c1x = p1.x + (p2.x - p0.x) / 6;
-    const c1y = p1.y + (p2.y - p0.y) / 6;
-    const c2x = p2.x - (p3.x - p1.x) / 6;
-    const c2y = p2.y - (p3.y - p1.y) / 6;
-    caminho += ` C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p2.x} ${p2.y}`;
-  }
-  return caminho;
-}
-
 function textoDoValor(valor: number, moeda: boolean) {
   if (!moeda) return valor.toLocaleString("pt-BR");
   return valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+function textoDoEixo(valor: number) {
+  const arredondado = Math.abs(valor) >= 100 ? Math.round(valor) : valor;
+  return arredondado.toLocaleString("pt-BR", { maximumFractionDigits: Math.abs(valor) >= 100 ? 0 : 1 });
+}
+
+function faixaDoValor(valor: number, menor: number, maior: number) {
+  if (maior === menor) return "mid";
+  if (valor === menor) return "low";
+  if (valor === maior) return "high";
+  return "mid";
+}
+
+function rotuloDoEixo(nome: string, detalhe: string) {
+  const hora = nome.match(/^(.*)\s(\d{1,2}:\d{2})$/);
+  if (hora) return { titulo: hora[1], sub: detalhe || hora[2] };
+  return { titulo: nome, sub: detalhe };
+}
+
 function Grafico({ texto }: { texto: string }) {
-  const gradiente = useId().replace(/:/g, "");
   const { titulo, itens, moeda } = seriesDoGrafico(texto);
   if (!itens.length) return null;
-  const largura = 640;
-  const altura = 248;
-  const margem = { esquerda: 58, direita: 18, topo: 28, base: 58 };
-  const internoLargura = largura - margem.esquerda - margem.direita;
-  const internoAltura = altura - margem.topo - margem.base;
   const menor = Math.min(...itens.map((item) => item.valor));
   const maior = Math.max(...itens.map((item) => item.valor));
-  const base = Math.min(0, menor);
-  const topo = Math.max(0, maior);
-  const faixa = topo - base || 1;
-  const pontos = itens.map((item, indice) => {
-    const x = margem.esquerda + (itens.length === 1 ? internoLargura / 2 : (indice / (itens.length - 1)) * internoLargura);
-    const y = margem.topo + ((topo - item.valor) / faixa) * internoAltura;
-    return { ...item, x, y };
-  });
-  const linha = curvaSuave(pontos);
-  const chao = margem.topo + ((topo - base) / faixa) * internoAltura;
-  const area = `${linha} L ${pontos[pontos.length - 1].x} ${chao} L ${pontos[0].x} ${chao} Z`;
   const total = itens.reduce((soma, item) => soma + item.valor, 0);
   const media = total / itens.length;
+  const teto = Math.max(maior, 0) || 1;
+  const alturaDe = (valor: number) => Math.max(0, Math.min(100, (Math.max(valor, 0) / teto) * 100));
+  const marcas = [0, 0.25, 0.5, 0.75].map((passo) => ({
+    valor: teto * passo,
+    bottom: passo * 100,
+  }));
   const resumo = [
-    ["Total", textoDoValor(total, moeda)],
-    ["Média", textoDoValor(media, moeda)],
-    ["Maior", textoDoValor(maior, moeda)],
-    ["Menor", textoDoValor(menor, moeda)],
-    ["Pontos", String(itens.length)],
+    ["Menor", textoDoValor(menor, moeda), "baixo"],
+    ["Média", textoDoValor(media, moeda), ""],
+    ["Maior", textoDoValor(maior, moeda), "alto"],
   ];
-  const marcas = [0, 0.5, 1].map((passo) => {
-    const valor = topo - faixa * passo;
-    const y = margem.topo + passo * internoAltura;
-    return { valor, y };
-  });
   return (
     <figure className="chat-grafico">
-      {titulo ? <figcaption>{titulo}</figcaption> : null}
-      <div className="chat-grafico-resumo">
-        {resumo.map(([rotulo, valor]) => (
-          <div key={rotulo}>
+      {titulo ? <h3 className="chat-grafico-titulo">{titulo}</h3> : null}
+      <p className="chat-grafico-sub">{itens.length === 1 ? (moeda ? "1 preço" : "1 ponto") : `${itens.length} ${moeda ? "preços" : "pontos"}`}</p>
+      <div className="chat-grafico-stats">
+        {resumo.map(([rotulo, valor, faixa]) => (
+          <div key={rotulo} className={faixa ? `chat-grafico-stat ${faixa}` : "chat-grafico-stat"}>
             <span>{rotulo}</span>
             <strong>{valor}</strong>
           </div>
         ))}
       </div>
-      <svg viewBox={`0 0 ${largura} ${altura}`} role="img" aria-label={titulo || "Gráfico de linhas"}>
-        <defs>
-          <linearGradient id={gradiente} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#e53935" stopOpacity="0.62" />
-            <stop offset="100%" stopColor="#e53935" stopOpacity="0" />
-          </linearGradient>
-        </defs>
+      <div className="chat-grafico-plot" role="img" aria-label={titulo || "Gráfico de preços"}>
         {marcas.map((marca) => (
-          <g key={marca.y}>
-            <line x1={margem.esquerda} x2={largura - margem.direita} y1={marca.y} y2={marca.y} />
-            <text x={margem.esquerda - 8} y={marca.y + 4} textAnchor="end">
-              {textoDoValor(Math.abs(marca.valor) >= 100 ? Math.round(marca.valor) : marca.valor, false)}
-            </text>
-          </g>
+          <span key={marca.bottom} className="chat-grafico-tick" style={{ bottom: `${marca.bottom}%` }}>
+            {textoDoEixo(marca.valor)}
+          </span>
         ))}
-        <path className="chat-grafico-area" d={area} fill={`url(#${gradiente})`} />
-        <path className="chat-grafico-linha" d={linha} />
-        {pontos.map((ponto, indice) => (
-          <g key={`${ponto.nome}-${ponto.detalhe}-${ponto.x}`}>
-            <circle cx={ponto.x} cy={ponto.y} r="4.5" />
-            {ponto.valor === maior || ponto.valor === menor || itens.length <= 5 ? (
-              <text className="chat-grafico-valor" x={ponto.x} y={Math.max(14, ponto.y - 10)} textAnchor="middle">
-                {textoDoValor(ponto.valor, moeda)}
-              </text>
-            ) : null}
-            <text className="chat-grafico-eixo" x={ponto.x} y={altura - 16} textAnchor="middle">
-              {ponto.detalhe
-                ? indice > 0 && pontos[indice - 1].detalhe === ponto.detalhe
-                  ? ""
-                  : ponto.detalhe.replace(/\/(\d{4})$/, (_, ano: string) => `/${ano.slice(-2)}`)
-                : ponto.nome.length > 12
-                  ? `${ponto.nome.slice(0, 11)}…`
-                  : ponto.nome}
-            </text>
-            <title>{[ponto.nome, ponto.detalhe, textoDoValor(ponto.valor, moeda)].filter(Boolean).join(" · ")}</title>
-          </g>
-        ))}
-      </svg>
+        {media > 0 && media < teto ? (
+          <div className="chat-grafico-media" style={{ bottom: `${alturaDe(media)}%` }}>
+            <b>média</b>
+          </div>
+        ) : null}
+        <div className="chat-grafico-barras">
+          {itens.map((item, indice) => {
+            const faixa = faixaDoValor(item.valor, menor, maior);
+            return (
+              <div
+                key={`${item.nome}-${item.detalhe}-${item.valor}-${indice}`}
+                className={`chat-grafico-barra ${faixa}`}
+                style={{ ["--v" as string]: String(alturaDe(item.valor)) }}
+                title={[item.nome, item.detalhe, textoDoValor(item.valor, moeda)].filter(Boolean).join(" · ")}
+              >
+                <span>{textoDoEixo(item.valor)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div className="chat-grafico-eixo">
+        {itens.map((item, indice) => {
+          const eixo = rotuloDoEixo(item.nome, item.detalhe);
+          return (
+            <div key={`eixo-${item.nome}-${item.detalhe}-${item.valor}-${indice}`}>
+              {eixo.titulo}
+              {eixo.sub ? <small>{eixo.sub}</small> : null}
+            </div>
+          );
+        })}
+      </div>
       <ul className="chat-grafico-lista">
-        {pontos.map((ponto) => (
-          <li key={`lista-${ponto.nome}-${ponto.detalhe}-${ponto.valor}`}>
-            <span>{ponto.nome}</span>
-            {ponto.detalhe ? <time>{ponto.detalhe}</time> : <time />}
-            <strong>{textoDoValor(ponto.valor, moeda)}</strong>
-          </li>
-        ))}
+        {itens.map((item, indice) => {
+          const faixa = faixaDoValor(item.valor, menor, maior);
+          const cor = faixa === "low" ? "var(--low)" : faixa === "high" ? "var(--high)" : "var(--mid)";
+          const selo = faixa === "low" ? "menor" : faixa === "high" ? "maior" : "médio";
+          return (
+            <li key={`lista-${item.nome}-${item.detalhe}-${item.valor}-${indice}`}>
+              <span className="chat-grafico-ponto" style={{ background: cor }} />
+              <span>{item.detalhe ? `${item.nome} · ${item.detalhe}` : item.nome}</span>
+              <strong>{textoDoValor(item.valor, moeda)}</strong>
+              <em className={faixa === "low" ? "baixo" : faixa === "high" ? "alto" : ""}>{selo}</em>
+            </li>
+          );
+        })}
       </ul>
     </figure>
   );
@@ -1945,6 +2006,7 @@ function textoParaBusca(texto: string) {
     if (nome === "rota") return textoDaRota(corpo) || corpo.replace(/[{}[\]"]/g, " ");
     if (nome === "encarte") return textoDoEncarte(corpo);
     if (nome === "grafico") return corpo.replace(/\|/g, " ");
+    if (nome === "sites") return textoDosSites(corpo);
     const frases: string[] = [];
     try {
       frasesDoJson(JSON.parse(corpo), frases);
@@ -1965,6 +2027,75 @@ function textoDoEncarte(bruto: string) {
   }
 }
 
+function textoDosSites(bruto: string) {
+  try {
+    const dados = JSON.parse(bruto) as { trecho?: string; sites?: { nome?: string; dominio?: string }[] };
+    const nomes = (dados.sites ?? []).map((site) => site.nome || site.dominio || "").filter(Boolean);
+    return [dados.trecho, ...nomes].filter(Boolean).join(" · ");
+  } catch {
+    return "";
+  }
+}
+
+function LogoSite({ src, nome }: { src: string; nome: string }) {
+  const [falhou, setFalhou] = useState(false);
+  if (falhou || !src) return <span className="chat-site-letra">{nome.slice(0, 1)}</span>;
+  return <img src={src} alt="" referrerPolicy="no-referrer" onError={() => setFalhou(true)} />;
+}
+
+function SitesCard({ bruto }: { bruto: string }) {
+  let dados: { titulo?: string; trecho?: string; sites?: { nome?: string; dominio?: string; url?: string; imagem?: string }[] } | null = null;
+  try {
+    dados = JSON.parse(bruto);
+  } catch {
+    return null;
+  }
+  const sites = (dados?.sites ?? []).filter((site) => /^https:\/\//.test(String(site.url ?? "")));
+  if (!sites.length) return null;
+  return (
+    <section className="chat-sites">
+      <header>
+        <h3>{dados?.titulo || "Onde comparar"}</h3>
+        {dados?.trecho ? <p>{dados.trecho}</p> : null}
+      </header>
+      <div className="chat-sites-grade">
+        {sites.map((site) => {
+          const nome = site.nome || site.dominio || "Site";
+          const dominio = String(site.dominio ?? "").replace(/^www\./, "");
+          return (
+            <a key={nome} href={site.url} target="_blank" rel="noopener noreferrer">
+              <LogoSite src={String(site.imagem ?? "")} nome={nome} />
+              <strong>{nome}</strong>
+              {dominio ? <span>{dominio}</span> : null}
+            </a>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function nomeDoCartao(nome: string) {
+  const texto = nome.trim() || "Cliente";
+  const corte = texto.match(/^(.*\S)\s+(\([^)]+\))$/);
+  if (!corte) return texto;
+  return (
+    <>
+      {corte[1]} <span className="chat-encarte-codigo">{corte[2]}</span>
+    </>
+  );
+}
+
+function detalheDoCartao(texto: string) {
+  const match = texto.match(/^(\d+)\s+(.+)$/);
+  if (!match) return texto;
+  return (
+    <>
+      <span className="chat-encarte-qtd">{match[1]}</span> {match[2]}
+    </>
+  );
+}
+
 function EncarteCard({ bruto }: { bruto: string }) {
   let dados: { nome?: string; nivel?: string; classificacao?: string; pagamento?: string; detalhe?: string } | null = null;
   try {
@@ -1980,9 +2111,9 @@ function EncarteCard({ bruto }: { bruto: string }) {
     <article className={`chat-encarte encarte${nivel ? ` nivel-${nivel}` : ""}`}>
       <header>
         <em>{selo}</em>
-        <small className={pagamento}>{dados.detalhe || "Sem faturas recentes"}</small>
+        <small className={pagamento}>{detalheDoCartao(dados.detalhe || "Sem faturas recentes")}</small>
       </header>
-      <strong>{dados.nome || "Cliente"}</strong>
+      <strong>{nomeDoCartao(dados.nome || "Cliente")}</strong>
     </article>
   );
 }
@@ -2114,7 +2245,7 @@ function RotaCard({ bruto, completo = false }: { bruto: string; completo?: boole
 }
 
 function EmailCard({ bruto }: { bruto: string }) {
-  let dados: { assunto?: string; de?: string; data?: string; naoLida?: boolean; alerta?: string; corpo?: string } = {};
+  let dados: { assunto?: string; de?: string; data?: string; naoLida?: boolean; alerta?: string; corpo?: string; processo?: string } = {};
   try {
     dados = JSON.parse(bruto);
   } catch {
@@ -2128,6 +2259,7 @@ function EmailCard({ bruto }: { bruto: string }) {
     <article className={`chat-email${dados.alerta ? " alerta" : ""}`}>
       <header>
         <strong>{dados.assunto || "E-mail"}</strong>
+        {dados.processo ? <em className="processo">{dados.processo}</em> : null}
         {dados.naoLida ? <em>Não lida</em> : null}
       </header>
       <p>
@@ -2673,12 +2805,16 @@ function normalizarCartoes(texto: string) {
       const tipo = linguagem.toLowerCase();
       const conteudo = corpo.trim();
       if (!conteudo) return "";
-      if (/^(grafico|email|rota|dia|encarte)$/.test(tipo)) return bloco;
+      if (/^(grafico|email|rota|dia|encarte|sites)$/.test(tipo)) return bloco;
       if (!/^(log|painel|json)$/.test(tipo) && !/^[{[]/.test(conteudo)) return bloco;
       try {
         const dados = JSON.parse(conteudo) as { banco?: unknown; itens?: unknown };
         if (dados?.banco) return "```painel\n" + conteudo + "\n```";
-        if (Array.isArray(dados?.itens) && dados.itens.length) return "```log\n" + conteudo + "\n```";
+        if (Array.isArray(dados?.itens)) {
+          if (dados.itens.length) return "```log\n" + conteudo + "\n```";
+          const titulo = typeof (dados as { titulo?: unknown }).titulo === "string" ? (dados as { titulo: string }).titulo : "Log";
+          return `Nenhum evento em ${titulo}.`;
+        }
       } catch {
         return "";
       }
@@ -2811,7 +2947,7 @@ function RelacionamentoGrupos({ intro, grupos }: { intro: string; grupos: { nive
 
 function Markdown({ texto: bruto, ocultarSql = false, textoCorrido = false }: { texto: string; ocultarSql?: boolean; textoCorrido?: boolean }) {
   let texto = bruto;
-  const partes: { tipo: "md" | "grafico" | "email" | "rota" | "encarte"; texto: string }[] = [];
+  const partes: { tipo: "md" | "grafico" | "email" | "rota" | "encarte" | "sites"; texto: string }[] = [];
   const normal = normalizarCartoes(texto);
   if (textoCorrido) {
     return normal ? <TextoResposta texto={ocultarSql ? semSql(normal) : normal} /> : null;
@@ -2824,7 +2960,7 @@ function Markdown({ texto: bruto, ocultarSql = false, textoCorrido = false }: { 
   if (log?.itens.length) return <LogCard log={log} />;
   if (!normal) return null;
   texto = normal;
-  const regra = /```(grafico|email|rota|encarte)\s*\n([\s\S]*?)```/gi;
+  const regra = /```(grafico|email|rota|encarte|sites)\s*\n([\s\S]*?)```/gi;
   let cursor = 0;
   for (const achado of texto.matchAll(regra)) {
     const inicio = achado.index ?? 0;
@@ -2833,7 +2969,7 @@ function Markdown({ texto: bruto, ocultarSql = false, textoCorrido = false }: { 
       if (md.trim()) partes.push({ tipo: "md", texto: md });
     }
     const nome = achado[1].toLowerCase();
-    const tipo = nome === "email" ? "email" : nome === "rota" ? "rota" : nome === "encarte" ? "encarte" : "grafico";
+    const tipo = nome === "email" ? "email" : nome === "rota" ? "rota" : nome === "encarte" ? "encarte" : nome === "sites" ? "sites" : "grafico";
     partes.push({ tipo, texto: achado[2] });
     cursor = inicio + achado[0].length;
   }
@@ -2866,6 +3002,8 @@ function Markdown({ texto: bruto, ocultarSql = false, textoCorrido = false }: { 
       <RotaCard key={indice} bruto={parte.texto} />
     ) : parte.tipo === "encarte" ? (
       <EncarteCard key={indice} bruto={parte.texto} />
+    ) : parte.tipo === "sites" ? (
+      <SitesCard key={indice} bruto={parte.texto} />
     ) : (
       <Fragmento key={indice} texto={parte.texto} />
     );
@@ -3391,7 +3529,7 @@ function saudacaoInicial(nomeCompleto: string, qtd: number | null, area: string)
   if (area === "financeiro") {
     return {
       titulo,
-      detalhe: "Visão financeira. Valores, taxas, comissões e prazos. Peça um gráfico quando quiser ver os números.",
+      detalhe: "Visão financeira. Valores, taxas, comissões, prazos e comparação de passagens.",
       extra: "",
     };
   }
@@ -3508,6 +3646,7 @@ export function ChatIa({
   const [emFundo, setEmFundo] = useState(false);
   const [sobreTela, setSobreTela] = useState(false);
   const pipRef = useRef<Window | null>(null);
+  const horasMiniRef = useRef<string[]>([]);
   const enviarRef = useRef<(conteudo: string) => void>(() => {});
   const [temaClaro, setTemaClaro] = useState(() => document.documentElement.classList.contains("tema-claro"));
   const [erro, setErro] = useState("");
@@ -3550,6 +3689,32 @@ export function ChatIa({
   const [carregandoSqlite, setCarregandoSqlite] = useState(false);
   const [inicioAberto, setInicioAberto] = useState(true);
   const [abaAbertura, setAbaAbertura] = useState<"consultas" | "relatorios">("consultas");
+  const chaveRelatorios = `maicon-relatorios:${email || "local"}`;
+  const [relatoriosSalvos, setRelatoriosSalvos] = useState<{ titulo: string; pergunta: string }[]>(() => {
+    try {
+      const salvos = JSON.parse(localStorage.getItem(chaveRelatorios) || "[]") as unknown;
+      return Array.isArray(salvos) ? salvos.filter((item) => item && typeof item.pergunta === "string") : [];
+    } catch {
+      return [];
+    }
+  });
+  function guardarRelatorio(pergunta: string, titulo = "") {
+    const pedido = pergunta.replace(/\s+/g, " ").trim();
+    if (!pedido) return;
+    const nome = titulo.trim() || pedido.replace(/^pedir relatório d[eoa]s?\s+/i, "").replace(/\.$/, "").slice(0, 72) || "Relatório";
+    setRelatoriosSalvos((atual) => {
+      const proximos = [{ titulo: nome, pergunta: pedido }, ...atual.filter((item) => item.pergunta !== pedido)].slice(0, 12);
+      localStorage.setItem(chaveRelatorios, JSON.stringify(proximos));
+      return proximos;
+    });
+  }
+  function esquecerRelatorio(pergunta: string) {
+    setRelatoriosSalvos((atual) => {
+      const proximos = atual.filter((item) => item.pergunta !== pergunta);
+      localStorage.setItem(chaveRelatorios, JSON.stringify(proximos));
+      return proximos;
+    });
+  }
   const [consultasAbertas, setConsultasAbertas] = useState(false);
   const [lateralRecolhida, setLateralRecolhida] = useState(() => sessionStorage.getItem("maicon-lateral") === "1");
   const [visoesAbertas, setVisoesAbertas] = useState(false);
@@ -3787,25 +3952,144 @@ export function ChatIa({
       .trim();
   }
 
+  function htmlMini(valor: string) {
+    const escaparTexto = (texto: string) => texto.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
+    const inline = (texto: string) => escaparTexto(texto).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<b>$1</b>");
+    const textoDoValor = (dado: unknown, profundidade = 0): string => {
+      if (profundidade > 2 || dado == null) return "";
+      if (typeof dado === "string" || typeof dado === "number") return String(dado).trim();
+      if (Array.isArray(dado)) return dado.map((item) => textoDoValor(item, profundidade + 1)).filter(Boolean).map((item) => `- ${item}`).join("\n");
+      if (typeof dado === "object") {
+        return Object.entries(dado as Record<string, unknown>)
+          .filter(([chave, item]) => item != null && item !== "" && !/^id/i.test(chave))
+          .slice(0, 12)
+          .map(([chave, item]) => {
+            const corpo = textoDoValor(item, profundidade + 1);
+            return corpo ? `- ${chave.replaceAll("_", " ")}: ${corpo.replace(/\n/g, " ")}` : "";
+          })
+          .filter(Boolean)
+          .join("\n");
+      }
+      return "";
+    };
+    let fonte = semBlocoAberto(valor).replace(/\r/g, "");
+    fonte = fonte.replace(/```[a-z]*[^\S\n]*\n?([\s\S]*?)```/gi, (_bloco, corpo: string) => {
+      const texto = corpo.trim();
+      if (!texto) return "";
+      if (/^[{\[]/.test(texto)) {
+        try {
+          return textoDoValor(JSON.parse(texto));
+        } catch {
+          return "";
+        }
+      }
+      return texto;
+    });
+    fonte = fonte
+      .split("\n")
+      .map((linha) => {
+        const partes = linha.split(/\s+-\s+(?=\*\*|[A-ZÁÉÍÓÚÂÊÔÃÕÇ0-9])/);
+        if (partes.length < 3) return linha;
+        return partes.map((parte, indice) => (indice === 0 ? parte.trim() : `- ${parte.trim()}`)).join("\n");
+      })
+      .join("\n");
+    const partir = (corpo: string) => {
+      const marcado = corpo.match(/^\*\*([^*]+)\*\*:?\s*([\s\S]*)$/);
+      if (marcado) return [marcado[1].replace(/:$/, ""), marcado[2]] as const;
+      const nota = corpo.match(/^(Última nota\s*\([^)]*\)):\s*([\s\S]+)$/);
+      if (nota) return [nota[1], nota[2]] as const;
+      const simples = corpo.match(/^([A-Za-zÀ-ú0-9][^:\n]{1,42}):\s+([\s\S]+)$/);
+      if (simples && !/[.!?]$/.test(simples[1])) return [simples[1], simples[2]] as const;
+      return null;
+    };
+    const blocos: string[] = [];
+    let tabela: string[] | null = null;
+    const fecharTabela = () => {
+      if (!tabela) return;
+      const linhas = tabela.filter((linha) => !/^\|?\s*:?-{2,}/.test(linha.replace(/\|/g, "").trim()));
+      linhas.forEach((linha, indice) => {
+        const celulas = linha.split("|").map((celula) => celula.trim()).filter(Boolean);
+        if (!celulas.length) return;
+        if (indice === 0) blocos.push(`<strong class="titulo">${inline(celulas.join(" · "))}</strong>`);
+        else blocos.push(`<div class="linha">${celulas.map((celula) => inline(celula)).join(" · ")}</div>`);
+      });
+      tabela = null;
+    };
+    for (const linha of fonte.split("\n")) {
+      const texto = linha.trim();
+      if (texto.startsWith("|")) {
+        tabela = tabela ?? [];
+        tabela.push(texto);
+        continue;
+      }
+      fecharTabela();
+      if (!texto) {
+        if (blocos.length && !blocos[blocos.length - 1].includes('class="espaco"')) blocos.push(`<div class="espaco"></div>`);
+        continue;
+      }
+      const titulo = texto.match(/^#{1,6}\s+(.*)$/);
+      const item = texto.match(/^(?:[-*•]|\d+[.)])\s+(.*)$/);
+      if (titulo || (!item && !texto.includes(":") && texto.length <= 32 && texto.split(/\s+/).length <= 4 && !/[.!?]$/.test(texto))) {
+        blocos.push(`<strong class="titulo">${inline(titulo ? titulo[1] : texto)}</strong>`);
+        continue;
+      }
+      const corpo = (item ? item[1] : texto).trim();
+      const rotulo = partir(corpo);
+      if (rotulo) {
+        blocos.push(`<div class="linha"><b>${inline(rotulo[0])}</b> ${inline(rotulo[1])}</div>`);
+        continue;
+      }
+      blocos.push(`<div class="linha">${inline(corpo)}</div>`);
+    }
+    fecharTabela();
+    return blocos.join("");
+  }
+
   function pintarMiniChat(janela: Window) {
     const lista = janela.document.getElementById("msgs");
-    const estado = janela.document.getElementById("estado");
     const campo = janela.document.getElementById("campo") as HTMLTextAreaElement | null;
-    if (!lista || !estado) return;
-    const itens = mensagens.flatMap((item) => {
-      if (item.role === "tool" || !("content" in item)) return [];
-      const texto = textoMini(item.content);
-      if (!texto) return [];
-      return [`<p class="${item.role === "user" ? "eu" : "ia"}">${texto.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"))}</p>`];
+    const chips = janela.document.getElementById("chips");
+    if (!lista) return;
+    const escapar = (valor: string) => valor.replace(/[&<>"]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&quot;"));
+    const horaAgora = () => new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(new Date());
+    if (!mensagens.length) horasMiniRef.current = [];
+    const visiveis: { classe: string; texto: string; indice: number }[] = [];
+    mensagens.forEach((item, indice) => {
+      if (item.role === "tool" || !("content" in item)) return;
+      const bruto = textoVisivel(item.content);
+      const texto = item.role === "user" ? textoMini(bruto) : htmlMini(bruto);
+      if (!texto) return;
+      visiveis.push({ classe: item.role === "user" ? "eu" : "ia", texto, indice });
     });
-    const pensando = ocupado ? `<p class="ia pensando">${(status || "Consultando…").replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"))}</p>` : "";
-    lista.innerHTML =
-      `${itens.slice(-8).join("")}${pensando}` ||
-      `<div class="vazio"><span class="vazio-icone"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="${ICONES.ia}"/></svg></span><strong>Fico aqui enquanto você trabalha</strong><small>Pergunte sobre um processo, cliente ou atividade.</small><div class="atalhos"><button type="button" data-pergunta="Quais são minhas pendências atrasadas e as dos próximos 7 dias?">Minhas pendências</button><button type="button" data-pergunta="Faça o resumo do processo ">Resumo de processo</button></div></div>`;
+    if (horasMiniRef.current.length > mensagens.length) horasMiniRef.current.length = mensagens.length;
+    const itens = visiveis.slice(-8).map((item) => {
+      if (!horasMiniRef.current[item.indice]) horasMiniRef.current[item.indice] = horaAgora();
+      return `<div class="item ${item.classe}"><div class="bolha">${item.classe === "eu" ? escapar(item.texto) : item.texto}</div><time>${horasMiniRef.current[item.indice]}</time></div>`;
+    });
+    lista.innerHTML = itens.join("");
     lista.scrollTop = lista.scrollHeight;
-    estado.textContent = ocupado ? status || "Consultando…" : "Pronto";
-    estado.classList.toggle("ativo", ocupado);
-    if (campo) campo.disabled = ocupado;
+    if (chips) {
+      const area = admin ? (visao === "inside" ? "comercial" : visao === "tudo" ? "gerencia" : visao) : setor;
+      const base = SUGESTOES_SETOR[area] ?? (pode.log ? SUGESTOES : SUGESTOES.filter((s) => s.titulo === "Cliente do processo"));
+      const processo = painel?.processos?.find((item) => item.processo && !/TESTE|DEMU/i.test(item.processo))?.processo ?? "";
+      const prontas = comProcesso(base, processo, modalidade).filter((s) => !permissoes?.semComissao || !/comiss/i.test(s.titulo));
+      chips.innerHTML = prontas.map((item) => {
+        const contorno = (CONTORNO as readonly string[]).includes(item.icone);
+        const svg = contorno
+          ? `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICONES[item.icone]}"/></svg>`
+          : `<svg viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="${ICONES[item.icone]}"/></svg>`;
+        return `<button type="button" data-pergunta="${escapar(item.pergunta)}"><span>${svg}</span>${escapar(item.titulo)}</button>`;
+      }).join("");
+    }
+    const formulario = janela.document.getElementById("envio");
+    if (!janela.document.getElementById("mini-giro")) {
+      const estilo = janela.document.createElement("style");
+      estilo.id = "mini-giro";
+      estilo.textContent = `@property --giro{syntax:"<angle>";inherits:false;initial-value:0deg}form.ocupado{border:2px solid transparent;background:linear-gradient(#1b1c22,#1b1c22) padding-box,conic-gradient(from var(--giro),#3a3d46 0turn,#e53935 1turn) border-box;animation:giro 1s linear infinite}@keyframes giro{to{--giro:1turn}}html.claro form.ocupado{background:linear-gradient(#fff,#fff) padding-box,conic-gradient(from var(--giro),#d5d8e0 0turn,#c62828 1turn) border-box}`;
+      janela.document.head.appendChild(estilo);
+    }
+    formulario?.classList.toggle("ocupado", ocupado);
+    if (formulario) formulario.setAttribute("aria-busy", ocupado ? "true" : "false");
     const botao = janela.document.getElementById("enviar") as HTMLButtonElement | null;
     if (botao) botao.disabled = ocupado;
   }
@@ -3816,41 +4100,68 @@ export function ChatIa({
     doc.title = "Maicon AI";
     doc.head.innerHTML = `<style>
       *{box-sizing:border-box}
-      html,body{margin:0;height:100%;background:#0e1014;color:#e8eaef;font:15px/1.45 "Segoe UI",system-ui,sans-serif}
+      html,body{margin:0;height:100%;background:#141518;color:#e8eaef;font:15px/1.45 "Segoe UI",system-ui,sans-serif}
       body{display:flex;flex-direction:column;height:100%}
-      header{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.07);background:linear-gradient(180deg,#151821,#0e1014)}
-      .marca{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#b71c1c,#e53935);display:grid;place-items:center;flex:none;box-shadow:0 4px 12px rgba(229,57,53,.25)}
+      header{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.07);background:#141518}
+      .marca{width:30px;height:30px;border-radius:50px;background:linear-gradient(135deg,#b71c1c,#e53935);display:grid;place-items:center;flex:none;box-shadow:0 4px 12px rgba(229,57,53,.25)}
       .marca img{width:17px;height:17px;object-fit:contain}
       header strong{font-size:14.5px;font-weight:680;letter-spacing:-.01em}
-      #estado{margin-left:auto;display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;background:rgba(93,204,160,.1);color:#5dcca0;font-size:11.5px;font-weight:650;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      #estado::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:currentColor}
-      #estado.ativo{background:rgba(245,158,11,.12);color:#ffb74d}
-      #estado.ativo::before{animation:pulsa 1.2s ease-in-out infinite}
-      @keyframes pulsa{50%{opacity:.25}}
-      #msgs{flex:1;overflow:auto;display:flex;flex-direction:column;gap:10px;padding:16px 14px}
-      #msgs::-webkit-scrollbar{width:6px}
-      #msgs::-webkit-scrollbar-thumb{background:#2a2f3c;border-radius:6px}
-      #msgs p{margin:0;max-width:88%;padding:9px 13px;white-space:pre-wrap;font-size:14px;line-height:1.5;overflow-wrap:anywhere}
-      #msgs .eu{align-self:flex-end;color:#fff;background:linear-gradient(135deg,#8e2323,#b3302c);border-radius:16px 16px 4px 16px}
-      #msgs .ia{align-self:flex-start;color:#e6e6ea;background:#1b1e27;border:1px solid #262a35;border-radius:16px 16px 16px 4px}
-      #msgs .pensando{color:#ffb74d;background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.2)}
-      .vazio{margin:auto;display:flex;flex-direction:column;align-items:center;gap:6px;max-width:260px;text-align:center;color:#8b95a7}
-      .vazio-icone{width:44px;height:44px;margin-bottom:6px;border-radius:14px;display:grid;place-items:center;color:#ff8a80;background:rgba(229,57,53,.12)}
-      .vazio strong{color:#e8eaef;font-size:14.5px;font-weight:650}
-      .vazio small{font-size:13px}
-      .atalhos{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-top:12px}
-      .atalhos button{width:auto;height:auto;padding:6px 12px;border:1px solid #2a2f3c;border-radius:999px;background:#151821;color:#c9cfdb;font:inherit;font-size:12.5px;cursor:pointer}
-      .atalhos button:hover{border-color:rgba(229,57,53,.6);color:#fff}
-      form{display:flex;align-items:flex-end;gap:8px;margin:0 12px 12px;padding:5px 5px 5px 14px;border:1px solid rgba(255,255,255,.1);border-radius:22px;background:#151821;transition:border-color .15s}
+      #msgs{flex:1;overflow-y:auto;padding:18px 8px 18px 16px;margin-right:4px;display:flex;flex-direction:column;gap:14px;scrollbar-width:thin;scrollbar-color:transparent transparent;transition:scrollbar-color .2s}
+      #msgs:hover{scrollbar-color:#3b3c45 transparent}
+      #msgs::-webkit-scrollbar{width:8px}
+      #msgs::-webkit-scrollbar-track{background:transparent;margin:8px 0}
+      #msgs::-webkit-scrollbar-thumb{background:transparent;border-radius:999px;border:2px solid transparent;background-clip:content-box}
+      #msgs:hover::-webkit-scrollbar-thumb{background:#3b3c45;background-clip:content-box}
+      #msgs::-webkit-scrollbar-thumb:hover{background:#565864;background-clip:content-box}
+      .item{display:flex;flex-direction:column;gap:4px;max-width:88%}
+      .item.eu{align-self:flex-end;align-items:flex-end}
+      .item.ia{align-self:flex-start;align-items:flex-start;max-width:96%}
+      .bolha{margin:0;padding:10px 14px;white-space:pre-wrap;font-size:14px;line-height:1.45;overflow-wrap:anywhere}
+      .item.eu .bolha{color:#fff;background:#c62828;border-radius:16px 16px 6px 16px}
+      .item.ia .bolha{color:#e8eaef;background:#2a2d36;border-radius:16px 16px 16px 6px;white-space:normal;display:flex;flex-direction:column;gap:6px}
+      .bolha .titulo{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#ff8a80}
+      .bolha .linha{margin:0;line-height:1.4}
+      .bolha .linha b{color:#fff;font-weight:700}
+      .bolha .espaco{height:8px}
+      .item time{color:#8b93a3;font-size:11px}
+      .consultas{padding:0 14px 8px}
+      .consultas>span{display:block;margin:0 0 8px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8b93a3}
+      .chips{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none}
+      .chips::-webkit-scrollbar{display:none}
+      .chips button{flex:none;display:flex;align-items:center;gap:8px;padding:7px 12px 7px 7px;border:1px solid #2a2f3c;border-radius:12px;background:#171a21;color:#e8eaef;font:inherit;font-size:13px;font-weight:600;white-space:nowrap;cursor:pointer}
+      .chips button:hover{border-color:rgba(229,57,53,.6)}
+      .chips button span{width:26px;height:26px;display:grid;place-items:center;border-radius:8px;color:#ff6b5e;background:rgba(255,107,94,.14)}
+      form{position:relative;display:flex;align-items:flex-end;gap:8px;margin:0 12px 8px;padding:5px 5px 5px 14px;border:1px solid rgba(255,255,255,.1);border-radius:22px;background:#1b1c22;transition:border-color .15s}
       form:focus-within{border-color:rgba(229,57,53,.6)}
-      textarea{flex:1;resize:none;height:22px;max-height:96px;margin:8px 0;border:0;outline:none;background:transparent;color:#e8eaef;font:inherit;font-size:14px;line-height:1.5}
+      @property --giro{syntax:"<angle>";inherits:false;initial-value:0deg}
+      form.ocupado{border:2px solid transparent;background:linear-gradient(#1b1c22,#1b1c22) padding-box,conic-gradient(from var(--giro),#3a3d46 0turn,#e53935 1turn) border-box;animation:giro 1s linear infinite}
+      @keyframes giro{to{--giro:1turn}}
+      textarea{position:relative;z-index:1;flex:1;resize:none;height:22px;max-height:96px;margin:8px 0;border:0;outline:none;background:transparent;color:#e8eaef;font:inherit;font-size:14px;line-height:1.5}
       textarea::placeholder{color:#7c8596}
-      #enviar{flex:none;width:34px;height:34px;display:grid;place-items:center;border:0;border-radius:50%;color:#fff;background:linear-gradient(135deg,#b71c1c,#e53935);cursor:pointer;transition:transform .15s,opacity .15s}
+      #enviar{position:relative;z-index:1;flex:none;width:34px;height:34px;display:grid;place-items:center;border:0;border-radius:50%;color:#fff;background:#c62828;cursor:pointer;transition:transform .15s,opacity .15s}
       #enviar:hover:not(:disabled){transform:scale(1.06)}
       #enviar:disabled{opacity:.35;cursor:default}
-      .dica{margin:-6px 0 8px;text-align:center;color:#5d6577;font-size:11px}
+      .dica{margin:0 0 10px;text-align:center;color:#5d6577;font-size:11px}
+      html.claro,html.claro body{background:#f3f5f8;color:#161a24}
+      html.claro header{background:#f3f5f8;border-bottom-color:rgba(20,30,60,.08)}
+      html.claro header strong{color:#161a24}
+      html.claro #msgs:hover{scrollbar-color:#c5cad3 transparent}
+      html.claro #msgs:hover::-webkit-scrollbar-thumb{background:#c5cad3;background-clip:content-box}
+      html.claro #msgs::-webkit-scrollbar-thumb:hover{background:#a8b0bc;background-clip:content-box}
+      html.claro .item.ia .bolha{color:#161a24;background:#fff;border:1px solid #e4e7ee}
+      html.claro .bolha .titulo{color:#c62828}
+      html.claro .bolha .linha b{color:#161a24}
+      html.claro .item time,html.claro .consultas>span,html.claro .dica{color:#6b7384}
+      html.claro .chips button{background:#fff;color:#161a24;border-color:#dfe2ea}
+      html.claro .chips button:hover{border-color:#e53935}
+      html.claro .chips button span{color:#e53935;background:rgba(229,57,53,.1)}
+      html.claro form{background:#fff;border-color:rgba(20,30,60,.12)}
+      html.claro form:focus-within{border-color:rgba(198,40,40,.55)}
+      html.claro form.ocupado{background:linear-gradient(#fff,#fff) padding-box,conic-gradient(from var(--giro),#d5d8e0 0turn,#c62828 1turn) border-box}
+      html.claro textarea{color:#161a24}
+      html.claro textarea::placeholder{color:#8b93a3}
     </style>`;
-    doc.body.innerHTML = `<header><span class="marca"><img src="${logoMaicon}" alt=""></span><strong>Maicon AI</strong><span id="estado">Pronto</span></header><div id="msgs"></div><form id="envio"><textarea id="campo" rows="1" placeholder="Pergunte sobre um processo…"></textarea><button id="enviar" type="submit" aria-label="Enviar"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="${ICONES.enviar}"/></svg></button></form><p class="dica">Enter envia · Shift+Enter quebra linha</p>`;
+    doc.body.innerHTML = `<header><span class="marca"><img src="${logoMaicon}" alt=""></span><strong>Maicon AI</strong></header><div id="msgs"></div><section class="consultas"><span>Consultas prontas</span><div id="chips" class="chips"></div></section><form id="envio"><span class="giro" aria-hidden="true"></span><textarea id="campo" rows="1" placeholder="Pergunte sobre um processo…"></textarea><button id="enviar" type="submit" aria-label="Enviar"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="${ICONES.enviar}"/></svg></button></form><p class="dica">Enter envia · Shift+Enter quebra linha</p>`;
     const campo = doc.getElementById("campo") as HTMLTextAreaElement | null;
     const ajustar = () => {
       if (!campo) return;
@@ -3875,7 +4186,7 @@ export function ChatIa({
       evento.preventDefault();
       mandar(campo?.value ?? "");
     });
-    doc.getElementById("msgs")?.addEventListener("click", (evento) => {
+    const aoClicar = (evento: Event) => {
       const alvo = (evento.target as HTMLElement).closest<HTMLButtonElement>("button[data-pergunta]");
       const pergunta = alvo?.dataset.pergunta ?? "";
       if (!pergunta || !campo) return;
@@ -3886,7 +4197,9 @@ export function ChatIa({
         return;
       }
       mandar(pergunta);
-    });
+    };
+    doc.getElementById("chips")?.addEventListener("click", aoClicar);
+    doc.documentElement.classList.toggle("claro", document.documentElement.classList.contains("tema-claro"));
   }
 
   async function abrirSobreTela() {
@@ -3920,10 +4233,18 @@ export function ChatIa({
   }
 
   useEffect(() => {
+    const aberta = (window as Window & { documentPictureInPicture?: { window: Window | null } }).documentPictureInPicture?.window;
+    if (aberta && !aberta.closed) pipRef.current = aberta;
     const janela = pipRef.current;
     if (!janela || janela.closed) return;
     pintarMiniChat(janela);
-  }, [mensagens, ocupado, status]);
+  }, [mensagens, ocupado, visao, setor, admin, modalidade, painel]);
+
+  useEffect(() => {
+    const janela = pipRef.current;
+    if (!janela || janela.closed) return;
+    janela.document.documentElement.classList.toggle("claro", temaClaro);
+  }, [temaClaro]);
 
   function rodarEmSegundoPlano() {
     void abrirSobreTela();
@@ -4312,6 +4633,7 @@ export function ChatIa({
     if (!conteudo.trim() || ocupado || conversaDeRef.current) return;
     if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission();
     setInicioAberto(false);
+    setConsultasAbertas(false);
     setTexto("");
     setErro("");
     if (/^pedir relat[oó]rio/i.test(conteudo.trim()) && !pode.relatorio) {
@@ -4687,6 +5009,14 @@ export function ChatIa({
         logDaPergunta = null;
       }
       }
+      const faltaPassagem = respostaPassagemIncompleta(pergunta);
+      if (faltaPassagem) {
+        historico = [...historico, { role: "assistant", content: faltaPassagem, duracaoMs: duracaoConsulta() }];
+        setMensagens(historico);
+        setErro("");
+        avisarConclusao(faltaPassagem, false);
+        return;
+      }
       for (let passo = 0; passo < MAX_PASSOS; passo++) {
         setStatus(consultaTotalRef.current ? (modoRelatorioRef.current ? "Montando o relatório…" : "Buscando o restante…") : modoRelatorioRef.current ? "Lendo a primeira linha…" : "Pensando…");
         if (canceladoRef.current) throw new DOMException("Cancelado", "AbortError");
@@ -4801,11 +5131,12 @@ export function ChatIa({
           avisarConclusao(content, false);
           return;
         }
-        const pedeDado = !pedidoSemProcesso(pergunta) && !pedeSoAData(pergunta) && /\b(?:processos?|abert[oa]s?|clientes?|taxas?|atividades?|prazos?|embarques?|desembarques?|propostas?|comiss[oõ]es?|frete|mudan[cç]as?|hist[oó]rico|logs?|hoje|ontem)\b/i.test(pergunta);
+        const pedeDado = !pedePassagem(pergunta) && !pedidoSemProcesso(pergunta) && !pedeSoAData(pergunta) && /\b(?:processos?|abert[oa]s?|clientes?|taxas?|atividades?|prazos?|embarques?|desembarques?|propostas?|comiss[oõ]es?|frete|mudan[cç]as?|hist[oó]rico|logs?|hoje|ontem)\b/i.test(pergunta);
+        const repeticoes = trechoDaPergunta(historico).filter((item) => item.role === "user" && /Consulte o banco com uma ferramenta agora|Consulte de novo e liste todos/i.test(item.content)).length;
         const pedeLista = pediuNoChat(pergunta);
         const recusouLista = /n[aã]o consigo|n[aã]o me retornou|abr[ae] a tela|outra tela|time de log[ií]stica|n[aã]o devem ser usados/i.test(conteudo);
         const jaConsultou = trechoDaPergunta(historico).some((item) => item.role === "tool");
-        if (!resposta.tool_calls?.length && (pedeDado || pedeLista || recusouLista) && !jaConsultou && passo < MAX_PASSOS - 1) {
+        if (!resposta.tool_calls?.length && (pedeDado || pedeLista || recusouLista) && !jaConsultou && repeticoes < 1 && passo < MAX_PASSOS - 1) {
           historico = [
             ...historico,
             { ...resposta, content: "" },
@@ -5485,9 +5816,7 @@ export function ChatIa({
                                   : "Acesso limitado"}
                 </span>
               ) : null}
-            </div>
-          </div>
-          {!inicioAberto ? (
+              {!inicioAberto ? (
             <div className={`chat-busca${buscaAberta ? " aberta" : ""}`} ref={buscaCaixaRef}>
                 {buscaAberta ? (
                   <>
@@ -5539,13 +5868,14 @@ export function ChatIa({
                     </ul>
                   </>
                 ) : (
-                  <button type="button" className="chat-acao" title="Pesquisar nesta conversa" onClick={() => setBuscaAberta(true)}>
+                  <button type="button" className="chat-acao icone" title="Pesquisar nesta conversa" aria-label="Pesquisar nesta conversa" onClick={() => setBuscaAberta(true)}>
                     <Icone nome="busca" tamanho={16} />
-                    <span>Pesquisar nesta conversa</span>
                   </button>
                 )}
               </div>
             ) : null}
+            </div>
+          </div>
           <div className="chat-cab-acoes">
             {ocupado ? (
               <button type="button" className="chat-acao chat-cancelar-acao" onClick={cancelarConsulta} title="Cancelar a consulta">
@@ -6380,6 +6710,10 @@ export function ChatIa({
                         </div>
                       ) : null}
                       {pediuRelatorio && bloco.mensagem.role === "assistant" && bloco.mensagem.relatorio ? (
+                        <>
+                        <button type="button" className="chat-ver-consulta" onClick={() => guardarRelatorio(pedidoUsuario)}>
+                          {relatoriosSalvos.some((item) => item.pergunta === pedidoUsuario.trim()) ? "Filtro guardado" : "Guardar este filtro"}
+                        </button>
                         <RelatorioChatBloco
                           relatorio={bloco.mensagem.relatorio}
                           excel={Boolean(pode.excel)}
@@ -6391,6 +6725,7 @@ export function ChatIa({
                             }))
                           }
                         />
+                        </>
                       ) : null}
                       {bloco.mensagem.content.trim() || bloco.consultas.length || ("duracaoMs" in bloco.mensagem && bloco.mensagem.duracaoMs) || rotasDoTexto(bloco.mensagem.content).length ? (
                         <div className="chat-consulta-linha">
@@ -6469,8 +6804,8 @@ export function ChatIa({
           </div>
         )}
 
-        {inicioAberto || configAberta || blocos.length > 0 ? null : (
-          <div className={`chat-gaveta${consultasAbertas ? " aberta" : ""}`}>
+        {inicioAberto || configAberta ? null : (
+          <div className={`chat-gaveta${consultasAbertas ? " aberta" : ""}${blocos.length > 0 && !consultasAbertas ? " so-seta" : ""}`}>
             <button
               type="button"
               className="chat-gaveta-seta"
@@ -6510,6 +6845,36 @@ export function ChatIa({
                     ) : null}
                     {pode.relatorio && abaAbertura === "relatorios" ? (
                       <>
+                        {relatoriosSalvos.length ? (
+                          <div className="chat-abertura-grupo">
+                            <span>Guardados</span>
+                            <div className="chat-abertura-opcoes">
+                              {relatoriosSalvos.map((item) => (
+                                <div key={item.pergunta} className="chat-relatorio-salvo">
+                                  <button
+                                    type="button"
+                                    disabled={ocupado}
+                                    onClick={() => {
+                                      modoRelatorioRef.current = true;
+                                      void enviar(item.pergunta);
+                                    }}
+                                  >
+                                    <span className="chat-abertura-icone">
+                                      <Icone nome="relatorio" tamanho={19} />
+                                    </span>
+                                    <span className="chat-abertura-texto">
+                                      <strong>{item.titulo}</strong>
+                                      <small>Abrir de novo com o mesmo filtro</small>
+                                    </span>
+                                  </button>
+                                  <button type="button" className="chat-relatorio-esquecer" onClick={() => esquecerRelatorio(item.pergunta)} aria-label={`Esquecer ${item.titulo}`}>
+                                    ×
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
                         {relatoriosDaVisao(admin ? visao : setor, Boolean(permissoes?.semComissao)).map((grupo) => (
                           <div key={grupo.nome} className="chat-abertura-grupo">
                             <span>{grupo.nome}</span>

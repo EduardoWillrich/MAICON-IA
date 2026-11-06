@@ -1,7 +1,7 @@
-const PROVEDORES = ["openrouter"];
+const PROVEDORES = ["google"];
 
 const AMBIENTE_POR_PROVEDOR = {
-  openrouter: "OPENROUTER_API_KEY",
+  google: "GOOGLE_API_KEY",
 };
 
 const MENSAGEM_INDISPONIVEL = "A IA não respondeu agora. Tente novamente em instantes.";
@@ -84,7 +84,11 @@ function semCredito(erro) {
 }
 
 function erroIndisponivel(erro) {
-  if (semCredito(erro)) return new Error("Os créditos da IA acabaram. Recarregue a chave do OpenRouter para continuar.");
+  const texto = String(erro?.message ?? "");
+  if (/per minute|tokens per minute|retry in\s+[0-9]/i.test(texto)) {
+    return new Error("O Google limitou o ritmo desta chave. Espere um minuto e tente de novo.");
+  }
+  if (semCredito(erro)) return new Error("A cota do Google acabou. Tente de novo mais tarde.");
   return new Error(MENSAGEM_INDISPONIVEL);
 }
 

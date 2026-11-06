@@ -158,12 +158,24 @@ function numerosDeProcesso(mensagens) {
   return [...achados].slice(0, 12);
 }
 
-export async function resumirGmail(token, visao = "") {
+export async function resumirGmail(token, visao = "", processo = "") {
   const acesso = String(token ?? "").trim();
+  const numero = String(processo ?? "").trim().toUpperCase();
   if (!acesso) {
     return {
       texto: "A leitura do Gmail ainda não foi autorizada. Saia e entre de novo com o Google para permitir o resumo dos e-mails.",
       processos: [],
+    };
+  }
+  if (numero) {
+    if (!/^[A-Z]{1,4}\d{2,6}-\d{2}$/.test(numero)) {
+      return { texto: "Informe o número do processo, como IM5328-26.", processos: [] };
+    }
+    const caixa = await lerCaixa(acesso, `in:inbox ${numero} newer_than:365d`, 8);
+    if (caixa.erro) return { texto: caixa.erro, processos: [numero] };
+    return {
+      texto: bloco(`E-mails do processo ${numero}`, caixa.mensagens, `Nenhum e-mail dos últimos 12 meses cita ${numero}.`),
+      processos: [numero],
     };
   }
   const recentes = await lerCaixa(acesso, "in:inbox newer_than:7d", 10);
@@ -257,12 +269,18 @@ function corpoArrumado(trecho, assunto) {
   return saida.slice(0, 10).join("\n");
 }
 
+function processoDoEmail(item) {
+  const achado = `${item.assunto} ${item.trecho}`.toUpperCase().match(/\b[A-Z]{1,4}\d{2,6}-\d{2}\b/);
+  return achado?.[0] || "";
+}
+
 function cartao(item) {
   const dados = {
     assunto: item.assunto,
     de: item.de,
     data: item.data,
     naoLida: Boolean(item.naoLida),
+    processo: processoDoEmail(item),
     alerta: item.suspeito.length ? item.suspeito.join("; ") : "",
     corpo: corpoArrumado(item.trecho, item.assunto),
   };

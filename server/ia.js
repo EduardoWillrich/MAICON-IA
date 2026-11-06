@@ -7,12 +7,12 @@ import {
   rodadasDesdePergunta,
 } from "./avaliacaoConsulta.js";
 import { textoConsultasRelevantes } from "./consultas.js";
-import { criarFiltroDeChamada, criarFiltroDePensamento, extrairChamadasDoTexto, textoSemPensamento } from "./chamadaTexto.js";
+import { textoSemPensamento } from "./chamadaTexto.js";
 import { anotarPedido, ultimaSemana } from "./datasPedido.js";
 import { executarFilaComFallback, filaDeChaves } from "./filaIa.js";
 import { ferramentaDaVisao } from "./funcoes.js";
 import { registrarPedidoIa } from "./conversas.js";
-import { modeloDaEtapa, modelosOpenRouter } from "./openrouter.js";
+import { lerStreamGoogle, modeloGoogle, pedidoGoogle, partesGoogle, urlGoogle } from "./google.js";
 
 const FERRAMENTAS = [
   {
@@ -340,6 +340,29 @@ const FERRAMENTAS = [
   {
     type: "function",
     function: {
+      name: "passagens_aereas",
+      description:
+        "Pesquisa na internet e compara preços de passagem aérea para o financeiro. Aponta o mais barato na data de embarque e no destino. " +
+        "Use quando pedirem passagem, voo, melhor preço ou cotação de embarque de pessoa. " +
+        "Exige destino e data_embarque em dd/mm/aaaa. origem e volta são opcionais. passageiros padrão 1, no máximo 9. " +
+        "Se faltar destino ou a data, pergunte só o que falta e não chame a ferramenta. " +
+        "Copie o texto da ferramenta. Não invente preço.",
+      parameters: {
+        type: "object",
+        properties: {
+          destino: { type: "string", description: "Cidade ou aeroporto de destino, ex.: Lisboa" },
+          data_embarque: { type: "string", description: "Dia do embarque em dd/mm/aaaa" },
+          origem: { type: "string", description: "Cidade ou aeroporto de origem. Vazio se não informaram." },
+          volta: { type: "string", description: "Data da volta em dd/mm/aaaa. Vazio se for só ida." },
+          passageiros: { type: "integer", description: "Adultos. Padrão 1." },
+        },
+        required: ["destino", "data_embarque"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "relacionamento_clientes",
       description:
         "Relacionamento dos clientes ouro, prata e bronze, em cartões coloridos, dizendo se cada um paga em dia. " +
@@ -602,11 +625,17 @@ const FERRAMENTAS = [
       name: "emails_gmail",
       description:
         "Lê os e-mails recentes da caixa de entrada do Google da pessoa logada. " +
+        "Se pedirem os e-mails de um processo, preencha processo com o número, como IM5328-26. " +
         "Use quando pedirem e-mails, Gmail, caixa de entrada, resumo das mensagens ou o que é mais importante no e-mail. " +
         "O resumo completo da caixa só entra quando o pedido for o resumo de e-mails. " +
         "Se a pergunta for específica, responda só isso, por exemplo só os chamados concluídos hoje. " +
         "Não peça para abrir link de mensagem marcada como alerta.",
-      parameters: { type: "object", properties: {} },
+      parameters: {
+        type: "object",
+        properties: {
+          processo: { type: "string", description: "Número do processo quando pedirem os e-mails dele." },
+        },
+      },
     },
   },
   {
@@ -688,6 +717,7 @@ function textoSetor(setor) {
       "Priorize visão de conjunto: totais, atrasos, gargalos e quem está com mais carga. " +
       "Para o panorama, use fila_setor. Para atrasos, processos_parados e prazos. Para pendências de um setor, atividades_pendentes com o setor pedido. " +
       "Para valores do mês, painel_financeiro e comissao_periodo, sem filtrar por pessoa. " +
+      "Para passagem aérea, use passagens_aereas com destino e data_embarque e copie o texto. Não invente preço. " +
       "Separe a resposta por setor quando misturar comercial, operacional e documental. Não mencione DI nem LI. " +
       "Para divergência de desembarque, use divergencias_viagem; para a rota do navio, rota_processo e reproduza o bloco ```rota inteiro.\n"
     );
@@ -852,6 +882,7 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
       : setor === "financeiro"
         ? "VISÃO FINANCEIRA: responda com valores em real, taxas, comissões, prazos e relacionamento do cliente. Não cite nome de tabela. " +
           "Use painel_financeiro para o mês, taxas_processo para um processo, comissao_periodo e prazos. " +
+          "Passagem aérea, melhor preço de voo ou cotação para uma data e um destino → passagens_aereas. Copie o texto. Não invente preço. " +
           "O relacionamento mostra se o cliente é ouro, prata ou bronze e se paga em dia. Mantenha os blocos encarte: a cor do cartão segue a classificação. " +
           "Relatório: quando pedirem relatório, consulte e responda no chat. Nunca mencione Excel, planilha nem download. " +
           "GRÁFICO só quando pedirem gráfico. Sem esse pedido, não inclua o bloco. Quando pedirem, mantenha a tabela e acrescente ```grafico.\n"
@@ -922,8 +953,11 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "Lista de propostas, ontem, hoje, esse mês ou uma data → propostas_periodo. " +
     "É proibido responder lista de propostas com localizar_processo ou com mov_Logistica_House. " +
     "Taxas de um processo → taxas_processo. " +
+    "Passagem aérea para uma data de embarque e um destino → passagens_aereas. Se faltar um dos dois, pergunte só o que falta. " +
     "O que mudou ou últimos 30 dias → o_que_mudou. Resumo curto do processo → resumo_processo. " +
-    "Ficha do processo, panorama ou o que fazer nele → ficha_processo e copie o texto, inclusive os próximos passos. " +
+    "Ficha do processo, panorama ou o que fazer nele → ficha_processo e copie o texto, inclusive o bloco Agora, os próximos passos e o texto para o cliente. " +
+    "E-mails de um processo → emails_gmail com o número em processo. " +
+    "Se citarem um cliente pelo nome, mesmo sem pedir a ficha inteira, chame processos_abertos_cliente e copie o encarte de ouro, prata ou bronze. " +
     "Meu dia, o que fazer hoje ou a abertura do turno → meu_dia e copie o texto. " +
     "É proibido responder 'como está o meu dia' com pendencias: isso só lista a pessoa logada e perde o panorama da visão. " +
     "Gráfico de faturas → se o número do processo não veio na mensagem, pergunte qual processo e não consulte. " +
@@ -1007,108 +1041,30 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
   );
 }
 
+function esperar(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function pausaDoLimite(resp) {
+  if (resp.status !== 429 && resp.status !== 500) return 0;
+  let texto = "";
+  try {
+    texto = mensagemDoCorpo(await resp.clone().json());
+  } catch {
+    texto = "";
+  }
+  if (resp.status === 500) return 2000;
+  const achado = texto.match(/retry in\s+([0-9]+(?:\.[0-9]+)?)s/i);
+  const segundos = achado ? Number(achado[1]) : Number(resp.headers.get("retry-after"));
+  const espera = Number.isFinite(segundos) && segundos > 0 ? segundos * 1000 : 8000;
+  return Math.min(65000, Math.ceil(espera) + 400);
+}
+
 function erroDoProvedor(mensagem, status) {
   const erro = new Error(String(mensagem || "O provedor de IA não respondeu."));
   const codigo = Number(status);
   if (Number.isInteger(codigo) && codigo >= 100 && codigo <= 599) erro.status = codigo;
   return erro;
-}
-
-function textoDe(valor) {
-  if (typeof valor === "string") return valor;
-  if (Array.isArray(valor)) return valor.map((p) => p?.text || p?.content || "").join("");
-  return "";
-}
-
-async function lerStream(body, aoTexto) {
-  const leitor = body.getReader();
-  const decodificar = new TextDecoder();
-  let resto = "";
-  const acc = { content: "", reasoning: "", tools: [] };
-  const filtro = criarFiltroDeChamada(aoTexto);
-  const pensamento = criarFiltroDePensamento(
-    (texto) => {
-      acc.content += texto;
-      filtro.receber(texto);
-    },
-    (texto) => {
-      acc.reasoning += texto;
-    },
-  );
-  while (true) {
-    const { done, value } = await leitor.read();
-    if (done) break;
-    resto += decodificar.decode(value, { stream: true });
-    const linhas = resto.split("\n");
-    resto = linhas.pop() ?? "";
-    for (const linha of linhas) {
-      const texto = linha.trim();
-      if (!texto.startsWith("data:")) continue;
-      const carga = texto.slice(5).trim();
-      if (!carga || carga === "[DONE]") continue;
-      let pedaco;
-      try {
-        pedaco = JSON.parse(carga);
-      } catch {
-        continue;
-      }
-      const escolha = pedaco.choices?.[0] ?? {};
-      const delta = escolha.delta ?? {};
-      const pedacoTexto = textoDe(delta.content) || textoDe(escolha.message?.content);
-      const usoBruto = pedaco.usage;
-      if (usoBruto) acc.uso = lerUso(usoBruto);
-      if (pedacoTexto) pensamento.receber(pedacoTexto);
-      const raciocinio = textoDe(delta.reasoning) || textoDe(delta.reasoning_content);
-      if (raciocinio) acc.reasoning += raciocinio;
-      const chamadasDoPedaco = delta.tool_calls?.length ? delta.tool_calls : (escolha.message?.tool_calls ?? []);
-      for (const chamada of chamadasDoPedaco) {
-        const i = chamada.index ?? acc.tools.length;
-        acc.tools[i] ??= { id: "", type: "function", function: { name: "", arguments: "" } };
-        if (chamada.id) acc.tools[i].id = chamada.id;
-        if (chamada.extra_content) acc.tools[i].extra_content = chamada.extra_content;
-        if (chamada.function?.name) acc.tools[i].function.name += chamada.function.name;
-        if (chamada.function?.arguments) acc.tools[i].function.arguments += chamada.function.arguments;
-      }
-    }
-  }
-  pensamento.finalizar();
-  filtro.finalizar();
-  const doTexto = extrairChamadasDoTexto(acc.content);
-  const doRaciocinio = extrairChamadasDoTexto(acc.reasoning);
-  const vistas = new Set();
-  const tools = [...acc.tools, ...doTexto.chamadas, ...doRaciocinio.chamadas].filter((item) => {
-    const nome = item?.function?.name;
-    if (!nome) return false;
-    const chave = `${nome}\n${item.function.arguments ?? ""}`;
-    if (vistas.has(chave)) return false;
-    vistas.add(chave);
-    return true;
-  });
-  const content = doTexto.texto;
-  if (!content.trim() && !tools.length) return null;
-  return {
-    content,
-    ...(acc.uso ? { uso: acc.uso } : {}),
-    ...(tools.length ? { tool_calls: tools } : {}),
-  };
-}
-
-const JANELA_DEEPSEEK = 1048576;
-
-function lerUso(bruto) {
-  if (!bruto || typeof bruto !== "object") return null;
-  const entrada = Number(bruto.prompt_tokens) || 0;
-  const saida = Number(bruto.completion_tokens) || 0;
-  const total = Number(bruto.total_tokens) || entrada + saida;
-  if (!total) return null;
-  const raciocinio = Number(bruto.completion_tokens_details?.reasoning_tokens) || Number(bruto.reasoning_tokens) || 0;
-  return {
-    entrada,
-    saida,
-    total,
-    contexto: JANELA_DEEPSEEK,
-    ...(raciocinio ? { raciocinio } : {}),
-  };
 }
 
 function corpoComSaida(corpo, maxTokens) {
@@ -1140,68 +1096,70 @@ function corpoAberto(corpo) {
   return aberto;
 }
 
-const DESTINOS = {
-  openrouter: {
-    url: "https://openrouter.ai/api/v1/chat/completions",
-    nome: "OpenRouter",
-    cabecalhos: (chave) => ({
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${chave}`,
-      "HTTP-Referer": "https://maicon.conlinebr.com.br",
-      "X-Title": "Maicon AI",
-    }),
-  },
-};
+function cabecalhosGoogle(chave) {
+  return {
+    "Content-Type": "application/json",
+    "x-goog-api-key": chave,
+  };
+}
 
-async function pedirUmModelo(destino, chave, corpo, model, aoTexto, maxTokens) {
-  const cfg = DESTINOS[destino];
-  const pedir = (extra) => fetch(cfg.url, {
+async function pedirGoogle(chave, corpo, model, aoTexto, maxTokens) {
+  const modelo = modeloGoogle(model);
+  const montar = (extra) => pedidoGoogle(corpoComSaida({ ...corpo, ...extra }, maxTokens));
+  const pedir = (extra) => fetch(urlGoogle(modelo, "stream"), {
     method: "POST",
-    headers: cfg.cabecalhos(chave),
-    body: JSON.stringify(corpoComSaida({
-      ...corpo,
-      ...extra,
-      model,
-      stream: true,
-      temperature: corpo.temperature ?? 0.2,
-    }, maxTokens)),
+    headers: cabecalhosGoogle(chave),
+    body: JSON.stringify(montar(extra)),
   });
   let resp;
   try {
     resp = await pedir({});
   } catch (erro) {
-    throw erroDoProvedor(erro?.message || `O ${cfg.nome} não respondeu.`, 503);
+    throw erroDoProvedor(erro?.message || "O Google não respondeu.", 503);
+  }
+  if (!resp.ok) {
+    const pausa = await pausaDoLimite(resp);
+    if (pausa) {
+      console.warn(`[IA] Google respondeu ${resp.status}. Nova tentativa em ${Math.round(pausa / 1000)}s.`);
+      await esperar(pausa);
+      try {
+        const deNovo = await pedir({});
+        if (deNovo) resp = deNovo;
+      } catch (erro) {
+        throw erroDoProvedor(erro?.message || "O Google não respondeu.", 503);
+      }
+    }
   }
   if (!resp.ok && corpo.tool_choice && resp.status === 400) {
     const recusa = await resp.clone().json().catch(() => ({}));
     const aviso = String(recusa?.error?.message || "");
-    if (/tool_choice|tools/i.test(aviso)) {
+    if (/tool|function/i.test(aviso)) {
       const deNovo = await pedir({ tool_choice: "auto" });
       if (deNovo.ok && deNovo.body) resp = deNovo;
     }
   }
   if (resp.ok && resp.body) {
     try {
-      const mensagem = await lerStream(resp.body, aoTexto);
+      const mensagem = await lerStreamGoogle(resp.body, aoTexto);
       if (mensagem) {
-        registrarPedidoIa(destino);
-        return comModelo(mensagem, destino);
+        registrarPedidoIa("google");
+        return comModelo(mensagem, "google");
       }
       const deNovo = await pedir({});
       if (deNovo.ok && deNovo.body) {
-        const segunda = await lerStream(deNovo.body, aoTexto);
+        const segunda = await lerStreamGoogle(deNovo.body, aoTexto);
         if (segunda) {
-          registrarPedidoIa(destino);
-          return comModelo(segunda, destino);
+          registrarPedidoIa("google");
+          return comModelo(segunda, "google");
         }
       }
     } catch (erro) {
-      throw erroDoProvedor(erro?.message || `A resposta do ${cfg.nome} foi interrompida.`, 503);
+      throw erroDoProvedor(erro?.message || "A resposta do Google foi interrompida.", 503);
     }
     throw erroDoProvedor("A IA não devolveu texto.", 503);
   }
   const dados = await resp.json().catch(() => ({}));
-  throw erroDoProvedor(mensagemDoCorpo(dados) || `O ${cfg.nome} respondeu ${resp.status}`, resp.status);
+  throw erroDoProvedor(mensagemDoCorpo(dados) || `O Google respondeu ${resp.status}`, resp.status);
 }
 
 function mensagemDoCorpo(dados) {
@@ -1211,34 +1169,46 @@ function mensagemDoCorpo(dados) {
 
 async function chamarProvedor(item, corpo, aoTexto) {
   const aberto = corpoAberto(corpo);
-  const modelo = String(corpo.model || "").trim() || modelosOpenRouter()[0];
-  return pedirUmModelo("openrouter", item.chave, aberto, modelo, aoTexto, corpo.limiteTokens);
+  const modelo = modeloGoogle(corpo.model);
+  return pedirGoogle(item.chave, aberto, modelo, aoTexto, corpo.limiteTokens);
 }
 
-async function completarNoDestino(destino, chave, sistemaTexto, usuario, maxTokens, model) {
-  const cfg = DESTINOS[destino];
-  const resp = await fetch(cfg.url, {
+async function completarCurto(chave, sistemaTexto, usuario, maxTokens, model = modeloGoogle()) {
+  let resp = await fetch(urlGoogle(modeloGoogle(model)), {
     method: "POST",
-    headers: cfg.cabecalhos(chave),
-    body: JSON.stringify({
-      model,
+    headers: cabecalhosGoogle(chave),
+    body: JSON.stringify(pedidoGoogle({
+      temperature: 0,
+      max_tokens: maxTokens,
       messages: [
         { role: "system", content: sistemaTexto },
         { role: "user", content: usuario },
       ],
-      max_tokens: maxTokens,
-      temperature: 0,
-      stream: false,
-    }),
+    })),
   });
+  if (!resp.ok && (resp.status === 429 || resp.status === 500)) {
+    const pausa = await pausaDoLimite(resp);
+    if (pausa) {
+      console.warn(`[IA] Google respondeu ${resp.status}. Nova tentativa em ${Math.round(pausa / 1000)}s.`);
+      await esperar(pausa);
+      resp = await fetch(urlGoogle(modeloGoogle(model)), {
+        method: "POST",
+        headers: cabecalhosGoogle(chave),
+        body: JSON.stringify(pedidoGoogle({
+          temperature: 0,
+          max_tokens: maxTokens,
+          messages: [
+            { role: "system", content: sistemaTexto },
+            { role: "user", content: usuario },
+          ],
+        })),
+      });
+    }
+  }
   const dados = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw erroDoProvedor(mensagemDoCorpo(dados) || `O ${cfg.nome} respondeu ${resp.status}`, resp.status);
-  registrarPedidoIa(destino);
-  return textoSemPensamento(String(dados?.choices?.[0]?.message?.content || ""));
-}
-
-async function completarCurto(chave, sistemaTexto, usuario, maxTokens, model = modelosOpenRouter()[0]) {
-  return completarNoDestino("openrouter", chave, sistemaTexto, usuario, maxTokens, model);
+  if (!resp.ok) throw erroDoProvedor(mensagemDoCorpo(dados) || `O Google respondeu ${resp.status}`, resp.status);
+  registrarPedidoIa("google");
+  return textoSemPensamento(partesGoogle(dados?.candidates?.[0]).content);
 }
 
 function comModelo(mensagem, destino) {
@@ -1383,7 +1353,7 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
       (pediuHistorico ? "" : " A pergunta não pediu log. É proibido falar de histórico, alteração, inclusão ou atualização de campos.");
   }
   const corpo = {
-    model: modeloDaEtapa(etapa),
+    model: modeloGoogle(),
     temperature: escrevendo ? 0.2 : 0.3,
     ...(ferramentasDaEtapa.length ? { tools: ferramentasDaEtapa } : {}),
     messages: [
@@ -1463,7 +1433,7 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
             "Não invente número, nome, data ou valor. Não diga que a lista é parcial nem que o total não pode ser confirmado. Sem SQL e sem nome de tabela.",
           `Pergunta: ${String(pedido).slice(0, 500)}\n\nProblema: ${veredito.motivo}\n\nTrecho da consulta:\n${amostraDaConsulta(mensagens)}\n\nResposta a reescrever:\n${String(dados?.content || "").slice(0, 1800)}`,
           700,
-          modeloDaEtapa("resposta"),
+          modeloGoogle(),
         )).trim()
         : "";
       if (novo) {

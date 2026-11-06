@@ -8,6 +8,7 @@ import { explicarCampoLivre } from "./campoLivre.js";
 import { explicarItensCarga } from "./itensCarga.js";
 import { relacionamentoFinanceiro, relacionamentoPorClassificacao, relacionamentoPorNomes, textoEncarte, textoEncartes, textoRelacionamento } from "./relacionamento.js";
 import { PROCESSO_REAL, SEM_EXCECAO } from "./datasPedido.js";
+import { pesquisarPassagens } from "./passagens.js";
 
 const NUMERO = /^[A-Za-z0-9./-]{3,30}$/;
 const cacheConsulta = new Map();
@@ -59,6 +60,7 @@ const FUNCOES = new Set([
   "painel_financeiro",
   "relacionamento_clientes",
   "taxas_processo",
+  "passagens_aereas",
   "explicar_itens_carga",
   "explicar_campo_livre",
   "andamento_atividade",
@@ -267,6 +269,34 @@ export function perguntaMeuDia(texto) {
     chave === "o que eu preciso fazer hoje" ||
     chave === "o que preciso fazer hoje"
   );
+}
+
+export function textoParaCliente(resumo) {
+  const fonte = String(resumo ?? "");
+  const processo = fonte.match(/^Processo\s+(\S+)/m)?.[1] || "este processo";
+  const cliente = fonte.match(/^Cliente:\s*(.+)$/m)?.[1]?.replace(/\s+/g, " ").trim() || "";
+  const situacao = fonte.match(/^Situação:\s*(.+)$/m)?.[1]?.replace(/\s+/g, " ").trim() || "";
+  const pendencia = fonte.match(/^Pendência:\s*(?!nenhuma\b)(.+)$/m)?.[1]?.replace(/\s+/g, " ").trim() || "";
+  const saudacao = cliente ? `Olá. Sobre o embarque de ${cliente.split(" ")[0]},` : "Olá.";
+  const status = situacao ? ` o processo ${processo} está ${situacao}.` : ` segue o processo ${processo}.`;
+  const falta = pendencia ? ` Neste momento, ${pendencia}.` : "";
+  return `${saudacao}${status}${falta} Se precisar de outra atualização, é só responder esta mensagem.`;
+}
+
+function cabecalhoDaFicha(resumo) {
+  const fonte = String(resumo ?? "");
+  const cliente = fonte.match(/^Cliente:\s*(.+)$/m)?.[1]?.replace(/\s+/g, " ").trim() || "";
+  const pendencia = fonte.match(/^Pendência:\s*(.+)$/m)?.[1]?.replace(/\s+/g, " ").trim() || "";
+  const nota = fonte.match(/^Último acompanhamento.*$/m)?.[0]?.replace(/\s+/g, " ").trim() || "";
+  const data = fonte.match(/^(?:Embarque|Desembarque|Entrega|Previsão de (?:embarque|desembarque|entrega)):\s*.+$/im)?.[0]?.replace(/\s+/g, " ").trim() || "";
+  const linhas = [
+    cliente ? `Cliente: ${cliente}` : "",
+    data ? `Próxima data: ${data}` : "",
+    pendencia ? `Pendência: ${pendencia}` : "",
+    nota ? nota.replace(/^Último acompanhamento/, "Última nota") : "",
+  ].filter(Boolean);
+  if (!linhas.length) return "";
+  return `Agora\n${linhas.map((item) => `- ${item}`).join("\n")}`;
 }
 
 export function passosDaFicha(texto) {
@@ -489,14 +519,14 @@ async function acompanhamentosProcesso(pool, args) {
     WHERE A.IdProjeto_Atividade = @id
     ORDER BY A.Data DESC`);
   if (!r.recordset.length) return `Não há acompanhamento para o processo ${numero}.`;
-  const texto = r.recordset
-    .map((linha) => {
-      const nota = String(linha.Descricao ?? "").replace(/\s+/g, " ").trim();
-      const quem = String(linha.Responsavel ?? "").trim();
-      return [dataCurta(linha.Data), nota, quem && `(${quem})`].filter(Boolean).join(" ");
-    })
-    .join("\n");
-  return texto;
+  const notas = r.recordset.map((linha) => {
+    const nota = String(linha.Descricao ?? "").replace(/\s+/g, " ").trim().replace(/\*/g, "\\*");
+    const quem = String(linha.Responsavel ?? "").trim();
+    const quando = dataCurta(linha.Data);
+    const cabeca = [`**${quando || "Nota"}**`, quem].filter(Boolean).join(" · ");
+    return [cabeca, nota].filter(Boolean).join("\n\n");
+  });
+  return [`**Processo ${numero}**`, ...notas].join("\n\n");
 }
 
 async function pendencias(pool, args, ctx) {
@@ -868,18 +898,28 @@ async function resumoCarteira(pool, foco, recorte, ctx, quando = "") {
   const comando =
     foco === "sem_movimento"
       ? `
-    SELECT TOP 20 Nome, Dias AS Qtd
-    FROM (
-      SELECT LTRIM(RTRIM(Cli.Nome)) AS Nome,
-        DATEDIFF(day, MAX(Lhs.Data_Abertura_Processo), CAST(GETDATE() AS date)) AS Dias
-      FROM mov_Logistica_House Lhs
-      JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
-      WHERE ${real} ${filtro}
-      GROUP BY LTRIM(RTRIM(Cli.Nome))
-      HAVING MAX(Lhs.Data_Abertura_Processo) < DATEADD(day, -90, CAST(GETDATE() AS date))
-    ) C
-    WHERE Nome <> ''
-    ORDER BY Dias DESC, Nome`
+    SELECT TOP 20
+      LTRIM(RTRIM(Cli.Nome)) AS Nome,
+      DATEDIFF(day, MAX(Lhs.Data_Abertura_Processo), CAST(GETDATE() AS date)) AS Qtd,
+      (
+        SELECT TOP 1 LTRIM(RTRIM(Ven.Nome))
+        FROM mov_Logistica_House H
+        LEFT JOIN cad_Pessoa Ven ON Ven.IdPessoa = H.IdVendedor
+        WHERE H.IdCliente = Cli.IdPessoa
+        ORDER BY H.Data_Abertura_Processo DESC
+      ) AS Vendedor,
+      (
+        SELECT TOP 1 H.Numero_Processo
+        FROM mov_Logistica_House H
+        WHERE H.IdCliente = Cli.IdPessoa
+        ORDER BY H.Data_Abertura_Processo DESC
+      ) AS Ultimo
+    FROM mov_Logistica_House Lhs
+    JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
+    WHERE ${real} ${filtro}
+    GROUP BY Cli.IdPessoa, LTRIM(RTRIM(Cli.Nome))
+    HAVING MAX(Lhs.Data_Abertura_Processo) < DATEADD(day, -90, CAST(GETDATE() AS date))
+    ORDER BY Qtd DESC, Nome`
       : `
     SELECT TOP 20 Nome, Qtd
     FROM (
@@ -895,7 +935,13 @@ async function resumoCarteira(pool, foco, recorte, ctx, quando = "") {
   const linhas = r.recordset.map((linha) => {
     const nome = String(linha.Nome ?? "").trim();
     const qtd = Number(linha.Qtd) || 0;
-    if (foco === "sem_movimento") return `${nome} · ${qtd} dias sem abrir`;
+    if (foco === "sem_movimento") {
+      const vendedor = String(linha.Vendedor ?? "").trim();
+      const ultimo = String(linha.Ultimo ?? "").trim();
+      const extra = [vendedor ? `vendedor ${vendedor}` : "", ultimo ? `último ${ultimo}` : ""].filter(Boolean).join(", ");
+      const frase = `Olá. Faz ${qtd} dias sem um processo novo${ultimo ? `, o último foi ${ultimo}` : ""}. Posso ajudar no próximo embarque?`;
+      return `${nome} · ${qtd} dias sem abrir${extra ? ` · ${extra}` : ""}. Próximo passo: ${frase}`;
+    }
     return `${nome} · ${qtd} ${foco === "sem_proposta" ? "sem proposta" : "abertos"}`;
   });
   return consultaPronta(`${titulo}\n${lista(linhas, "Nenhum cliente nesse recorte.")}`, comando, r.recordset, carteira ? { id: carteira } : {});
@@ -1147,7 +1193,7 @@ async function prazos(pool, args, recorte) {
         : `Processos com ${assunto} realizado nos últimos ${dias} dias`
       : modo === "hoje"
         ? `Processos com ${assunto} hoje`
-        : `Prazos vencidos ou nos próximos ${dias} dias (processos dos últimos 6 meses)`;
+        : `Prazos vencidos ou nos próximos ${dias} dias, do mais próximo para o mais distante (processos dos últimos 6 meses)`;
   const vazio = modo === "janela" ? "Nenhum prazo nesse recorte." : "Nenhum processo nesse recorte.";
   return consultaPronta(`${titulo}\n${lista(linhas, vazio)}`, comando, r.recordset, { dias });
 }
@@ -1210,6 +1256,14 @@ function notaCurta(valor) {
     .slice(0, 180);
 }
 
+function idadeDaFila(dias, responsavel) {
+  const n = Number(dias);
+  if (!Number.isFinite(n)) return "";
+  const tempo = n <= 0 ? "entrou hoje na fila" : n === 1 ? "há 1 dia na fila" : `há ${n} dias na fila`;
+  const quem = String(responsavel ?? "").trim();
+  return quem ? `${tempo} com ${quem}` : tempo;
+}
+
 function faltaDaAtividade(linha, ceLiberado) {
   const partes = [];
   if (Number(linha.Situacao_Atividade) === 1) partes.push("ainda não iniciada");
@@ -1251,6 +1305,7 @@ async function documentalCe(pool, args) {
         Ati.Previsao_Inicio,
         Ati.Previsao_Termino,
         Ati.Situacao AS Situacao_Atividade,
+        DATEDIFF(day, COALESCE(Ati.Data_Inicio, Lhs.Data_Abertura_Processo), CAST(GETDATE() AS date)) AS Dias_Fila,
         LEFT(CAST(Ati.Observacao AS nvarchar(300)), 180) AS Observacao,
         CASE WHEN EXISTS (
           SELECT 1
@@ -1278,7 +1333,7 @@ async function documentalCe(pool, args) {
             AND ${filtroDoCaso(caso)}
         )
         AND (@sem = 0 OR ISNULL(Sta.Descricao, '') <> 'CE LIBERADO')
-      ORDER BY Lhs.Data_Abertura_Processo DESC, Lhs.Numero_Processo, Tar.Descricao`;
+      ORDER BY CASE WHEN Ati.Previsao_Termino IS NULL THEN 1 ELSE 0 END, Ati.Previsao_Termino, Dias_Fila DESC, Lhs.Numero_Processo`;
     const sem = foco === "sem_liberacao" ? 1 : 0;
     const sufixo = sufixoDoAno(args.ano);
     const r = await pool.request().input("sem", sql.Int, sem).input("ano", sql.VarChar(2), sufixo).query(comando);
@@ -1302,22 +1357,25 @@ async function documentalCe(pool, args) {
       const ce = liberado ? "CE liberado" : situacao ? `CE não liberado · ${situacao}` : "CE sem situação";
       const previsao = previsaoDe(linha.Previsao_Inicio, linha.Previsao_Termino);
       const marca = linha.Caso === "IM" ? "IM" : "CE";
+      const idade = idadeDaFila(linha.Dias_Fila, linha.Responsavel);
       const detalhes = [
         String(linha.Cliente ?? "").trim(),
         [`${marca} · ${String(linha.Atividade ?? "Atividade").trim()}`, String(linha.Responsavel ?? "").trim()].filter(Boolean).join(" · "),
+        idade,
         ce,
         previsao,
         foco === "pendencias" ? `Falta: ${faltaDaAtividade(linha, liberado)}` : "",
       ].filter(Boolean);
       return `- **${linha.Numero_Processo}**\n${detalhes.map((item) => `  - ${item}`).join("\n")}`;
     });
-    const texto = `#### ${titulo}\n\n${cartoes.length ? cartoes.join("\n") : "Nenhuma atividade nesse recorte."}`;
+    const texto = `#### ${titulo}\n\nOrdenado pelo que vence primeiro e, em seguida, pelo que está há mais tempo na fila.\n\n${cartoes.length ? cartoes.join("\n") : "Nenhuma atividade nesse recorte."}`;
     const linhas = r.recordset.map((linha) => ({
       Processo: linha.Numero_Processo,
       Cliente: String(linha.Cliente ?? "").trim(),
       Atividade: String(linha.Atividade ?? "").trim(),
       Caso: linha.Caso === "IM" ? "IM" : "CE",
       Responsavel: String(linha.Responsavel ?? "").trim(),
+      Idade: idadeDaFila(linha.Dias_Fila, linha.Responsavel),
       Situacao: String(linha.Situacao ?? "").trim(),
       Inicio: dataCurta(linha.Previsao_Inicio),
       Termino: dataCurta(linha.Previsao_Termino),
@@ -1479,6 +1537,7 @@ async function atividadesPendentes(pool, args, recorte) {
       Pap.Nome AS Papel,
       Ati.Previsao_Inicio,
       Ati.Previsao_Termino,
+      DATEDIFF(day, COALESCE(Ati.Data_Inicio, Lhs.Data_Abertura_Processo), CAST(GETDATE() AS date)) AS Dias_Fila,
       LEFT(CAST(Ati.Observacao AS nvarchar(300)), 180) AS Motivo
     FROM mov_Atividade Ati
     JOIN mov_Logistica_House Lhs ON Lhs.IdProjeto_Atividade = Ati.IdProjeto_Atividade
@@ -1500,7 +1559,7 @@ async function atividadesPendentes(pool, args, recorte) {
       AND ${PROCESSO_REAL}
       AND Lhs.Numero_Processo LIKE '%-' + @ano
       ${setor === "operacional" ? filtroModalidadeSql(recorte) : ""}
-    ORDER BY Lhs.Data_Abertura_Processo DESC, Lhs.Numero_Processo, Tar.Descricao`;
+    ORDER BY CASE WHEN Ati.Previsao_Termino IS NULL THEN 1 ELSE 0 END, Ati.Previsao_Termino, Dias_Fila DESC, Lhs.Numero_Processo`;
   const r = await pool.request().input("ano", sql.VarChar(2), sufixo).query(comando);
   const cartoes = r.recordset.map((linha) => {
     const previsao = previsaoDe(linha.Previsao_Inicio, linha.Previsao_Termino);
@@ -1508,12 +1567,13 @@ async function atividadesPendentes(pool, args, recorte) {
     const detalhes = [
       String(linha.Cliente ?? "").trim(),
       [String(linha.Papel ?? "").trim(), String(linha.Atividade ?? "Atividade").trim(), String(linha.Responsavel ?? "").trim()].filter(Boolean).join(" · "),
+      idadeDaFila(linha.Dias_Fila, linha.Responsavel),
       previsao,
       `Motivo: ${motivo}`,
     ].filter(Boolean);
     return `- **${linha.Numero_Processo}**\n${detalhes.map((item) => `  - ${item}`).join("\n")}`;
   });
-  const texto = `#### ${titulo}\n\n${cartoes.length ? cartoes.join("\n") : `Nenhuma atividade pendente em ${ano}.`}`;
+  const texto = `#### ${titulo}\n\nOrdenado pelo que vence primeiro e, em seguida, pelo que está há mais tempo na fila.\n\n${cartoes.length ? cartoes.join("\n") : `Nenhuma atividade pendente em ${ano}.`}`;
   const linhas = r.recordset.map((linha) => ({
     Processo: linha.Numero_Processo,
     Cliente: String(linha.Cliente ?? "").trim(),
@@ -1522,6 +1582,7 @@ async function atividadesPendentes(pool, args, recorte) {
     Responsavel: String(linha.Responsavel ?? "").trim(),
     Inicio: dataCurta(linha.Previsao_Inicio),
     Termino: dataCurta(linha.Previsao_Termino),
+    Idade: idadeDaFila(linha.Dias_Fila, linha.Responsavel),
     Motivo: notaCurta(linha.Motivo) || "Motivo não informado",
   }));
   return consultaPronta(texto, comando, linhas, { ano: sufixo });
@@ -1901,8 +1962,9 @@ async function logRecente(pool, args, ctx) {
   const quando = hoje ? "Hoje" : `Últimas ${horas} horas`;
   const filtro = [quando, tipo ? tipoLog(tipo) : "", tabela ? `tabela ${tabela}` : "", exibicao].filter(Boolean).join(" · ");
   const dia = itens[0]?.dia || "";
-  if (!itens.length && exibicao) {
-    return consultaPronta(`Nenhuma alteração de ${exibicao} ${hoje ? "hoje" : `nas últimas ${horas} horas`}.`, comando, [], { horas, tipo, tabela, limite, idUsuario });
+  if (!itens.length) {
+    const quem = exibicao ? ` de ${exibicao}` : "";
+    return consultaPronta(`Nenhuma alteração${quem} ${hoje ? "hoje" : `nas últimas ${horas} horas`}.`, comando, [], { horas, tipo, tabela, limite, idUsuario });
   }
   const log = {
     titulo: exibicao ? `Log de ${exibicao}` : "Log recente",
@@ -2217,16 +2279,25 @@ async function relacionamentoClientes(pool, args = {}) {
   return consultaPronta(textoRelacionamento(grupos), "", [], {});
 }
 
+function contraMesDinheiro(atual, anterior) {
+  const diff = (Number(atual) || 0) - (Number(anterior) || 0);
+  if (!diff) return "igual ao mês passado";
+  const texto = dinheiro(Math.abs(diff)) || "R$ 0,00";
+  return diff > 0 ? `${texto} a mais que o mês passado` : `${texto} a menos que o mês passado`;
+}
+
 async function painelFinanceiro(pool, args = {}) {
+  const inicioMes = "DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)";
   const sqlComissao = `
     SELECT
-      SUM(Com.Valor_Comissao) AS Comissao,
-      COUNT(*) AS Qtd_Comissao
+      SUM(CASE WHEN Lhs.Data_Abertura_Processo >= ${inicioMes} THEN Com.Valor_Comissao ELSE 0 END) AS Comissao,
+      SUM(CASE WHEN Lhs.Data_Abertura_Processo < ${inicioMes} THEN Com.Valor_Comissao ELSE 0 END) AS Anterior,
+      SUM(CASE WHEN Lhs.Data_Abertura_Processo >= ${inicioMes} THEN 1 ELSE 0 END) AS Qtd_Comissao
     FROM mov_Logistica_House Lhs
     JOIN mov_Oferta_Frete_Comissao Com ON Com.IdOferta_Frete = Lhs.IdOferta_Frete
     WHERE ${PROCESSO_REAL}
-      AND Lhs.Data_Abertura_Processo >= DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
-      AND Lhs.Data_Abertura_Processo < DATEADD(month, 1, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))`;
+      AND Lhs.Data_Abertura_Processo >= DATEADD(month, -1, ${inicioMes})
+      AND Lhs.Data_Abertura_Processo < DATEADD(month, 1, ${inicioMes})`;
   const sqlTaxas = `
     SELECT TOP 12
       Exb.Nome AS Taxa,
@@ -2267,7 +2338,7 @@ async function painelFinanceiro(pool, args = {}) {
   }
   const texto = [
     "Painel financeiro deste mês",
-    `- Comissões: ${dinheiro(cabeca.Comissao) || "R$ 0,00"} em ${Number(cabeca.Qtd_Comissao) || 0} lançamentos`,
+    `- Comissões: ${dinheiro(cabeca.Comissao) || "R$ 0,00"} em ${Number(cabeca.Qtd_Comissao) || 0} lançamentos (${contraMesDinheiro(cabeca.Comissao, cabeca.Anterior)})`,
     `- Prazos de embarque, desembarque ou entrega nos próximos 7 dias: ${Number(prazos.recordset[0]?.Qtd) || 0}`,
     "",
     lista(listaTaxas, "Nenhuma taxa neste mês."),
@@ -2813,11 +2884,13 @@ async function rotaProcesso(pool, args) {
 }
 
 export function ferramentaDaVisao(nome, setor) {
+  if (nome === "passagens_aereas") return setor === "financeiro" || setor === "gerencia";
   if (setor === "gerencia") return !["painel_ti", "log_recente", "monitoramentos_alterados"].includes(nome);
   if (nome === "painel_financeiro" || nome === "taxas_processo") return setor === "financeiro";
   if (setor === "financeiro") {
     return [
       "painel_financeiro",
+      "passagens_aereas",
       "relacionamento_clientes",
       "taxas_processo",
       "comissao_periodo",
@@ -2946,7 +3019,8 @@ async function fichaDoProcesso(pool, args, recorte) {
   const numero = numeroDe(args.numero);
   const resumo = await resumoProcesso(pool, { numero }, recorte);
   if (/não encontrado/.test(String(resumo))) return resumo;
-  const partes = [String(resumo).trim()];
+  const resumoTexto = String(resumo).trim();
+  const partes = [cabecalhoDaFicha(resumoTexto), resumoTexto].filter(Boolean);
   const sqls = [];
   const linhas = [];
   if (!recorte?.semComercial) {
@@ -2966,6 +3040,7 @@ async function fichaDoProcesso(pool, args, recorte) {
   }
   const passos = passosDaFicha(partes.join("\n"));
   if (passos.length) partes.push(`Próximos passos\n${passos.map((item) => `- ${item}`).join("\n")}`);
+  partes.push(`Texto para o cliente\n${textoParaCliente(resumoTexto)}`);
   return consultaPronta(partes.join("\n\n"), sqls.join("\n\n"), linhas);
 }
 
@@ -3029,6 +3104,7 @@ export async function executarFuncao(pool, nome, args, ctx) {
   if (nome === "painel_financeiro") return embalagem(await painelFinanceiro(pool, dados));
   if (nome === "relacionamento_clientes") return embalagem(await relacionamentoClientes(pool, dados));
   if (nome === "taxas_processo") return embalagem(await taxasProcesso(pool, dados));
+  if (nome === "passagens_aereas") return embalagem(await pesquisarPassagens(dados));
   if (nome === "explicar_itens_carga") return embalagem(await explicarItensCarga(pool, dados));
   if (nome === "explicar_campo_livre") return embalagem(await explicarCampoLivre(pool, dados));
   return embalagem(await filaSetor(pool, recorte));

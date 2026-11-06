@@ -1,9 +1,9 @@
 import sql from "mssql";
+import { listarFavoritos, placarAvaliacoes } from "./aprendizado.js";
 import { pessoaDaConta } from "./pessoaConta.js";
 import { nomeDe, pessoasPorLogin } from "./pessoas.js";
 import { parseCamposXml } from "./query.js";
 import { perfilDaConta } from "./setor.js";
-import { relacionamentoFinanceiro } from "./relacionamento.js";
 import { PROCESSO_REAL } from "./datasPedido.js";
 
 export async function painelDoUsuario(pool, email, nome, admin = false) {
@@ -83,6 +83,19 @@ function diaCurto(valor) {
   const data = valor instanceof Date ? valor : new Date(valor);
   if (Number.isNaN(data.getTime())) return "";
   return new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" }).format(data);
+}
+
+function dataHora(valor) {
+  const data = valor instanceof Date ? valor : new Date(valor);
+  if (!valor || Number.isNaN(data.getTime())) return "";
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(data);
 }
 
 async function localizarPessoa(pool, email) {
@@ -711,18 +724,6 @@ function perguntaCliente(nome) {
   return `Ficha do cliente ${limpo}: processos abertos, vendedor, quantos estão sem proposta, o último processo e a comissão deste mês.`;
 }
 
-function encarteDoCliente(rel, detalhe) {
-  return {
-    nome: rel.nome,
-    nivel: rel.nivel || "",
-    classificacao: rel.classificacao || "Sem classificação",
-    pagamento: rel.pagamento || "sem",
-    pagamentoTexto: rel.pagamentoTexto || "Sem faturas recentes",
-    detalhe,
-    pergunta: perguntaCliente(rel.nome),
-  };
-}
-
 async function cadastroDaPessoa(pool, email) {
   return pessoaDaConta(pool, email);
 }
@@ -737,6 +738,21 @@ function reais(valor) {
   return Number(valor || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 }
 
+function contraMes(atual, anterior, emDinheiro = false) {
+  const diff = (Number(atual) || 0) - (Number(anterior) || 0);
+  if (!diff) return "igual ao mês passado";
+  const texto = emDinheiro ? reais(Math.abs(diff)) : Math.abs(diff).toLocaleString("pt-BR");
+  return diff > 0 ? `${texto} a mais que o mês passado` : `${texto} a menos que o mês passado`;
+}
+
+function fraseIdade(dias, responsavel) {
+  const n = Number(dias);
+  if (!Number.isFinite(n)) return "";
+  const tempo = n <= 0 ? "entrou hoje na fila" : n === 1 ? "há 1 dia na fila" : `há ${n} dias na fila`;
+  const quem = String(responsavel ?? "").trim();
+  return quem ? `${tempo} com ${quem}` : tempo;
+}
+
 function modalidadeSql(modalidade) {
   return ["IA", "EA", "IM", "EM"].includes(modalidade) ? `AND Lhs.Numero_Processo LIKE '${modalidade}%'` : "";
 }
@@ -746,8 +762,38 @@ async function contar(pool, comando) {
   return Number(r.recordset[0]?.Total ?? r.recordset[0]?.Qtd ?? 0) || 0;
 }
 
+async function monitoramentosRecentes(pool) {
+  try {
+    const r = await pool.request().query(`
+      SELECT TOP 6
+        Usr.Nome AS Usuario,
+        CONVERT(varchar(5), Recente.Data_Inicio, 108) AS Hora,
+        Tab.Tabela
+      FROM (
+        SELECT TOP 80 IdUsuario, Data_Inicio, Dados_Log
+        FROM sys_Log_Tabela
+        WHERE Data_Inicio >= DATEADD(hour, -24, GETDATE())
+          AND (
+            Dados_Log.exist('/Log/Tabela[@Nome="cad_Projeto_Tarefa_Monitor"]') = 1
+            OR Dados_Log.exist('/Log/Tabela[@Nome="cad_Tarefa_Monitor"]') = 1
+          )
+        ORDER BY Data_Inicio DESC
+      ) Recente
+      JOIN sys_Usuario Usr ON Usr.IdUsuario = Recente.IdUsuario
+      CROSS APPLY Recente.Dados_Log.nodes('/Log/Tabela') T(No)
+      CROSS APPLY (
+        SELECT No.value('@Nome', 'varchar(128)') AS Tabela
+      ) Tab
+      WHERE Tab.Tabela IN ('cad_Projeto_Tarefa_Monitor', 'cad_Tarefa_Monitor')
+      ORDER BY Recente.Data_Inicio DESC`);
+    return r.recordset;
+  } catch {
+    return [];
+  }
+}
+
 async function telaTi(pool) {
-  const alteracoes = await alteracoes24h(pool);
+  const [alteracoes, monitoramentos] = await Promise.all([alteracoes24h(pool), monitoramentosRecentes(pool)]);
   return {
     setor: "ti",
     rotulo: "TI",
@@ -763,6 +809,17 @@ async function telaTi(pool) {
       alteracoes.apagados.map((linha) => item(linha.titulo, linha.detalhe, linha.texto, linha.hora, linha.processo)),
       "Nenhuma exclusão nas últimas 24 horas.",
       "Quais exclusões aconteceram nas últimas 24 horas? Diga usuário, tabela e horário.",
+    ),
+    aviso: bloco(
+      "Monitoramentos alterados",
+      monitoramentos.map((linha) => item(
+        String(linha.Tabela ?? "").replace(/^cad_/, "").replaceAll("_", " "),
+        [String(linha.Usuario ?? "").trim(), String(linha.Hora ?? "").trim()].filter(Boolean).join(" · "),
+        "",
+        "Monitor",
+      )),
+      "Nenhum monitoramento alterado nas últimas 24 horas.",
+      "Quais foram os últimos monitoramentos alterados e quem alterou, no projeto de tarefas e na atividade?",
     ),
     secundarios: [
       bloco(
@@ -782,22 +839,27 @@ async function telaTi(pool) {
 }
 
 async function telaFinanceiro(pool) {
-  const mes = `
-    Lhs.Data_Abertura_Processo >= DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)
-    AND Lhs.Data_Abertura_Processo < DATEADD(month, 1, DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1))`;
-  const [comissao, taxasTotais, taxas, maiores, relacao] = await Promise.all([
-    pool.request().query(`
-      SELECT SUM(Com.Valor_Comissao) AS Comissao, COUNT(*) AS Qtd
-      FROM mov_Logistica_House Lhs
-      JOIN mov_Oferta_Frete_Comissao Com ON Com.IdOferta_Frete = Lhs.IdOferta_Frete
-      WHERE ${mes}`),
+  const inicioMes = "DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)";
+  const mes = `Lhs.Data_Abertura_Processo >= ${inicioMes} AND Lhs.Data_Abertura_Processo < DATEADD(month, 1, ${inicioMes})`;
+  const doisMeses = `Lhs.Data_Abertura_Processo >= DATEADD(month, -1, ${inicioMes}) AND Lhs.Data_Abertura_Processo < DATEADD(month, 1, ${inicioMes})`;
+  const [comissao, taxasTotais, taxas, maiores] = await Promise.all([
     pool.request().query(`
       SELECT
-        SUM(Tax.Valor_Pagamento_Total) AS Pagamento,
-        SUM(Tax.Valor_Recebimento_Total) AS Recebimento
+        SUM(CASE WHEN ${mes} THEN Com.Valor_Comissao ELSE 0 END) AS Comissao,
+        SUM(CASE WHEN Lhs.Data_Abertura_Processo < ${inicioMes} THEN Com.Valor_Comissao ELSE 0 END) AS Anterior,
+        SUM(CASE WHEN ${mes} THEN 1 ELSE 0 END) AS Qtd
+      FROM mov_Logistica_House Lhs
+      JOIN mov_Oferta_Frete_Comissao Com ON Com.IdOferta_Frete = Lhs.IdOferta_Frete
+      WHERE ${doisMeses}`),
+    pool.request().query(`
+      SELECT
+        SUM(CASE WHEN ${mes} THEN Tax.Valor_Pagamento_Total ELSE 0 END) AS Pagamento,
+        SUM(CASE WHEN Lhs.Data_Abertura_Processo < ${inicioMes} THEN Tax.Valor_Pagamento_Total ELSE 0 END) AS PagamentoAnterior,
+        SUM(CASE WHEN ${mes} THEN Tax.Valor_Recebimento_Total ELSE 0 END) AS Recebimento,
+        SUM(CASE WHEN Lhs.Data_Abertura_Processo < ${inicioMes} THEN Tax.Valor_Recebimento_Total ELSE 0 END) AS RecebimentoAnterior
       FROM mov_Logistica_Taxa Tax
       JOIN mov_Logistica_House Lhs ON Lhs.IdLogistica_House = Tax.IdLogistica_House
-      WHERE ${mes}`),
+      WHERE ${doisMeses}`),
     pool.request().query(`
       SELECT TOP 6
         Exb.Nome AS Taxa,
@@ -819,22 +881,22 @@ async function telaFinanceiro(pool) {
       LEFT JOIN cad_Pessoa Pes ON Pes.IdPessoa = Com.IdPessoa
       WHERE ${mes}
       ORDER BY Com.Valor_Comissao DESC`),
-    relacionamentoFinanceiro(pool, 8),
   ]);
   const casa = comissao.recordset[0] ?? {};
   const totais = taxasTotais.recordset[0] ?? {};
   const pagamento = Number(totais.Pagamento) || 0;
   const recebimento = Number(totais.Recebimento) || 0;
   const saldo = recebimento - pagamento;
+  const saldoAnterior = (Number(totais.RecebimentoAnterior) || 0) - (Number(totais.PagamentoAnterior) || 0);
   return {
     setor: "financeiro",
     rotulo: "Financeiro",
-    frase: "Comissão, pagamento e recebimento deste mês, e o relacionamento com o cliente.",
+    frase: "Comissão, pagamento e recebimento deste mês.",
     kpis: [
-      kpi("Comissão do mês", reais(casa.Comissao), `${Number(casa.Qtd) || 0} lançamentos`),
-      kpi("Pagamento", reais(pagamento), "taxas do mês", false, "pagamento"),
-      kpi("Recebimento", reais(recebimento), "taxas do mês", false, "recebimento"),
-      kpi("Saldo", reais(saldo), "recebimento menos pagamento", saldo < 0),
+      kpi("Comissão do mês", reais(casa.Comissao), `${Number(casa.Qtd) || 0} lançamentos · ${contraMes(casa.Comissao, casa.Anterior, true)}`),
+      kpi("Pagamento", reais(pagamento), contraMes(pagamento, totais.PagamentoAnterior, true), false, "pagamento"),
+      kpi("Recebimento", reais(recebimento), contraMes(recebimento, totais.RecebimentoAnterior, true), false, "recebimento"),
+      kpi("Saldo", reais(saldo), contraMes(saldo, saldoAnterior, true), saldo < 0),
     ],
     principal: bloco(
       "Taxas com maior recebimento",
@@ -859,10 +921,6 @@ async function telaFinanceiro(pool) {
         "Qual a comissão de vendedor neste mês, com os valores?",
       ),
     ],
-    relacionamento: relacao.map((item) => encarteDoCliente(
-      item,
-      item.aberto > 0 ? `Em aberto ${reais(item.aberto)}` : item.pagamento === "em-dia" ? "Nada vencido" : "",
-    )),
   };
 }
 
@@ -889,19 +947,21 @@ async function telaDocumental(pool) {
     contar(pool, `SELECT COUNT(*) AS Total ${base} ${existe(im)}`),
     contar(pool, `SELECT COUNT(*) AS Total ${base} AND ISNULL(Sta.Descricao, '') <> 'CE LIBERADO' ${existe(`(${ce} OR (${im}))`)}`),
     pool.request().query(`
-      SELECT TOP 6
+      SELECT TOP 8
         Lhs.Numero_Processo,
         Cli.Nome AS Cliente,
         Tar.Descricao AS Atividade,
+        Res.Nome AS Responsavel,
         ISNULL(Sta.Descricao, '') AS Situacao,
+        DATEDIFF(day, COALESCE(Ati.Data_Inicio, Lhs.Data_Abertura_Processo), CAST(GETDATE() AS date)) AS Dias,
         CASE WHEN EXISTS (
           SELECT 1 FROM mov_Projeto_Atividade_Responsavel Ce
           WHERE Ce.IdProjeto_Atividade = Ati.IdProjeto_Atividade
             AND Ce.IdPapel_Projeto = 7 AND Ce.IdResponsavel = Ati.IdResponsavel
         ) THEN 'CE' ELSE 'IM' END AS Caso
-      ${base.replace("LEFT JOIN cad_Status_Processo_Logistico Sta ON Sta.IdStatus_Processo_Logistico = Lhs.IdStatus_Processo_Logistico", "LEFT JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente LEFT JOIN cad_Tarefa Tar ON Tar.IdTarefa = Ati.IdTarefa LEFT JOIN cad_Status_Processo_Logistico Sta ON Sta.IdStatus_Processo_Logistico = Lhs.IdStatus_Processo_Logistico")}
+      ${base.replace("LEFT JOIN cad_Status_Processo_Logistico Sta ON Sta.IdStatus_Processo_Logistico = Lhs.IdStatus_Processo_Logistico", "LEFT JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente LEFT JOIN cad_Pessoa Res ON Res.IdPessoa = Ati.IdResponsavel LEFT JOIN cad_Tarefa Tar ON Tar.IdTarefa = Ati.IdTarefa LEFT JOIN cad_Status_Processo_Logistico Sta ON Sta.IdStatus_Processo_Logistico = Lhs.IdStatus_Processo_Logistico")}
       ${existe(`(${ce} OR (${im}))`)}
-      ORDER BY Lhs.Data_Abertura_Processo DESC`),
+      ORDER BY CASE WHEN Ati.Previsao_Termino IS NULL THEN 1 ELSE 0 END, Ati.Previsao_Termino, Dias DESC`),
   ]);
   const sem = lista.recordset.filter((linha) => String(linha.Situacao).toUpperCase() !== "CE LIBERADO").slice(0, 6);
   return {
@@ -918,7 +978,7 @@ async function telaDocumental(pool) {
       "Fila atual",
       lista.recordset.map((linha) => item(
         String(linha.Numero_Processo ?? "").trim(),
-        [linha.Caso, String(linha.Atividade ?? "").trim(), String(linha.Cliente ?? "").trim()].filter(Boolean).join(" · "),
+        [linha.Caso, String(linha.Atividade ?? "").trim(), String(linha.Cliente ?? "").trim(), fraseIdade(linha.Dias, linha.Responsavel)].filter(Boolean).join(" · "),
         "",
         String(linha.Situacao).toUpperCase() === "CE LIBERADO" ? "Liberado" : "Pendente",
       )),
@@ -1104,17 +1164,19 @@ async function telaComercial(pool, email, nome, inside, escondeComissao, admin) 
   const real = PROCESSO_REAL;
   const aberto = `${real} AND Lhs.Data_Fechamento_Processo IS NULL AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))`;
   const inicioMes = "DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)";
-  const doMes = `${inicioMes} AND Lhs.Data_Abertura_Processo < DATEADD(month, 1, ${inicioMes})`;
   const recorte = admin ? "da empresa" : "da sua carteira";
   const [semProposta, comissao, maisAbertos, semPropostaClientes, semMovimento, fechamentos] = await Promise.all([
     consultaComercial(pool, id).query(`SELECT COUNT(*) AS Total FROM mov_Logistica_House Lhs WHERE ${aberto} AND Lhs.IdOferta_Frete IS NULL ${filtro}`),
     escondeComissao
       ? Promise.resolve(null)
       : consultaComercial(pool, id).query(`
-          SELECT SUM(Com.Valor_Comissao) AS Comissao
+          SELECT
+            SUM(CASE WHEN Lhs.Data_Abertura_Processo >= ${inicioMes} THEN Com.Valor_Comissao ELSE 0 END) AS Comissao,
+            SUM(CASE WHEN Lhs.Data_Abertura_Processo < ${inicioMes} THEN Com.Valor_Comissao ELSE 0 END) AS Anterior
           FROM mov_Logistica_House Lhs
           JOIN mov_Oferta_Frete_Comissao Com ON Com.IdOferta_Frete = Lhs.IdOferta_Frete
-          WHERE Lhs.Data_Abertura_Processo >= ${doMes}
+          WHERE Lhs.Data_Abertura_Processo >= DATEADD(month, -1, ${inicioMes})
+            AND Lhs.Data_Abertura_Processo < DATEADD(month, 1, ${inicioMes})
             ${id ? "AND (Lhs.IdVendedor = @id OR Com.IdPessoa = @id)" : ""}`),
     consultaComercial(pool, id).query(`
       SELECT TOP 6 Nome, Qtd
@@ -1139,14 +1201,27 @@ async function telaComercial(pool, email, nome, inside, escondeComissao, admin) 
       WHERE Nome <> ''
       ORDER BY Qtd DESC, Nome`),
     consultaComercial(pool, id).query(`
-      SELECT TOP 6 Nome, Dias
+      SELECT TOP 6 Nome, Dias, Vendedor, Ultimo
       FROM (
         SELECT LTRIM(RTRIM(Cli.Nome)) AS Nome,
-          DATEDIFF(day, MAX(Lhs.Data_Abertura_Processo), CAST(GETDATE() AS date)) AS Dias
+          DATEDIFF(day, MAX(Lhs.Data_Abertura_Processo), CAST(GETDATE() AS date)) AS Dias,
+          (
+            SELECT TOP 1 LTRIM(RTRIM(Ven.Nome))
+            FROM mov_Logistica_House H
+            LEFT JOIN cad_Pessoa Ven ON Ven.IdPessoa = H.IdVendedor
+            WHERE H.IdCliente = Cli.IdPessoa
+            ORDER BY H.Data_Abertura_Processo DESC
+          ) AS Vendedor,
+          (
+            SELECT TOP 1 H.Numero_Processo
+            FROM mov_Logistica_House H
+            WHERE H.IdCliente = Cli.IdPessoa
+            ORDER BY H.Data_Abertura_Processo DESC
+          ) AS Ultimo
         FROM mov_Logistica_House Lhs
         JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
         WHERE ${real} ${filtro}
-        GROUP BY LTRIM(RTRIM(Cli.Nome))
+        GROUP BY Cli.IdPessoa, LTRIM(RTRIM(Cli.Nome))
         HAVING MAX(Lhs.Data_Abertura_Processo) < DATEADD(day, -90, CAST(GETDATE() AS date))
       ) C
       WHERE Nome <> ''
@@ -1169,7 +1244,7 @@ async function telaComercial(pool, email, nome, inside, escondeComissao, admin) 
       : "Sua carteira e as suas pendências.",
     kpis: [
       kpi("Sem proposta", totalSemProposta, `abertos nos últimos 6 meses, ${recorte}`, totalSemProposta > 0),
-      kpi("Comissão do mês", escondeComissao ? "—" : reais(casa.Comissao), escondeComissao ? "fora deste acesso" : recorte),
+      kpi("Comissão do mês", escondeComissao ? "—" : reais(casa.Comissao), escondeComissao ? "fora deste acesso" : `${recorte} · ${contraMes(casa.Comissao, casa.Anterior, true)}`),
       kpi("Atrasadas", pendencias.encontrado ? pendencias.atrasadas : "—", "suas atividades", pendencias.atrasadas > 0),
       kpi("Para hoje", pendencias.encontrado ? pendencias.hoje : "—", `${pendencias.semana || 0} na semana`),
     ],
@@ -1191,7 +1266,12 @@ async function telaComercial(pool, email, nome, inside, escondeComissao, admin) 
         "Sem movimento",
         semMovimento.recordset.map((linha) => {
           const cliente = String(linha.Nome ?? "").trim();
-          return item(cliente, `${Number(linha.Dias) || 0} dias sem abrir`, "", "", "", perguntaCliente(cliente));
+          const dias = Number(linha.Dias) || 0;
+          const ultimo = String(linha.Ultimo ?? "").trim();
+          const vendedor = String(linha.Vendedor ?? "").trim();
+          const detalhe = [`${dias} dias sem abrir`, vendedor ? `vendedor ${vendedor}` : "", ultimo ? `último ${ultimo}` : ""].filter(Boolean).join(" · ");
+          const texto = `Olá. Faz ${dias} dias sem um processo novo${ultimo ? `, o último foi ${ultimo}` : ""}. Posso ajudar no próximo embarque?`;
+          return item(cliente, detalhe, texto, "", ultimo, perguntaCliente(cliente));
         }),
         "Nenhum cliente sem movimento há 90 dias.",
         "Quais clientes já abriram processo e não abrem há 90 dias?",
@@ -1273,6 +1353,7 @@ async function telaGerencia(pool, modalidade) {
   const aberto = `${real} AND Lhs.Data_Fechamento_Processo IS NULL AND Lhs.Data_Abertura_Processo >= DATEADD(month, -6, CAST(GETDATE() AS date))`;
   const inicioMes = "DATEFROMPARTS(YEAR(GETDATE()), MONTH(GETDATE()), 1)";
   const doMes = (coluna) => `${coluna} >= ${inicioMes} AND ${coluna} < DATEADD(month, 1, ${inicioMes})`;
+  const doMesAnterior = (coluna) => `${coluna} >= DATEADD(month, -1, ${inicioMes}) AND ${coluna} < ${inicioMes}`;
   const atrasada = `
     FROM mov_Atividade Ati
     JOIN mov_Logistica_House Lhs ON Lhs.IdProjeto_Atividade = Ati.IdProjeto_Atividade
@@ -1290,11 +1371,12 @@ async function telaGerencia(pool, modalidade) {
   const parado = "(Ult.Data IS NULL OR Ult.Data < DATEADD(day, -7, GETDATE()))";
 
   const [
-    abertos, novos, movimentados, semProposta, atrasadas, parados, prazos,
+    abertos, novos, novosAntes, movimentados, movimentadosAntes, semProposta, atrasadas, parados, prazos,
     financeiro, porOperacao, carga, gargalos, clientes, listaPrazos, vendedores,
   ] = await Promise.all([
     contar(pool, `SELECT COUNT(*) AS Total FROM mov_Logistica_House Lhs WHERE ${aberto}`),
     contar(pool, `SELECT COUNT(*) AS Total FROM mov_Logistica_House Lhs WHERE ${real} AND ${doMes("Lhs.Data_Abertura_Processo")}`),
+    contar(pool, `SELECT COUNT(*) AS Total FROM mov_Logistica_House Lhs WHERE ${real} AND ${doMesAnterior("Lhs.Data_Abertura_Processo")}`),
     contar(pool, `
       SELECT COUNT(*) AS Total
       FROM mov_Logistica_House Lhs
@@ -1302,6 +1384,13 @@ async function telaGerencia(pool, modalidade) {
       WHERE ${real}
         AND ((LEFT(Lhs.Numero_Processo, 1) = 'E' AND ${doMes("Lms.Data_Embarque")})
           OR (LEFT(Lhs.Numero_Processo, 1) = 'I' AND ${doMes("Lms.Data_Desembarque")}))`),
+    contar(pool, `
+      SELECT COUNT(*) AS Total
+      FROM mov_Logistica_House Lhs
+      JOIN mov_Logistica_Master Lms ON Lms.IdLogistica_Master = Lhs.IdLogistica_Master
+      WHERE ${real}
+        AND ((LEFT(Lhs.Numero_Processo, 1) = 'E' AND ${doMesAnterior("Lms.Data_Embarque")})
+          OR (LEFT(Lhs.Numero_Processo, 1) = 'I' AND ${doMesAnterior("Lms.Data_Desembarque")}))`),
     contar(pool, `SELECT COUNT(*) AS Total FROM mov_Logistica_House Lhs WHERE ${aberto} AND Lhs.IdOferta_Frete IS NULL`),
     contar(pool, `SELECT COUNT(*) AS Total ${atrasada}`),
     contar(pool, `SELECT COUNT(*) AS Total FROM mov_Logistica_House Lhs ${semNota} WHERE ${aberto} AND ${parado}`),
@@ -1311,6 +1400,9 @@ async function telaGerencia(pool, modalidade) {
         (SELECT SUM(Com.Valor_Comissao) FROM mov_Logistica_House Lhs
           JOIN mov_Oferta_Frete_Comissao Com ON Com.IdOferta_Frete = Lhs.IdOferta_Frete
           WHERE ${real} AND ${doMes("Lhs.Data_Abertura_Processo")}) AS Comissao,
+        (SELECT SUM(Com.Valor_Comissao) FROM mov_Logistica_House Lhs
+          JOIN mov_Oferta_Frete_Comissao Com ON Com.IdOferta_Frete = Lhs.IdOferta_Frete
+          WHERE ${real} AND ${doMesAnterior("Lhs.Data_Abertura_Processo")}) AS ComissaoAnterior,
         (SELECT SUM(Tax.Valor_Recebimento_Total) - SUM(Tax.Valor_Pagamento_Total) FROM mov_Logistica_Taxa Tax
           JOIN mov_Logistica_House Lhs ON Lhs.IdLogistica_House = Tax.IdLogistica_House
           WHERE ${real} AND ${doMes("Lhs.Data_Abertura_Processo")}) AS Saldo`),
@@ -1374,13 +1466,13 @@ async function telaGerencia(pool, modalidade) {
       : "Panorama da equipe em todas as operações: volume, atrasos, gargalos e resultado do mês.",
     kpis: [
       kpi("Abertos", abertos, "últimos 6 meses"),
-      kpi("Novos no mês", novos, "processos abertos"),
-      kpi("Movimentados no mês", movimentados, "embarques e desembarques"),
+      kpi("Novos no mês", novos, contraMes(novos, novosAntes)),
+      kpi("Movimentados no mês", movimentados, contraMes(movimentados, movimentadosAntes)),
       kpi("Sem proposta", semProposta, "abertos sem oferta", semProposta > 0),
       kpi("Atividades atrasadas", atrasadas, "últimos 6 meses", atrasadas > 0),
       kpi("Parados", parados, "sem nota há 7 dias", parados > 0),
       kpi("Prazos em 7 dias", prazos, "embarque, desembarque ou entrega", prazos > 0),
-      kpi("Comissão do mês", reais(fin.Comissao), `saldo de taxas ${reais(saldo)}`, saldo < 0),
+      kpi("Comissão do mês", reais(fin.Comissao), `${contraMes(fin.Comissao, fin.ComissaoAnterior, true)} · saldo de taxas ${reais(saldo)}`, saldo < 0),
     ],
     ranking: {
       titulo: "Processos por vendedor",
@@ -1425,21 +1517,86 @@ async function telaGerencia(pool, modalidade) {
   };
 }
 
+async function blocoFavoritos(pool, email) {
+  const numeros = listarFavoritos(email).map((item) => item.processo).filter(Boolean);
+  if (!numeros.length) return bloco("Processos acompanhados", [], "Nenhum processo marcado. Informe um número para acompanhar o que mudar.", "");
+  const simples = numeros.map((numero) => item(numero, "acompanhando", "", "", numero, `O que mudou no processo ${numero} desde ontem?`));
+  let r;
+  try {
+  const pedido = pool.request();
+  numeros.forEach((numero, indice) => pedido.input(`n${indice}`, sql.VarChar(30), numero));
+  const marcas = numeros.map((_, indice) => `@n${indice}`).join(", ");
+  r = await pedido.query(`
+    SELECT
+      Lhs.Numero_Processo,
+      Cli.Nome AS Cliente,
+      Aco.Data AS NotaData,
+      LEFT(CAST(Aco.Descricao AS nvarchar(160)), 160) AS Nota
+    FROM mov_Logistica_House Lhs
+    LEFT JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
+    OUTER APPLY (
+      SELECT TOP 1 A.Data, A.Descricao
+      FROM mov_Acompanhamento A
+      WHERE A.IdProjeto_Atividade = Lhs.IdProjeto_Atividade
+        AND A.Data >= DATEADD(day, -1, GETDATE())
+      ORDER BY A.Data DESC
+    ) Aco
+    WHERE Lhs.Numero_Processo IN (${marcas})`);
+  } catch {
+    return bloco("Processos acompanhados", simples, "", "");
+  }
+  const porNumero = new Map(r.recordset.map((linha) => [String(linha.Numero_Processo ?? "").trim().toUpperCase(), linha]));
+  const itens = numeros.map((numero) => {
+    const linha = porNumero.get(numero) ?? {};
+    const nota = String(linha.Nota ?? "").replace(/\s+/g, " ").trim();
+    const quando = dataHora(linha.NotaData);
+    const montado = item(
+      numero,
+      [String(linha.Cliente ?? "").trim(), nota ? "mudou desde ontem" : "sem novidade desde ontem"].filter(Boolean).join(" · "),
+      nota,
+      nota ? "Nota" : "",
+      numero,
+      `O que mudou no processo ${numero} desde ontem?`,
+    );
+    if (quando) montado.quando = quando;
+    return montado;
+  });
+  return bloco("Processos acompanhados", itens, "", "");
+}
+
 export async function resumoInicial(pool, { email, nome, token, visao, admin, setorManual, modalidadeManual }) {
   const perfil = await perfilDaConta(pool, email, nome).catch(() => ({ setor: "geral", modalidade: "", semComissao: true }));
   const opcoes = ["ti", "financeiro", "documental", "operacional", "comercial", "inside", "tudo", "gerencia"];
   const manual = setorManual && setorManual !== "auto" ? setorManual : "";
   const setor = admin && opcoes.includes(visao) ? visao : (manual || perfil.setor || "geral");
   const modalManual = ["IA", "EA", "IM", "EM"].includes(modalidadeManual) ? modalidadeManual : "";
-  if (setor === "gerencia") return telaGerencia(pool, admin ? "" : modalManual);
   const modalidade = !admin && setor === "operacional"
     ? modalManual || (modalidadeManual === "todas" ? "" : String(perfil.modalidade ?? ""))
     : "";
-  if (setor === "ti") return telaTi(pool);
-  if (setor === "financeiro") return telaFinanceiro(pool);
-  if (setor === "documental") return telaDocumental(pool);
-  if (setor === "operacional") return telaOperacional(pool, email, nome, modalidade);
-  if (setor === "comercial" || setor === "inside") return telaComercial(pool, email, nome, setor === "inside", Boolean(perfil.semComissao) && !admin, Boolean(admin));
-  if (setor === "tudo") return telaTudo(pool);
-  return telaGeral(pool, email, nome);
+  const tela = setor === "gerencia"
+    ? await telaGerencia(pool, admin ? "" : modalManual)
+    : setor === "ti"
+      ? await telaTi(pool)
+      : setor === "financeiro"
+        ? await telaFinanceiro(pool)
+        : setor === "documental"
+          ? await telaDocumental(pool)
+          : setor === "operacional"
+            ? await telaOperacional(pool, email, nome, modalidade)
+            : setor === "comercial" || setor === "inside"
+              ? await telaComercial(pool, email, nome, setor === "inside", Boolean(perfil.semComissao) && !admin, Boolean(admin))
+              : setor === "tudo"
+                ? await telaTudo(pool)
+                : await telaGeral(pool, email, nome);
+  try {
+    tela.favoritos = await blocoFavoritos(pool, email);
+  } catch {
+    tela.favoritos = null;
+  }
+  try {
+    if (setor === "ti" || setor === "gerencia") tela.placar = placarAvaliacoes(7);
+  } catch {
+    tela.placar = [];
+  }
+  return tela;
 }

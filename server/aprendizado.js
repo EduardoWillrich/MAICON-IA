@@ -65,6 +65,12 @@ db.exec(`
     comentario TEXT NOT NULL DEFAULT '',
     criado TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS favoritos (
+    email TEXT NOT NULL,
+    processo TEXT NOT NULL,
+    criado TEXT NOT NULL,
+    PRIMARY KEY (email, processo)
+  );
 `);
 
 try {
@@ -338,6 +344,33 @@ export function revisarAvaliacoes(dias = 7) {
       `SELECT email, visao, pergunta, resposta, nota, comentario, criado FROM avaliacoes WHERE criado >= ? AND nota < 0 ORDER BY id DESC LIMIT 40`,
     )
     .all(desde);
+}
+
+const PROCESSO_FAVORITO = /^[A-Z]{1,4}\d{2,6}-\d{2}$/;
+
+export function listarFavoritos(email) {
+  return db
+    .prepare(`SELECT processo, criado FROM favoritos WHERE email = ? ORDER BY criado DESC LIMIT 8`)
+    .all(emailDe(email))
+    .map((linha) => ({ processo: String(linha.processo), criado: String(linha.criado) }));
+}
+
+export function salvarFavorito(email, processo) {
+  const numero = String(processo ?? "").trim().toUpperCase();
+  if (!PROCESSO_FAVORITO.test(numero)) throw new Error("Informe o número do processo, como IM5328-26.");
+  const conta = emailDe(email);
+  db.prepare(`INSERT INTO favoritos (email, processo, criado) VALUES (?, ?, ?) ON CONFLICT(email, processo) DO NOTHING`).run(conta, numero, agora());
+  const antigos = db.prepare(`SELECT processo FROM favoritos WHERE email = ? ORDER BY criado DESC`).all(conta);
+  for (const item of antigos.slice(8)) {
+    db.prepare(`DELETE FROM favoritos WHERE email = ? AND processo = ?`).run(conta, item.processo);
+  }
+  return listarFavoritos(email);
+}
+
+export function apagarFavorito(email, processo) {
+  const numero = String(processo ?? "").trim().toUpperCase();
+  db.prepare(`DELETE FROM favoritos WHERE email = ? AND processo = ?`).run(emailDe(email), numero);
+  return listarFavoritos(email);
 }
 
 export function placarAvaliacoes(dias = 30) {
@@ -643,6 +676,7 @@ const EXEMPLOS = {
     "Taxas de um processo → taxas_processo { numero }.",
     "Comissão do mês → comissao_periodo {}.",
     "Prazos em 7 dias → prazos { dias: 7 }.",
+    "Passagem aérea, melhor preço para uma data e um destino → passagens_aereas { destino, data_embarque, origem }.",
   ],
   ti: [
     "Meu dia → meu_dia {}.",
