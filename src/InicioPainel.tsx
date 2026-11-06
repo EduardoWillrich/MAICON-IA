@@ -458,10 +458,10 @@ function ProcessosAcompanhados({
                       {mudou ? <span className="pa-changed">mudou desde ontem</span> : null}
                     </span>
                   ) : null}
-                  {item.texto ? (
+                  {item.texto || item.quando ? (
                     <span className="pa-note">
                       {item.quando ? <span className="pa-note-quando">{item.quando}</span> : null}
-                      <span className="pa-note-texto">{item.texto}</span>
+                      {item.texto ? <span className="pa-note-texto">{item.texto}</span> : null}
                     </span>
                   ) : null}
                 </button>

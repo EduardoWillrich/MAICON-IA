@@ -98,6 +98,12 @@ function dataHora(valor) {
   }).format(data);
 }
 
+function mudouDesdeOntem(valor) {
+  const data = valor instanceof Date ? valor : new Date(valor);
+  if (!valor || Number.isNaN(data.getTime())) return false;
+  return Date.now() - data.getTime() <= 86_400_000;
+}
+
 async function localizarPessoa(pool, email) {
   return pessoaDaConta(pool, email);
 }
@@ -1538,7 +1544,6 @@ async function blocoFavoritos(pool, email) {
       SELECT TOP 1 A.Data, A.Descricao
       FROM mov_Acompanhamento A
       WHERE A.IdProjeto_Atividade = Lhs.IdProjeto_Atividade
-        AND A.Data >= DATEADD(day, -1, GETDATE())
       ORDER BY A.Data DESC
     ) Aco
     WHERE Lhs.Numero_Processo IN (${marcas})`);
@@ -1550,9 +1555,10 @@ async function blocoFavoritos(pool, email) {
     const linha = porNumero.get(numero) ?? {};
     const nota = String(linha.Nota ?? "").replace(/\s+/g, " ").trim();
     const quando = dataHora(linha.NotaData);
+    const recente = Boolean(nota) && mudouDesdeOntem(linha.NotaData);
     const montado = item(
       numero,
-      [String(linha.Cliente ?? "").trim(), nota ? "mudou desde ontem" : "sem novidade desde ontem"].filter(Boolean).join(" · "),
+      [String(linha.Cliente ?? "").trim(), recente ? "mudou desde ontem" : ""].filter(Boolean).join(" · "),
       nota,
       nota ? "Nota" : "",
       numero,

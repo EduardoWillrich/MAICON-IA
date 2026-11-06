@@ -6629,7 +6629,7 @@ export function ChatIa({
                   <span className="chat-marca">
                     <img src={logoMaicon} alt="" />
                   </span>
-                  <h2>Maicon AI</h2>
+                  <h2></h2>
                   <div className="chat-inicio">
                   <div className="chat-linha">
                     <div className="chat-msg chat-assistant">
