@@ -101,6 +101,7 @@ if (!exemplosProntos.n) {
   const gravar = db.prepare("INSERT INTO glossario (termo, significado) VALUES (?, ?)");
   for (const [termo, significado] of GLOSSARIO) gravar.run(termo, significado);
 }
+db.prepare(`DELETE FROM glossario WHERE termo = ?`).run("concluir atividade");
 
 function agora() {
   return new Date().toISOString();
@@ -198,6 +199,13 @@ function trocarValores(valor, trocar) {
   return valor;
 }
 
+function semProcessoForaDaPergunta(ferramentas, pergunta) {
+  const citados = new Set(variaveisDa(pergunta).processos.map((numero) => numero.toUpperCase()));
+  return trocarValores(ferramentas, (texto) =>
+    texto.replace(/\b[a-z]{1,4}\d{2,6}-\d{2}\b/gi, (numero) => (citados.has(numero.toUpperCase()) ? numero : "")),
+  );
+}
+
 function comMarcadores(ferramentas, pergunta) {
   const { processos, datas } = variaveisDa(pergunta);
   return trocarValores(ferramentas, (texto) => {
@@ -257,7 +265,10 @@ function encaixam(receita, pergunta) {
 
 export function guardarReceitaServidor(email, visao, pergunta, ferramentasBrutas) {
   const chave = chavePergunta(pergunta);
-  const lista = comMarcadores((Array.isArray(ferramentasBrutas) ? ferramentasBrutas : []).slice(0, 8), pergunta);
+  const lista = comMarcadores(
+    semProcessoForaDaPergunta((Array.isArray(ferramentasBrutas) ? ferramentasBrutas : []).slice(0, 8), pergunta),
+    pergunta,
+  );
   if (!chave || !lista.length) return;
   const area = String(visao || "geral");
   const json = JSON.stringify(lista);
@@ -662,9 +673,13 @@ const EXEMPLOS = {
     "Prazos dos próximos 7 dias → prazos { dias: 7 }.",
     "Processos parados há 7 dias → processos_parados { dias: 7 }.",
     "Rota do navio de um processo → rota_processo { numero }.",
+    "Followup de um processo → modelo_followup { numero }. Copie o bloco modelo.",
+    "E-mail de uma atividade → email_atividade { nome, numero }. Copie o bloco email.",
   ],
   documental: [
     "Meu dia → meu_dia {}.",
+    "Followup de um processo → modelo_followup { numero }. Copie o bloco modelo.",
+    "E-mail de uma atividade → email_atividade { nome, numero }. Copie o bloco email.",
     "Fila do documental CE → documental_ce { foco: fila, caso: ce }.",
     "Fila do documental IM → documental_ce { foco: fila, caso: im }.",
   ],
@@ -684,6 +699,14 @@ const EXEMPLOS = {
     "Log recente → log_recente { horas: 24 }.",
     "Container duplicado ou quem incluiu o item de carga → explicar_itens_carga { numero }. No resumo, copie o texto inteiro.",
     "Campo livre de um processo, como OMBL → explicar_campo_livre { numero, identificador, grupo }. Copie o texto inteiro.",
+  ],
+  atividades: [
+    "Projeto de tarefas de um modal → projeto_tarefas { modalidade }.",
+    "Projeto de tarefas de um processo → projeto_tarefas { numero }.",
+    "Monitoramentos de campo → monitores_campo { modalidade } ou { numero }.",
+    "Gatilhos da atividade → gatilhos_atividade { modalidade } ou { numero }.",
+    "Mandar o bot ler, preencher ou clicar um botão da faixa de Ações → comando_bot { acao, numero, codigo, campo, valor, caminho, botao }. Concluir, restaurar, cancelar, iniciar e encerrar são acao. Se o botão for outro, mande botao com o texto. O bot lê a faixa. Copie o texto. Se pedir campos, pergunte os valores, preencha cada um e tente de novo. Se pedir um caminho, copie a pergunta e não escolha. Preencher não grava no banco.",
+    "O que o bot já aprendeu → aprendizado_bot {}.",
   ],
   geral: ["Resumo de um processo → resumo_processo { numero }."],
 };

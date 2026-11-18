@@ -1,7 +1,7 @@
 import { gravarTokenGmail, lerTokenGmail, lerUsuario, tokenGmailExpira, type UsuarioGoogle } from "./sessao";
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
-const ESCOPO = "openid email profile https://www.googleapis.com/auth/gmail.readonly";
+const ESCOPO = "openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send";
 
 type TokenClient = {
   requestAccessToken: (opcoes?: { prompt?: string }) => void;
@@ -20,6 +20,7 @@ function googleOAuth():
   | { initTokenClient: (cfg: {
       client_id: string;
       scope: string;
+      include_granted_scopes?: boolean;
       callback: (resp: TokenResp) => void;
       error_callback?: (erro: ErroGoogle) => void;
     }) => TokenClient }
@@ -28,6 +29,7 @@ function googleOAuth():
     google?: { accounts?: { oauth2?: { initTokenClient: (cfg: {
       client_id: string;
       scope: string;
+      include_granted_scopes?: boolean;
       callback: (resp: TokenResp) => void;
       error_callback?: (erro: ErroGoogle) => void;
     }) => TokenClient } } };
@@ -81,6 +83,7 @@ async function clientePronto() {
     cliente = oauth.initTokenClient({
       client_id: CLIENT_ID,
       scope: ESCOPO,
+      include_granted_scopes: true,
       callback: (resp) => aoToken(resp),
       error_callback: (erro) => aoErro(erro),
     });
@@ -94,7 +97,7 @@ export function prepararLoginGoogle() {
   });
 }
 
-export function pedirTokenGmail(prompt?: "consent"): Promise<TokenResp> {
+export function pedirTokenGmail(prompt?: "consent" | "none"): Promise<TokenResp> {
   if (!cliente) return Promise.reject(new Error("O login do Google ainda não está disponível."));
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => resolve({ error: "timeout" }), 120000);
@@ -125,14 +128,10 @@ function agendarRenovacao(expiraEm: number) {
   }, espera);
 }
 
-async function renovarDeVerdade() {
+async function renovarEmSilencio() {
   await prepararLoginGoogle();
-  const resp = await pedirTokenGmail();
-  if (!resp.access_token) {
-    const atual = lerTokenGmail();
-    if (atual && resp.error !== "access_denied") return atual;
-    throw new Error(resp.error || "Não foi possível renovar o Gmail.");
-  }
+  const resp = await pedirTokenGmail("none");
+  if (!resp.access_token) return lerTokenGmail();
   const segundos = Number(resp.expires_in) || 3600;
   const expiraEm = Date.now() + segundos * 1000;
   gravarTokenGmail(resp.access_token, expiraEm);
@@ -143,18 +142,44 @@ async function renovarDeVerdade() {
 export function renovarTokenGmail(forcar = false): Promise<string> {
   const atual = lerTokenGmail();
   const expira = tokenGmailExpira();
-  if (!forcar && atual && expira - Date.now() > 2 * 60_000) {
-    agendarRenovacao(expira);
+  const folga = expira - Date.now();
+  if (atual && !forcar && (expira <= 0 || folga > 2 * 60_000)) {
+    if (expira > 0 && folga < 15 * 60_000) void renovarEmSilencio().catch(() => atual);
+    else if (expira > 0) agendarRenovacao(expira);
     return Promise.resolve(atual);
   }
   if (!renovacao) {
-    renovacao = renovarDeVerdade().finally(() => {
+    renovacao = renovarEmSilencio().finally(() => {
       renovacao = null;
     });
   }
-  return renovacao;
+  return renovacao.then((token) => {
+    if (token) return token;
+    throw new Error("GMAIL_SEM_ACESSO");
+  });
 }
 
 export function tentarLoginAutomatico(): Promise<UsuarioGoogle | null> {
   return Promise.resolve(lerUsuario());
+}
+
+async function tokenEnvia(acesso: string) {
+  const info = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(acesso)}`);
+  if (!info.ok) return false;
+  const corpo = (await info.json().catch(() => ({}))) as { scope?: string };
+  return String(corpo.scope ?? "").includes("gmail.send");
+}
+
+export async function garantirEnvioGmail(): Promise<string> {
+  await prepararLoginGoogle();
+  const atual = lerTokenGmail();
+  if (atual && (await tokenEnvia(atual))) return atual;
+  const resp = await pedirTokenGmail("consent");
+  if (!resp.access_token) throw new Error("GMAIL_SEM_ENVIO");
+  const segundos = Number(resp.expires_in) || 3600;
+  const expiraEm = Date.now() + segundos * 1000;
+  gravarTokenGmail(resp.access_token, expiraEm);
+  agendarRenovacao(expiraEm);
+  if (!(await tokenEnvia(resp.access_token))) throw new Error("GMAIL_SEM_ENVIO");
+  return resp.access_token;
 }

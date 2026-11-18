@@ -2,8 +2,9 @@ import sql from "mssql";
 import { nomeProprio } from "./itensCarga.js";
 import { enriquecerNomes } from "./nomes.js";
 import { montarSelect, montarXpaths, tabelasDaLinha } from "./query.js";
+import { numeroParaConsulta } from "./headcargoDesktop.js";
 
-const PROCESSO = /^[A-Z]{1,4}\d{2,6}-\d{2}$/i;
+const PROCESSO = /^[A-Z]{1,4}\d{2,6}-\d{2}(?: TESTE)?$/i;
 
 function semAcento(texto) {
   return String(texto ?? "")
@@ -153,8 +154,10 @@ function redigir(numero, campo, eventos) {
   return [cabeca, "", ...linhas].join("\n");
 }
 
-export async function explicarCampoLivre(pool, args) {
-  const numero = String(args?.numero ?? "").trim().toUpperCase();
+export async function explicarCampoLivre(pool, args, ctx) {
+  const pedidoNumero = numeroParaConsulta(args?.numero, ctx?.papel === "admin" || ctx?.acesso?.papel === "admin");
+  if (!pedidoNumero.ok) return pedidoNumero.erro;
+  const numero = (pedidoNumero.numero || String(args?.numero ?? "").trim()).toUpperCase();
   const identificador = String(args?.identificador ?? "").trim();
   const grupo = String(args?.grupo ?? "").trim();
   if (!PROCESSO.test(numero)) return "Informe o número do processo, como IM5008-26.";

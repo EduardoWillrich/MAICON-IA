@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual, randomBytes } from "node:crypto";
 
 const DURACAO_MS = 30 * 24 * 60 * 60 * 1000;
 const RENOVAR_ANTES_MS = 7 * 24 * 60 * 60 * 1000;
@@ -17,11 +17,12 @@ function assinatura(conteudo) {
   return createHmac("sha256", segredo()).update(conteudo).digest("base64url");
 }
 
-export function criarSessaoAssinada(email, nome, agora = Date.now()) {
+export function criarSessaoAssinada(email, nome, agora = Date.now(), sid = randomBytes(16).toString("base64url")) {
   const dados = {
     email: String(email ?? "").trim().toLowerCase(),
     nome: String(nome ?? "").trim().slice(0, 120),
     exp: agora + DURACAO_MS,
+    sid,
   };
   if (!dados.email.includes("@")) throw new Error("Conta inválida para a sessão.");
   const corpo = Buffer.from(JSON.stringify(dados)).toString("base64url");
@@ -41,7 +42,7 @@ export function lerSessaoAssinada(token, agora = Date.now()) {
     const nome = String(dados?.nome ?? "").trim() || email;
     const exp = Number(dados?.exp);
     if (!email.includes("@") || !Number.isFinite(exp) || exp <= agora) return null;
-    return { email, nome, exp, renovar: exp - agora <= RENOVAR_ANTES_MS };
+    return { email, nome, exp, sid: typeof dados.sid === "string" ? dados.sid : undefined, renovar: exp - agora <= RENOVAR_ANTES_MS };
   } catch {
     return null;
   }

@@ -1,0 +1,41 @@
+.resposta.projeto-tarefas-card { max-width: none; width: 100%; box-sizing: border-box; padding: 24px; border-radius: 18px; background: var(--panel); }
+.projeto-tarefas-cabecalho { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 22px; }
+.projeto-tarefas-cabecalho > div > span { display: block; color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .12em; margin-bottom: 8px; }
+.projeto-tarefas-cabecalho h2 { font-size: 21px; }
+.projeto-tarefas-cabecalho p { margin: 8px 0 0; font-size: 12px; color: var(--muted); line-height: 1.6; }
+.projeto-tarefas-cabecalho > strong { flex: 0 0 auto; display: grid; gap: 3px; font-size: 30px; line-height: 1; text-align: right; font-variant-numeric: tabular-nums; }
+.projeto-tarefas-cabecalho > strong > span { font-size: 11px; color: var(--muted); font-weight: 500; }
+.projeto-tarefas-grupo + .projeto-tarefas-grupo { margin-top: 28px; }
+.projeto-tarefas-grupo > header { display: flex; align-items: baseline; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; border-top: 1px solid var(--line); padding: 13px 0; }
+.projeto-tarefas-grupo h3 { display: flex; align-items: baseline; gap: 10px; margin: 0; font-size: 13px; line-height: 1.5; }
+.projeto-tarefas-grupo h3 > span { font-family: var(--mono); color: var(--accent); font-size: 11px; }
+.projeto-tarefas-grupo > header > span { color: var(--muted); font-size: 11px; }
+.projeto-tarefas-legenda, .projeto-tarefas-lista > li { display: grid; grid-template-columns: 28px minmax(0, 1.4fr) minmax(0, 1fr); gap: 12px; }
+.projeto-tarefas-legenda { padding: 8px 14px; color: var(--muted); font-size: 9px; letter-spacing: .04em; font-weight: 600; }
+.projeto-tarefas-lista { display: grid; gap: 7px; padding: 0; margin: 0; list-style: none; }
+.projeto-tarefas-lista > li { padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); align-items: center; }
+.projeto-tarefas-indice { color: var(--muted); font-size: 10px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.projeto-tarefas-nome { display: grid; gap: 6px; min-width: 0; }
+.projeto-tarefas-nome > span { font-family: var(--mono); font-size: 10px; color: var(--accent); }
+.projeto-tarefas-nome > strong { font-size: 12px; font-weight: 650; line-height: 1.5; overflow-wrap: anywhere; }
+.projeto-tarefas-precedente { min-width: 0; padding-left: 14px; border-left: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.5; }
+.projeto-tarefas-precedente b { color: var(--text); font-family: var(--mono); font-size: 10px; }
+.projeto-tarefas-precedente p { margin: 4px 0 0; overflow-wrap: anywhere; }
+.projeto-tarefas-grupo > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding-top: 16px; color: var(--muted); font-size: 11px; }
+.projeto-tarefas-grupo > footer > strong { font-weight: 500; color: var(--accent); }
+.projeto-tarefas-grupo > footer button { display: inline-flex; gap: 10px; align-items: center; border: 1px solid var(--accent-line); background: var(--accent-bg); color: var(--accent); border-radius: 8px; padding: 9px 13px; cursor: pointer; font: inherit; font-weight: 600; }
+.projeto-tarefas-grupo > footer button > span { font-size: 10px; font-weight: 400; }
+.projeto-tarefas-grupo > footer button:hover { background: var(--accent-line); }
+.projeto-tarefas-grupo > footer button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.projeto-tarefas-vazio { color: var(--muted); font-size: 12px; }
+@media (max-width: 620px) {
+  .resposta.projeto-tarefas-card { padding: 16px 12px; }
+  .projeto-tarefas-cabecalho { gap: 12px; }
+  .projeto-tarefas-cabecalho h2 { font-size: 18px; }
+  .projeto-tarefas-cabecalho > strong { font-size: 25px; }
+  .projeto-tarefas-legenda { display: none; }
+  .projeto-tarefas-lista > li { grid-template-columns: 24px minmax(0, 1fr); gap: 8px; padding: 12px 10px; }
+  .projeto-tarefas-indice { align-self: start; padding-top: 3px; }
+  .projeto-tarefas-precedente { grid-column: 2; border: 0; padding: 0; }
+  .projeto-tarefas-precedente p { margin-top: 2px; }
+}

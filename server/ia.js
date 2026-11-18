@@ -13,8 +13,12 @@ import { executarFilaComFallback, filaDeChaves } from "./filaIa.js";
 import { ferramentaDaVisao } from "./funcoes.js";
 import { registrarPedidoIa } from "./conversas.js";
 import { lerStreamGoogle, modeloGoogle, pedidoGoogle, partesGoogle, urlGoogle } from "./google.js";
+import { pedirOllama } from "./ollama.js";
+import { pedirOpenRouter } from "./openrouter.js";
+import { FERRAMENTAS_OPERACIONAIS } from "./ferramentasOperacionais.js";
 
 const FERRAMENTAS = [
+  ...FERRAMENTAS_OPERACIONAIS,
   {
     type: "function",
     function: {
@@ -125,9 +129,11 @@ const FERRAMENTAS = [
     function: {
       name: "localizar_processo",
       description:
-        "Localiza um número de processo (ex.: IM5328-26) e já devolve cliente, importador, exportador, vendedor, " +
-        "situação, referência do cliente e os códigos internos. Use isto sozinho quando a pergunta for sobre quem é o " +
-        "cliente ou dados cadastrais do processo. Só chame consultar_log se pedirem histórico de alterações.",
+        "Localiza um número de processo (ex.: IM5328-26) e devolve cliente, importador, exportador, vendedor, " +
+        "situação, referência do cliente e os códigos internos. Processo de teste do administrador inclui a palavra teste, como IM2099-25 teste. " +
+        "Passe o número inteiro, com a palavra teste quando ela vier na pergunta. Não diga que o formato está errado por causa dela. " +
+        "Use isto sozinho quando a pergunta for sobre quem é o cliente ou dados cadastrais do processo. " +
+        "Só chame consultar_log se pedirem histórico de alterações.",
       parameters: {
         type: "object",
         properties: { numero: { type: "string" } },
@@ -255,6 +261,61 @@ const FERRAMENTAS = [
   {
     type: "function",
     function: {
+      name: "email_atividade",
+      description:
+        "Gera o e-mail de uma atividade com o modelo de mensagem e o modelo de acompanhamento já cadastrados no HeadCargo. " +
+        "Use quando pedirem para gerar ou montar o e-mail de uma atividade, sem enviar. " +
+        "id é o código da atividade. nome é o nome da atividade. numero é o processo, quando houver. " +
+        "Copie o bloco ```email inteiro, sem reescrever.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Código da atividade" },
+          nome: { type: "string", description: "Nome da atividade" },
+          numero: { type: "string", description: "Número do processo" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "modelo_followup",
+      description:
+        "Modelo pronto de Followup de um processo, com cliente, rota, prazos e os acompanhamentos. " +
+        "Use quando pedirem followup, follow-up ou o modelo para o cliente. " +
+        "Copie o bloco ```modelo inteiro, sem reescrever. Se não houver número, pergunte qual processo. " +
+        "Não use esta ferramenta quando pedirem para enviar o follow-up: nesse caso use enviar_followup.",
+      parameters: {
+        type: "object",
+        properties: { numero: { type: "string", description: "Número do processo, ex.: IM5328-26" } },
+        required: ["numero"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "enviar_followup",
+      description:
+        "Envia o Follow-up por e-mail, com a ficha impressa no corpo da mensagem. " +
+        "Use somente quando pedirem para enviar, mandar ou encaminhar o follow-up. " +
+        "numero é o processo. para é o e-mail que a pessoa escreveu, ou a palavra cliente quando pedirem para enviar ao cliente. " +
+        "Não invente endereço. Se faltar o processo ou o destino, pergunte só o que falta e não chame a ferramenta.",
+      parameters: {
+        type: "object",
+        properties: {
+          numero: { type: "string", description: "Número do processo, ex.: IM5328-26" },
+          para: { type: "string", description: "E-mail do destinatário, ou cliente" },
+          assunto: { type: "string", description: "Assunto, se a pessoa pediu um" },
+        },
+        required: ["numero", "para"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "acompanhamentos_processo",
       description: "Notas de acompanhamento do processo, da mais recente para a mais antiga. ultimo=true traz só a última.",
       parameters: {
@@ -301,11 +362,30 @@ const FERRAMENTAS = [
     type: "function",
     function: {
       name: "proposta_processo",
-      description: "Proposta e oferta ligadas a UM processo, com datas e situação. Exige o número do processo, como IM5944-26. Não use para listar propostas por data.",
+      description: "Proposta e oferta ligadas a UM processo, com datas e situação. Exige o número do processo, como IM5944-26. Não use para listar propostas por data nem para montar o e-mail da proposta.",
       parameters: {
         type: "object",
         properties: { numero: { type: "string" } },
         required: ["numero"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "montar_proposta",
+      description:
+        "Monta o e-mail da proposta comercial, pronto para enviar a um cliente. " +
+        "Use quando pedirem para montar, gerar ou preparar a proposta por e-mail. " +
+        "cliente é o nome do cliente. numero é o processo, se houver. " +
+        "A escolha usa o e-mail que o cliente enviou ou, se não houver, a proposta mais recente. " +
+        "Copie o bloco ```email inteiro. Não envie.",
+      parameters: {
+        type: "object",
+        properties: {
+          cliente: { type: "string", description: "Nome do cliente" },
+          numero: { type: "string", description: "Número do processo, se a proposta for de um processo" },
+        },
       },
     },
   },
@@ -544,12 +624,23 @@ const FERRAMENTAS = [
         "Andamento de uma atividade (tarefa) de um processo: situação, responsável, previsão, observação e último acompanhamento. " +
         "Use quando perguntarem o andamento, a situação ou o status de uma atividade no processo. " +
         "Não use executar_sql para isso. Passe o número exatamente como o usuário escreveu. " +
-        "Se ele não informou o número, pergunte qual processo. Não use processo de exemplo.",
+        "Se ele não informou o número, pergunte qual processo. Não use processo de exemplo. " +
+        "Quando pedirem para concluir, mande concluir=true. Quando pedirem para restaurar, reativar ou tirar do inativo, mande restaurar=true. " +
+        "Para qualquer outro botão da faixa de Ações, como cancelar, iniciar ou encerrar, mande botao com o texto do botão. O bot lê os botões que estão juntos nessa faixa e clica no que combina com o pedido, mesmo que essa ação ainda não tenha um caminho próprio. " +
+        "Só em processo de teste, como IM2099-25 teste. O bot abre a aba Atividades sozinho. " +
+        "Se o texto listar campos para preencher, copie a lista e não diga que concluiu. " +
+        "Se perguntar qual caminho seguir, repita a pergunta e não escolha. Quando a pessoa responder, chame de novo com concluir=true e caminho igual à opção que ela escolheu. " +
+        "Copie o texto da ferramenta. Se ele disser que a atividade continua pendente, não diga que concluiu.",
       parameters: {
         type: "object",
         properties: {
           numero: { type: "string", description: "Número do processo informado pelo usuário, ex.: IM5328-26" },
           codigo: { type: "string", description: "Código da atividade (ex.: 0013) ou parte do nome. Vazio traz as atividades do processo." },
+          concluir: { type: "boolean", description: "true quando pedirem para concluir a atividade no HeadCargo" },
+          requisitos: { type: "boolean", description: "true para consultar o que falta para concluir, campos em branco e requisitos registrados. Somente leitura; não combine com concluir ou botao." },
+          restaurar: { type: "boolean", description: "true quando pedirem para restaurar, reativar ou tirar a atividade do inativo" },
+          botao: { type: "string", description: "Texto do botão na faixa de Ações, como CANCELAR, INICIAR ou ENCERRAR. O bot lê a faixa e clica no rótulo parecido." },
+          caminho: { type: "string", description: "Opção escolhida pela pessoa quando o HeadCargo pedir um caminho. Vazio na primeira tentativa." },
         },
         required: ["numero"],
       },
@@ -596,6 +687,97 @@ const FERRAMENTAS = [
   {
     type: "function",
     function: {
+      name: "projeto_tarefas",
+      description:
+        "Lê o projeto de tarefas de um modal (IM, IA, EM ou EA) ou do processo informado. " +
+        "Traz todas as atividades visíveis e ativas do projeto da modalidade, sem limite e sem continuação, na ordem do código, com a atividade precedente. " +
+        "A modalidade da conta manda: IM não recebe CRM, demurrage nem projeto de outra modalidade. " +
+        "Só na aba Atividades. Não altera nada.",
+      parameters: {
+        type: "object",
+        properties: {
+          modalidade: { type: "string", description: "IM, IA, EM ou EA" },
+          numero: { type: "string", description: "Número do processo, quando a pergunta for de um processo" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "monitores_campo",
+      description:
+        "Lê os monitoramentos de campo do projeto de tarefas: quando disparam e quais campos citam. " +
+        "modalidade IM, IA, EM ou EA, ou numero do processo. Só na aba Atividades. Não altera nada.",
+      parameters: {
+        type: "object",
+        properties: {
+          modalidade: { type: "string" },
+          numero: { type: "string" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "gatilhos_atividade",
+      description:
+        "Lê os gatilhos de situação do projeto de tarefas: o que acontece quando uma atividade muda de situação e se gera a próxima. " +
+        "modalidade IM, IA, EM ou EA, ou numero do processo. Só na aba Atividades. Não altera nada.",
+      parameters: {
+        type: "object",
+        properties: {
+          modalidade: { type: "string" },
+          numero: { type: "string" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "comando_bot",
+      description:
+        "Envia um comando da Maicon ao bot. acao=ler consulta a atividade. " +
+        "acao=preencher procura o campo na tela do processo teste, em qualquer aba ou seção já carregada (Processo, Comissões e as demais). Antes de escolher, o bot consulta o cadastro do HeadCargo e usa o nome oficial. Se o texto listar mais de um cadastro, copie a pergunta. Não use UPDATE. " +
+        "acao=concluir só em processo teste, com o processo aberto no HeadCargo. O bot abre a aba Atividades sozinho e, se o processo não estiver na tela, tenta o filtro rápido. " +
+        "acao=restaurar também só em processo teste: o bot clica em Restaurar na faixa de Ações, para atividade concluída ou inativa. " +
+        "Para cancelar, iniciar, encerrar ou outro botão da mesma faixa, mande acao com esse verbo ou botao com o texto do botão. O bot lê os botões e clica no que a pessoa pediu. " +
+        "Se o texto pedir valores de campos, pergunte e, quando a pessoa responder, chame acao=preencher uma vez para cada campo e depois acao=concluir com o mesmo código. " +
+        "Se disser o que ficou na tela, copie. Se perguntar qual caminho seguir, repita a pergunta e não escolha. " +
+        "Quando a pessoa escolher, chame de novo com o mesmo código e caminho igual à opção escolhida. " +
+        "Se a conclusão citar a próxima atividade do fluxo, diga qual é e só continue se a pessoa pedir.",
+      parameters: {
+        type: "object",
+        properties: {
+          acao: { type: "string", description: "ler, preencher, ou o botão da faixa de Ações: concluir, restaurar, cancelar, iniciar, encerrar e os demais que a tela mostrar." },
+          botao: { type: "string", description: "Texto do botão, quando a ação for um rótulo da faixa de Ações." },
+          numero: { type: "string", description: "Número do processo" },
+          codigo: { type: "string", description: "Código da atividade, como 0023.1" },
+          campo: { type: "string", description: "Rótulo inteiro do campo, como data de embarque ou tipo de carga. Data de embarque não é situação de embarque: situação só se a pessoa disser situação ou status. Se disser a aba, acrescente aba e o nome, sem apagar o rótulo." },
+          valor: { type: "string", description: "O que a pessoa pediu para colocar. Pode ser apelido, sigla ou nome. O bot resolve no cadastro." },
+          caminho: { type: "string", description: "Na conclusão, a opção de caminho que a pessoa escolheu. Vazio até ela responder." },
+        },
+        required: ["acao", "numero"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "aprendizado_bot",
+      description:
+        "Lista os comandos que a Maicon já enviou ao bot nesta aba. Use quando pedirem o que o bot aprendeu. Não altera nada.",
+      parameters: {
+        type: "object",
+        properties: { limite: { type: "integer" } },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "log_recente",
       description:
         "Lista o log recente com usuário, tabela, tipo (1 inclusão, 2 exclusão, 3 atualização), usuário do Windows e computador. " +
@@ -629,11 +811,14 @@ const FERRAMENTAS = [
         "Use quando pedirem e-mails, Gmail, caixa de entrada, resumo das mensagens ou o que é mais importante no e-mail. " +
         "O resumo completo da caixa só entra quando o pedido for o resumo de e-mails. " +
         "Se a pergunta for específica, responda só isso, por exemplo só os chamados concluídos hoje. " +
-        "Não peça para abrir link de mensagem marcada como alerta.",
+        "Não peça para abrir link de mensagem marcada como alerta. " +
+        "Documentos, anexos ou arquivos de um processo: documentos=true e o número em processo. " +
+        "Copie os blocos ```email inteiros. O botão de baixar fica no cartão. Não diga que não consegue baixar.",
       parameters: {
         type: "object",
         properties: {
-          processo: { type: "string", description: "Número do processo quando pedirem os e-mails dele." },
+          processo: { type: "string", description: "Número do processo quando pedirem os e-mails ou os documentos dele." },
+          documentos: { type: "boolean", description: "true quando pedirem documentos, anexos ou arquivos do e-mail para baixar." },
         },
       },
     },
@@ -687,7 +872,10 @@ function textoSetor(setor) {
       "foco=processo e foco=campos exigem o número do processo; se faltar, pergunte só o número. " +
       "Se a resposta seguinte for só o número, continue essa pergunta: foco=campos para campos livres, foco=processo para atividades, envolvidos, liberação e o que falta. " +
       "Nesse caso é proibido chamar resumo_processo. " +
-      "Não informe comissão, profit, lucro nem o valor comercial da oferta. Se pedirem isso, diga que essa informação é do comercial.\n"
+      "Não informe comissão, profit, lucro nem o valor comercial da oferta. Se pedirem isso, diga que essa informação é do comercial. " +
+      "DOCUMENTOS: se pedirem documento, anexo, arquivo, BL, invoice, packing list ou o que chegou por e-mail de um processo, " +
+      "chame emails_gmail com documentos=true e o número. Se o número não veio, pergunte só o número. " +
+      "Copie os blocos ```email inteiros. Os arquivos baixam no próprio cartão. Não reescreva a lista de arquivos.\n"
     );
   }
   if (setor === "operacional") {
@@ -720,6 +908,24 @@ function textoSetor(setor) {
       "Para passagem aérea, use passagens_aereas com destino e data_embarque e copie o texto. Não invente preço. " +
       "Separe a resposta por setor quando misturar comercial, operacional e documental. Não mencione DI nem LI. " +
       "Para divergência de desembarque, use divergencias_viagem; para a rota do navio, rota_processo e reproduza o bloco ```rota inteiro.\n"
+    );
+  }
+  if (setor === "atividades") {
+    return (
+      "ABA ATIVIDADES: aqui a Maicon estuda o projeto de tarefas e manda comando ao bot. " +
+      "Antes de agir, leia o fluxo com projeto_tarefas, os campos com monitores_campo e a passagem de etapa com gatilhos_atividade. " +
+      "O modal é IM, IA, EM ou EA. Se a pessoa citar um processo, use o número. " +
+      "Comando do bot: chame comando_bot. acao=ler consulta a atividade. acao=preencher escolhe o cadastro certo e confirma na tela do processo teste, sem UPDATE. " +
+      "acao=concluir só em processo teste, pelo botão do HeadCargo, sem UPDATE. O bot abre a aba Atividades sozinho. " +
+      "acao=restaurar só em processo teste, pelo botão Restaurar do HeadCargo, sem UPDATE. Use quando pedirem restaurar, reativar ou tirar do inativo. " +
+      "Cancelar, iniciar, encerrar e os outros botões da mesma faixa também: o bot lê o rótulo e clica, sem UPDATE. " +
+      "Os comandos geram tarefas persistentes. Para um objetivo com várias etapas, use tarefa_bot. Consulte tarefa_bot acao=listar para localizar execuções anteriores. Se a tarefa pedir campos ou caminho, pergunte no chat e use tarefa_bot acao=retomar com o mesmo id e os valores ou caminho informado. Não crie outra tarefa para responder à pendência. " +
+      "Se a ferramenta disser o que ficou na tela, copie. Se perguntar qual caminho seguir, pergunte e não escolha. " +
+      "Quando a pessoa escolher, retome a mesma tarefa com caminho igual à opção escolhida. " +
+      "Se a conclusão citar a próxima atividade do fluxo, diga qual é e só continue se a pessoa pedir. " +
+      "Se pedirem o que o bot já aprendeu, use aprendizado_bot e copie a lista. " +
+      "Copie o texto da ferramenta. Não diga que preencheu ou concluiu se o texto não disser isso. " +
+      "Não recuse o preenchimento: o bot age na tela do HeadCargo e confirma por lá. Se a ferramenta listar vários cadastros, pergunte qual, com a sigla.\n"
     );
   }
   if (setor === "ti") {
@@ -879,6 +1085,8 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "(ex.: mov_Registro_Financeiro.Numero AS Fatura, cad_Pessoa.Nome AS Cliente). " +
     (setor === "ti"
       ? "Nesta aba, cite tabela e campo quando isso ajudar o TI. "
+      : setor === "atividades"
+        ? "ABA ATIVIDADES: cite o projeto, o código da atividade, o campo e o gatilho. Não mostre SQL. "
       : setor === "financeiro"
         ? "VISÃO FINANCEIRA: responda com valores em real, taxas, comissões, prazos e relacionamento do cliente. Não cite nome de tabela. " +
           "Use painel_financeiro para o mês, taxas_processo para um processo, comissao_periodo e prazos. " +
@@ -887,7 +1095,9 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
           "Relatório: quando pedirem relatório, consulte e responda no chat. Nunca mencione Excel, planilha nem download. " +
           "GRÁFICO só quando pedirem gráfico. Sem esse pedido, não inclua o bloco. Quando pedirem, mantenha a tabela e acrescente ```grafico.\n"
         : "Nunca responda ao usuário com nomes de tabela: buscar_tabelas e listar_colunas são passos internos. ") +
-    "E-MAIL: use emails_gmail quando pedirem e-mail. Responda só o que foi pedido. " +
+    "E-MAIL: use emails_gmail quando pedirem para ler e-mail. Responda só o que foi pedido. " +
+    "ENVIAR FOLLOW-UP: quando pedirem para enviar ou mandar o follow-up, use enviar_followup. " +
+    "O corpo sai no modelo da ficha. para é o e-mail escrito pela pessoa, ou cliente se pedirem o cliente. Não invente endereço. " +
     "O resumo completo da caixa só quando pedirem o resumo de e-mails. Não invente remetente, assunto nem atividade.\n" +
     "Continue até consultar os registros e responda só com os dados. " +
     "Nunca mostre ao usuário o JSON da ferramenta, o campo sql, nem a lista linhas. " +
@@ -914,7 +1124,7 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "CÁLCULOS: quantidade, soma, média, mínimo, máximo, percentual, margem, lucro e ranking saem do SQL, " +
     "com COUNT, SUM, AVG, MIN, MAX e GROUP BY quando a pergunta separar por cliente, mês ou modalidade. " +
     "consultar_dados devolve no máximo 20 linhas e não serve para total nem soma. " +
-    "A tabela do chat mostra no máximo 30 linhas. É proibido somar, tirar média ou calcular percentual dessa amostra. " +
+    "O chat exibe listas em lotes com Ver mais. É proibido somar, tirar média ou calcular percentual da amostra visível. " +
     "Se o retorno começar com CÁLCULOS, responda com esses números: eles valem para todas as linhas. Não copie o título CÁLCULOS. " +
     "Lucro é recebimento menos pagamento. Margem é esse lucro dividido pelo recebimento, em percentual com uma casa, " +
     "e só existe quando o recebimento é maior que zero. " +
@@ -926,6 +1136,9 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "Cada SELECT vai uma vez só: não repita a mesma consulta nem cole o SQL duas vezes no argumento. " +
     "Histórico de alterações: depois de localizar, chame consultar_log em mov_Logistica_House com campo_chave " +
     "IdLogistica_House (ou mov_Logistica_Master com IdLogistica_Master, se só existir master). " +
+    "Se citarem a tabela e o id, como mov_logistica_master 43061, consulte essa tabela e esse id. " +
+    "Não troque por mov_Logistica_House só porque a frase também traz o número do processo. " +
+    "'do dia 14/10 até hoje' é data_inicio 14/10 e data_fim hoje, não um único dia. " +
     "Atividades do processo: mov_Projeto_Atividade com IdProjeto_Atividade.\n" +
     "TAXA PELO ID: se citarem IdLogistica_Taxa (ou 'Idlogisticataxa', 'id da taxa') com um número, chame consultar_log " +
     "em mov_Logistica_Taxa, campo_chave IdLogistica_Taxa, valores = esse número, tipo 0. Para quem incluiu, responda com o evento " +
@@ -948,8 +1161,12 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "NÚMERO SOZINHO: se a mensagem for só o número do processo, continue a última pergunta do usuário com a ferramenta dela. " +
     "Campos livres preenchidos → documental_ce foco=campos. " +
     "Atividades do documental, envolvidos, CE liberado ou o que falta → documental_ce foco=processo caso=ambos. " +
-    "Rota ou navio → rota_processo. Acompanhamentos → acompanhamentos_processo. " +
+    "Rota ou navio → rota_processo. Followup ou modelo para o cliente → modelo_followup e copie o bloco ```modelo inteiro. " +
+    "E-mail de uma atividade, para teste, → email_atividade { id, nome, numero } e copie o bloco ```email inteiro. Não envie. " +
+    "Enviar o follow-up por e-mail → enviar_followup. Não troque o envio pelo bloco modelo. " +
+    "Acompanhamentos → acompanhamentos_processo. " +
     "Proposta de um processo, com o número informado → proposta_processo. " +
+    "Montar ou gerar o e-mail da proposta para um cliente → montar_proposta { cliente, numero } e copie o bloco ```email inteiro. Não envie. " +
     "Lista de propostas, ontem, hoje, esse mês ou uma data → propostas_periodo. " +
     "É proibido responder lista de propostas com localizar_processo ou com mov_Logistica_House. " +
     "Taxas de um processo → taxas_processo. " +
@@ -961,7 +1178,8 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "Meu dia, o que fazer hoje ou a abertura do turno → meu_dia e copie o texto. " +
     "É proibido responder 'como está o meu dia' com pendencias: isso só lista a pessoa logada e perde o panorama da visão. " +
     "Gráfico de faturas → se o número do processo não veio na mensagem, pergunte qual processo e não consulte. " +
-    "Não inclua processo TESTE, cliente com TESTE no nome, processo DEMU nem processo cancelado " +
+    "Não inclua processo TESTE nem cliente com TESTE no nome. Processo de teste, como IM2099-25 teste, só entra quando a instrução disser que o usuário é administrador e ele pedir esse processo. " +
+    "Não inclua processo DEMU nem processo cancelado " +
     "(IdStatus_Processo_Logistico = 6 ou Data_Cancelamento preenchida), a menos que o usuário peça esses registros. " +
     "Com o número informado pelo usuário, consulte as faturas e desenhe o gráfico. " +
     "Log técnico de um processo: se o número não veio na mensagem, pergunte qual processo e pare. " +
@@ -1000,6 +1218,11 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
       : "Depois da consulta, responda em português claro, para alguém não técnico. Use somente os dados retornados; " +
         "se algo não constar, diga isso. Não invente cliente, valor, data, processo ou tabela.\n\n") +
     "FORMATO: responda em Markdown (GFM). Frases curtas. Use lista, negrito e tabela quando houver vários itens ou colunas. " +
+    "Comece pela resposta direta; use subtítulos apenas quando ajudarem a separar assuntos. " +
+    "Cada conjunto de dados aparece uma vez: não repita uma tabela como sequência de campos ou parágrafo com todos os registros. " +
+    "Consultas que listam vários processos, clientes, taxas ou registros com os mesmos campos devem usar tabela, não um cartão ou bloco por item. " +
+    "Use rótulos legíveis, como Taxa, Pagamento e Recebimento, em vez de Nome_Taxa e Valor_Recebimento no texto ao usuário. " +
+    "Depois de uma tabela, acrescente apenas conclusões ou alertas sustentados pelo retorno, se existirem. " +
     "Se a ferramenta devolver um bloco ```log, ```painel, ```dia, ```rota ou ```encarte, copie o bloco inteiro, sem reescrever em lista ou parágrafo. " +
     "Não use a frase 'Atualização em data, por usuário. N campos.'. " +
     "Cada processo, atividade ou registro fica num item de lista, começando com '- '. " +
@@ -1017,7 +1240,10 @@ function sistema(relatorio = false, limitado = false, setor = "geral", modalidad
     "Nomes de usuário como nome próprio (mario.tobias → Mario Tobias).\n" +
     "LISTA: no chat, no máximo 30 registros. Se houver mais, diga o total e escreva Mostrei 30 de N. " +
     "Não cole a lista inteira. O total e as somas vêm do bloco CÁLCULOS ou de um SELECT agregado, nunca da conta das 30 linhas. " +
-    "monitoramentos_alterados: copie as tabelas inteiras, com todas as linhas e colunas. " +
+        "monitoramentos_alterados: copie as tabelas inteiras, com todas as linhas e colunas. " +
+        "Na aba Atividades, projeto_tarefas, monitores_campo, gatilhos_atividade, comando_bot e aprendizado_bot: copie o texto da ferramenta. " +
+        "projeto_tarefas já traz todas as atividades do projeto. O limite de 30 registros não vale para esse bloco. " +
+        "Copie o ```tarefas inteiro. É proibido parar no meio, cortar em 80 ou escrever uma continuação. " +
     "rota_processo: copie o bloco ```rota inteiro, sem resumir os trechos. " +
     "processos_abertos_cliente, relacionamento_clientes e painel_financeiro: copie cada bloco ```encarte inteiro. A cor do cartão é ouro, prata ou bronze. " +
     "Relacionamento dos clientes ouro, prata ou bronze → relacionamento_clientes e copie os blocos encarte. Não troque os cartões por uma lista. " +
@@ -1053,11 +1279,9 @@ async function pausaDoLimite(resp) {
   } catch {
     texto = "";
   }
-  if (resp.status === 500) return 2000;
-  const achado = texto.match(/retry in\s+([0-9]+(?:\.[0-9]+)?)s/i);
-  const segundos = achado ? Number(achado[1]) : Number(resp.headers.get("retry-after"));
-  const espera = Number.isFinite(segundos) && segundos > 0 ? segundos * 1000 : 8000;
-  return Math.min(65000, Math.ceil(espera) + 400);
+  if (texto) console.warn(`[IA] Google ${resp.status}: ${texto.replace(/\s+/g, " ").slice(0, 240)}`);
+  if (resp.status === 429) return 0;
+  return 2000;
 }
 
 function erroDoProvedor(mensagem, status) {
@@ -1169,6 +1393,16 @@ function mensagemDoCorpo(dados) {
 
 async function chamarProvedor(item, corpo, aoTexto) {
   const aberto = corpoAberto(corpo);
+  if (item.provedor === "openrouter") {
+    const mensagem = await pedirOpenRouter(item.chave, aberto, aoTexto);
+    registrarPedidoIa("openrouter");
+    return comModelo(mensagem, "openrouter");
+  }
+  if (item.provedor === "ollama") {
+    const mensagem = await pedirOllama(item.chave, aberto, aoTexto);
+    registrarPedidoIa("ollama");
+    return comModelo(mensagem, "ollama");
+  }
   const modelo = modeloGoogle(corpo.model);
   return pedirGoogle(item.chave, aberto, modelo, aoTexto, corpo.limiteTokens);
 }
@@ -1255,6 +1489,7 @@ function ferramentasDoPedido(opcoes, nomes) {
     const nome = item.function.name;
     if (limite && !limite.has(nome)) return false;
     const acesso = opcoes.acesso ?? {};
+    if (["tarefa_bot", "rotina_bot", "painel_excecoes", "regras_bot"].includes(nome) && opcoes.papel !== "admin") return false;
     const setor = opcoes.setor || "geral";
     if (!ferramentaDaVisao(nome, setor)) return false;
     if (opcoes.papel === "admin") return true;
@@ -1275,7 +1510,7 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
   }
   const temRetorno = mensagens.slice(inicioRodada).some((item) => item?.role === "tool");
   const filaBase = filaDeChaves([]);
-  const chaveDeepSeek = filaBase[0]?.chave || "";
+  const chaveJulgamento = String(process.env.GOOGLE_API_KEY || "").trim();
   const calendarioPedido = textoCalendario();
   const usuarios = mensagens.filter((item) => item?.role === "user");
   const pedidoAnterior = String(usuarios.at(-2)?.content ?? "");
@@ -1301,12 +1536,17 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
     }) +
       textoCarteira(opcoes) +
       (opcoes.papel === "admin"
+        ? "\nPROCESSO TESTE: o administrador pode pedir um processo de teste pelo número completo, como IM2099-25 teste. Passe esse texto no campo numero, inclusive a palavra teste. Não peça para tirar a palavra teste e não busque só IM2099-25. Não acrescente teste a um processo comum. Se pedirem para preencher, digitar ou informar um campo nesse processo, chame comando_bot com acao=preencher, o rótulo inteiro e o valor dito pela pessoa. Data de embarque continua data de embarque: não troque por situação de embarque, a menos que peçam situação ou status. Se disserem a aba, acrescente aba e o nome, sem apagar o rótulo. O bot resolve o valor no cadastro e escolhe na tela. Não escreva UPDATE.\n"
+        : "\nPROCESSO TESTE: este usuário não é administrador. Não consulte processo com TESTE no número, mesmo que ele peça.\n") +
+      (opcoes.papel === "admin"
         ? ""
         : "\nSQL NO CHAT: é proibido escrever SELECT, bloco de código SQL ou o texto da consulta. " +
           "Se pedirem a consulta ou o SQL, responda só que isso fica disponível para o administrador. Não mostre a consulta."),
     Boolean(opcoes.apresentacao),
     opcoes.apresentacao ? "" : textoConsultasRelevantes(pedido),
   );
+  if (opcoes.papel === "admin") instrucoes += "\nOPERAÇÕES NO CHAT: toda interação acontece nesta conversa. Não mencione Central HeadCargo, painéis, formulários nem abas de execução. Use tarefa_bot para planejar, consultar, pausar, cancelar e retomar rotinas. Para uma resposta a execução anterior, consulte a tarefa antes de agir e use seu id para retomar. Use o campo tarefaId dos resultados como identificador interno; evite exibir UUIDs ao usuário. Faça perguntas naturais sobre os dados que faltam, uma de cada vez quando ajudar. Mostre o resultado real e o nível de confirmação; fila ou clique não é sucesso. Requisitos, biblioteca e exceções são consultados e apresentados aqui pelas ferramentas.\n";
+  instrucoes += "\nCONSULTA DE ATIVIDADE: frases como 'leia a atividade e diga o que falta para concluir' pedem somente leitura. Use andamento_atividade sem concluir, restaurar ou botao. Nunca clique em Concluir para descobrir requisitos. Consulte monitores_campo e gatilhos_atividade quando precisar explicar o fluxo, distinguindo regras de campos efetivamente ausentes. Avisos de conexão e opções Fechar/Minimizar/Maximizar/Restaurar não são campos obrigatórios.\n";
   const calendario = textoCalendario();
   instrucoes +=
     `\nHOJE É ${calendario.hoje}. ONTEM É ${calendario.ontem}. ` +
@@ -1325,7 +1565,7 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
       "chame processos_abertos_cliente e copie o bloco ```encarte inteiro.";
   }
   if (conferencia.aviso && !corrigindo) instrucoes += `\n${conferencia.aviso}\n`;
-  const soNumero = /^[A-Za-z]{1,4}\d{2,6}-\d{2}$/i.test(String(pedido).trim());
+  const soNumero = /^[A-Za-z]{1,4}\d{2,6}-\d{2}(?:\s+teste)?$/i.test(String(pedido).trim());
   const assunto = soNumero && pedidoAnterior ? `${pedidoAnterior}\n${pedido}` : String(pedido);
   const pediuHistorico = /quem (?:inclu|alter|excl|mud|lan[cç]|cri|apag|cadastr|mexeu)|hist[oó]rico|\blogs?\b|antes e depois|mudan[cç]a|altera[cç]/i.test(assunto);
   if (soNumero && pedidoAnterior && !pediuHistorico) {
@@ -1365,7 +1605,7 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
   const corpoUsado = corrigindo ? corpoDeCorrecao(corpo, conferencia.instrucao, permitidas) : corpo;
   const querJulgar = temRetorno && !opcoes.apresentacao && !opcoes.relatorio && !escrevendo;
   const silencioso = corrigindo || querJulgar;
-  console.warn(`[IA] rota ${etapa}; modelo ${corpo.model}; instrucoes ${instrucoes.length} caracteres; ferramentas ${corpoUsado.tools?.length || 0}.`);
+  console.warn(`[IA] rota ${etapa}; modelo ${modeloGoogle()}; instrucoes ${instrucoes.length} caracteres; ferramentas ${corpoUsado.tools?.length || 0}.`);
   if (corrigindo) console.warn(`[IA] Autoavaliação reprovou a consulta: ${conferencia.motivo}`);
 
   async function pedir(corpoAtual, filaAtual, transmitir) {
@@ -1389,11 +1629,11 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
   }
 
   async function julgarRascunho(rascunho) {
-    if (!chaveDeepSeek || !String(rascunho || "").trim() || respostaConfereComRetorno(rascunho, mensagens)) {
+    if (!chaveJulgamento || !String(rascunho || "").trim() || respostaConfereComRetorno(rascunho, mensagens)) {
       return { ok: true, motivo: "", deNovo: false };
     }
     const texto = await completarCurto(
-      chaveDeepSeek,
+      chaveJulgamento,
       "Você é a autoavaliação interna do Maicon. Não responda ao usuário. " +
         "Responda só JSON {\"ok\":true} ou {\"ok\":false,\"motivo\":\"...\",\"deNovo\":false}. " +
         "Reprove se a resposta inventa cliente, valor, data, processo ou fato que não está na consulta, " +
@@ -1426,9 +1666,9 @@ export async function conversar(mensagens, aoTexto, opcoes = {}) {
       if (segunda?.tool_calls?.length) return mensagemPronta(segunda);
     }
     try {
-      const novo = chaveDeepSeek
+      const novo = chaveJulgamento
         ? String(await completarCurto(
-          chaveDeepSeek,
+          chaveJulgamento,
           "Reescreva a resposta do Maicon em português claro, com no máximo 30 linhas da lista e o total. " +
             "Não invente número, nome, data ou valor. Não diga que a lista é parcial nem que o total não pode ser confirmado. Sem SQL e sem nome de tabela.",
           `Pergunta: ${String(pedido).slice(0, 500)}\n\nProblema: ${veredito.motivo}\n\nTrecho da consulta:\n${amostraDaConsulta(mensagens)}\n\nResposta a reescrever:\n${String(dados?.content || "").slice(0, 1800)}`,

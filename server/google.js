@@ -1,6 +1,7 @@
 import { criarFiltroDeChamada, criarFiltroDePensamento, extrairChamadasDoTexto } from "./chamadaTexto.js";
 
-export const MODELO_GEMMA = "gemma-4-26b-a4b-it";
+export const MODELO_CHAT = "gemini-3.5-flash-lite";
+export const MODELO_GEMMA = MODELO_CHAT;
 export const JANELA_GEMMA = 262144;
 
 const TIPOS = {
@@ -12,11 +13,8 @@ const TIPOS = {
   object: "OBJECT",
 };
 
-export function modeloGoogle(preferido = process.env.GOOGLE_MODEL) {
-  const nome = String(preferido ?? "").trim();
-  if (!nome) return MODELO_GEMMA;
-  const curto = nome.includes("/") ? nome.slice(nome.lastIndexOf("/") + 1) : nome;
-  return curto || MODELO_GEMMA;
+export function modeloGoogle() {
+  return MODELO_CHAT;
 }
 
 export function urlGoogle(modelo, fluxo = "gerar") {

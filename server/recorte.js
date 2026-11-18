@@ -22,6 +22,9 @@ export function recorteDaVisao(visao, perfil) {
   if (setor === "ti") {
     return { visao: "ti", semOperacional: false, semComercial: false, semComissao: false, tecnico: true };
   }
+  if (setor === "atividades") {
+    return { visao: "atividades", semOperacional: false, semComercial: true, semComissao: true };
+  }
   if (setor === "inside" || setor === "comercial") {
     return { visao: setor, semOperacional: true, semComercial: false, semComissao: semComissaoPapel };
   }

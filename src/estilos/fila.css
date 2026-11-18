@@ -1,0 +1,46 @@
+.fila-atividades { width:100%; min-width:0; box-sizing:border-box; margin-bottom:18px; border:1px solid var(--reply-border); border-radius:14px; background:var(--reply-surface); color:var(--reply-text); font-family:var(--reply-font); overflow:hidden; }
+.fila-atividades * { box-sizing:border-box; }
+.fila-topo { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:20px 22px; }
+.fila-topo h3 { display:flex; align-items:baseline; flex-wrap:wrap; gap:12px; margin:0; font-size:16px; font-weight:650; }
+.fila-topo h3 span { font-size:12px; font-weight:400; color:var(--reply-muted); }
+.fila-topo p { margin:6px 0 0; font-size:12px; line-height:1.5; color:var(--reply-muted); }
+.fila-atividades button { cursor:pointer; font:inherit; }
+.fila-topo .fila-dispensar { flex-shrink:0; padding:5px 8px; border:0; border-radius:6px; background:transparent; color:var(--reply-muted); font-size:12px; }
+.fila-topo .fila-dispensar:hover { background:var(--reply-accent-soft); color:var(--reply-accent); }
+.fila-atividades table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:13px; }
+.fila-atividades th { background:var(--reply-elevated); color:var(--reply-muted); font-size:11px; font-weight:600; text-align:left; padding:11px 16px; border-block:1px solid var(--reply-border); }
+.fila-atividades th:first-child { width:48%; padding-left:22px; }
+.fila-atividades th:nth-child(2) { width:24%; }
+.fila-atividades th:nth-child(3) { width:17%; }
+.fila-atividades th:last-child { width:11%; }
+.fila-atividades td { padding:14px 16px; border-bottom:1px solid var(--reply-border); vertical-align:middle; overflow-wrap:anywhere; line-height:1.5; }
+.fila-atividades td:first-child { padding-left:22px; }
+.fila-atividades tbody tr:last-child td { border-bottom:0; }
+.fila-atividades tbody tr:hover { background:var(--reply-elevated); }
+.fila-atividade strong { display:block; margin-top:3px; font-size:12px; font-weight:550; }
+.fila-codigo { color:var(--reply-accent); font-size:11px; font-family:ui-monospace,Consolas,monospace; }
+.fila-atividades .fila-processo { display:inline-flex; align-items:center; gap:6px; max-width:100%; padding:4px 0; background:none; border:0; color:var(--reply-text); font-size:12px; text-align:left; }
+.fila-processo svg { flex-shrink:0; opacity:.5; }
+.fila-atividades .fila-processo:hover { color:var(--reply-accent); }
+.fila-atividades .fila-processo:disabled { cursor:default; color:var(--reply-muted); }
+.fila-situacao { display:inline-flex; align-items:center; gap:6px; font-size:11px; color:var(--reply-muted); }
+.fila-situacao::before { content:""; width:5px; height:5px; border-radius:50%; background:currentColor; flex-shrink:0; }
+.fila-situacao.atrasada { color:var(--reply-accent); }
+.fila-situacao.hoje { color:var(--reply-warning); }
+.fila-previsao { color:var(--reply-muted); font-size:12px; font-variant-numeric:tabular-nums; }
+.fila-atividades footer { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; padding:12px 22px; border-top:1px solid var(--reply-border); color:var(--reply-muted); font-size:11px; }
+.fila-atividades footer button { display:inline-flex; align-items:center; gap:10px; padding:7px 10px; border:1px solid var(--reply-accent-line); border-radius:8px; background:var(--reply-accent-soft); color:var(--reply-accent); font-size:12px; }
+.fila-atividades footer button span { opacity:.75; }
+.fila-atividades button:focus-visible { outline:2px solid var(--reply-accent); outline-offset:3px; }
+@media(max-width:700px) {
+ .fila-topo { padding:16px; }
+ .fila-atividades thead { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+ .fila-atividades :is(tbody,tr) { display:block; width:100%; }
+ .fila-atividades tr { padding:14px 16px; border-top:1px solid var(--reply-border); }
+ .fila-atividades td,.fila-atividades td:first-child { display:flex; justify-content:space-between; align-items:baseline; gap:12px; width:100%; border:0; padding:4px 0; }
+ .fila-atividades td::before { content:attr(data-label); color:var(--reply-muted); font-size:11px; }
+ .fila-atividades td.fila-atividade { display:block; margin-bottom:8px; }
+ .fila-atividade strong { font-size:13px; }
+ .fila-atividades .fila-processo { justify-content:flex-end; max-width:75%; }
+ .fila-atividades footer { padding:12px 16px; }
+}

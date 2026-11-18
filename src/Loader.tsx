@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import symbolSrc from "./assets/maicon-logo.png";
-import "./Loader.css";
+import "./estilos/loader.css";
 
 type CSSVars = CSSProperties & Record<`--${string}`, string>;
 

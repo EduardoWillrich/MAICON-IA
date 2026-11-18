@@ -1,5 +1,6 @@
 import sql from "mssql";
 import { pessoaDaConta } from "./pessoaConta.js";
+import { pedidoFichaCliente } from "./pedidoFicha.js";
 import { enriquecerNomes } from "./nomes.js";
 import { nomeDe, pessoasPorLogin, relogioLog } from "./pessoas.js";
 import { nomeProprio } from "./itensCarga.js";
@@ -8,7 +9,15 @@ import { explicarCampoLivre } from "./campoLivre.js";
 import { explicarItensCarga } from "./itensCarga.js";
 import { relacionamentoFinanceiro, relacionamentoPorClassificacao, relacionamentoPorNomes, textoEncarte, textoEncartes, textoRelacionamento } from "./relacionamento.js";
 import { PROCESSO_REAL, SEM_EXCECAO } from "./datasPedido.js";
+import { numeroParaConsulta, concluirAtividadeNoHeadCargo, textoDoPreenchimento } from "./headcargoDesktop.js";
+import { camposPedidos, guardarExigencia, registrarComandoBot, textoComandosBot, exigenciasDoProcesso } from "./comandosBot.js";
+import { requisitosAtividade } from "./requisitosAtividade.js";
 import { pesquisarPassagens } from "./passagens.js";
+import { atividadesDoProcesso, emailDaAtividade, limparNomeAtividade, partesDoNomeAtividade } from "./modeloAtividade.js";
+import { montarPropostaEmail } from "./propostaEmail.js";
+import { operacoesBot, textoTarefa } from "./operacoesBot.js";
+import { consultaDeAtividade } from "./intencaoAtividade.js";
+import { painelExcecoes } from "./inteligenciaOperacional.js";
 
 const NUMERO = /^[A-Za-z0-9./-]{3,30}$/;
 const cacheConsulta = new Map();
@@ -35,15 +44,19 @@ export function consultaFresca(item) {
 }
 
 const FUNCOES = new Set([
+  "tarefa_bot", "rotina_bot", "painel_excecoes", "regras_bot",
   "resumo_processo",
   "ficha_processo",
   "meu_dia",
   "buscar_processos",
   "processos_abertos",
   "acompanhamentos_processo",
+  "modelo_followup",
+  "email_atividade",
   "pendencias",
   "o_que_mudou",
   "proposta_processo",
+  "montar_proposta",
   "propostas_periodo",
   "comissao_periodo",
   "processos_abertos_cliente",
@@ -64,6 +77,11 @@ const FUNCOES = new Set([
   "explicar_itens_carga",
   "explicar_campo_livre",
   "andamento_atividade",
+  "projeto_tarefas",
+  "monitores_campo",
+  "gatilhos_atividade",
+  "comando_bot",
+  "aprendizado_bot",
 ]);
 
 function dataDoPeriodo(valor) {
@@ -140,7 +158,14 @@ function termoSeguro(valor) {
     .slice(0, 80);
 }
 
-function numeroDe(valor) {
+function ehAdmin(ctx) {
+  return ctx?.papel === "admin" || ctx?.acesso?.papel === "admin";
+}
+
+function numeroDe(valor, ctx) {
+  const pedido = numeroParaConsulta(valor, ehAdmin(ctx));
+  if (!pedido.ok) throw new Error(pedido.erro);
+  if (pedido.numero) return pedido.numero;
   const numero = String(valor ?? "").trim();
   if (!NUMERO.test(numero)) throw new Error("Informe o número do processo, como IM5328-26.");
   return numero;
@@ -229,6 +254,8 @@ export function montarPainelDia(nome, linhas, agora = new Date()) {
     const id = dias == null ? "sem_data" : dias < 0 ? "atrasada" : dias === 0 ? "hoje" : dias <= 7 ? "semana" : "depois";
     const grupo = porId[id];
     const item = {
+      idAtividade: Number(linha.IdAtividade) || undefined,
+      codigo: String(linha.Codigo ?? "").trim(),
       atividade: String(linha.Atividade ?? linha.atividade ?? "Atividade").trim() || "Atividade",
       processo: String(linha.Numero_Processo ?? linha.processo ?? "").trim(),
       cliente: String(linha.Cliente ?? linha.cliente ?? "").trim(),
@@ -236,8 +263,7 @@ export function montarPainelDia(nome, linhas, agora = new Date()) {
       rel: fraseDoPrazo(dias),
       motivo: notaCurta(linha.Motivo ?? linha.motivo),
     };
-    if (grupo.itens.length >= 8) grupo.ocultos += 1;
-    else grupo.itens.push(item);
+    grupo.itens.push(item);
   }
   const contar = (id) => {
     const grupo = porId[id];
@@ -353,6 +379,47 @@ function consultaPronta(texto, comando, linhas, params = {}) {
   return { texto, sql: sqlVisivel, linhas: registros };
 }
 
+function extrairEmails(valor) {
+  const achados = String(valor ?? "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
+  return achados.map((item) => item.toLowerCase());
+}
+
+async function emailsDoCliente(pool, idPessoa, extras = []) {
+  const lista = extras.flatMap(extrairEmails);
+  const id = Number(idPessoa);
+  if (Number.isInteger(id) && id > 0) {
+    const contatos = await pool.request().input("id", sql.Int, id).query(`
+      SELECT EMail, EMail_Pessoal
+      FROM cad_Pessoa_Contato
+      WHERE IdPessoa = @id
+        AND ISNULL(Ativo, 1) = 1`);
+    for (const contato of contatos.recordset) {
+      lista.push(...extrairEmails(contato.EMail), ...extrairEmails(contato.EMail_Pessoal));
+    }
+  }
+  const vistos = new Set();
+  const unicos = [];
+  for (const email of lista) {
+    if (vistos.has(email)) continue;
+    vistos.add(email);
+    unicos.push(email);
+  }
+  return unicos;
+}
+
+export async function emailsDoProcesso(pool, numero, ctx) {
+  const house = await houseDoProcesso(pool, numeroDe(numero, ctx));
+  if (!house) return [];
+  const cliente = await pool.request().input("house", sql.Int, house.IdLogistica_House).query(`
+    SELECT Cli.EMail, Cli.EMail_Pessoal, Lhs.IdCliente
+    FROM mov_Logistica_House Lhs
+    LEFT JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
+    WHERE Lhs.IdLogistica_House = @house`);
+  const linha = cliente.recordset[0];
+  if (!linha) return [];
+  return emailsDoCliente(pool, linha.IdCliente, [linha.EMail, linha.EMail_Pessoal]);
+}
+
 async function houseDoProcesso(pool, numero) {
   const r = await pool.request().input("n", sql.VarChar(30), numero).query(`
     SELECT TOP 1 IdLogistica_House, IdLogistica_Master, IdProjeto_Atividade, Numero_Processo
@@ -361,8 +428,8 @@ async function houseDoProcesso(pool, numero) {
   return r.recordset[0] ?? null;
 }
 
-async function resumoProcesso(pool, args, recorte) {
-  const numero = numeroDe(args.numero);
+async function resumoProcesso(pool, args, recorte, ctx) {
+  const numero = numeroDe(args.numero, ctx);
   const r = await pool.request().input("n", sql.VarChar(30), numero).query(`
     SELECT TOP 1
       Lhs.Numero_Processo,
@@ -452,7 +519,7 @@ async function buscarProcessos(pool, args, recorte) {
        OR Cli.Nome LIKE @t)
       ${/^[A-Za-z]{2}\d/.test(termo) ? "" : filtroModalidadeSql(recorte)}
     ORDER BY Lhs.Data_Abertura_Processo DESC`;
-  const r = await pool.request().input("t", sql.NVarChar(80), `%${termo}%`).query(comando);
+  const r = await pool.request().input("t", sql.NVarChar(82), `%${termo}%`).query(comando);
   return consultaPronta(
     lista(
     r.recordset.map((linha) => {
@@ -504,8 +571,8 @@ async function processosAbertos(pool, args, recorte) {
   return consultaPronta(`${titulo}\n${lista(linhas, "Nenhum processo aberto nesse recorte.")}`, comando, r.recordset);
 }
 
-async function acompanhamentosProcesso(pool, args) {
-  const numero = numeroDe(args.numero);
+async function acompanhamentosProcesso(pool, args, ctx) {
+  const numero = numeroDe(args.numero, ctx);
   const house = await houseDoProcesso(pool, numero);
   if (!house) return `Processo ${numero} não encontrado.`;
   const ultimo = args.ultimo === true || args.ultimo === "true" || args.ultimo === 1;
@@ -527,6 +594,191 @@ async function acompanhamentosProcesso(pool, args) {
     return [cabeca, nota].filter(Boolean).join("\n\n");
   });
   return [`**Processo ${numero}**`, ...notas].join("\n\n");
+}
+
+function lugarFollowup(nome, sigla) {
+  const cidade = String(nome ?? "").trim();
+  const codigo = String(sigla ?? "").trim();
+  if (cidade && codigo) return `${cidade} (${codigo})`;
+  return cidade || codigo;
+}
+
+function marcoFollowup(nome, real, previsto) {
+  const feito = dataCurta(real);
+  if (feito) return { nome, valor: feito, previsto: false };
+  const previa = dataCurta(previsto);
+  if (previa) return { nome, valor: previa, previsto: true };
+  return null;
+}
+
+async function modeloFollowup(pool, args, ctx) {
+  const numero = numeroDe(args.numero, ctx);
+  const house = await houseDoProcesso(pool, numero);
+  if (!house) return `Processo ${numero} não encontrado.`;
+  const cabeca = await pool.request().input("house", sql.Int, house.IdLogistica_House).query(`
+    SELECT TOP 1
+      Lhs.Numero_Processo,
+      Lhs.Referencia_Cliente,
+      Lhs.Conhecimentos AS HBL,
+      Lhs.Tipo_Frete,
+      Lhs.Peso_Bruto,
+      Lhs.Quantidade_Volumes,
+      Lhs.Metros_Cubicos,
+      Cli.Nome AS Cliente,
+      Lhs.IdCliente,
+      Cli.EMail AS Email_Cliente,
+      Cli.EMail_Pessoal AS Email_Pessoal,
+      Imp.Nome AS Importador,
+      Exp.Nome AS Exportador,
+      Sta.Descricao AS Situacao,
+      Ori.Nome AS Origem,
+      Ori.Sigla AS Origem_Sigla,
+      Des.Nome AS Destino,
+      Des.Sigla AS Destino_Sigla,
+      Fin.Nome AS Destino_Final,
+      Nav.Nome AS Navio,
+      Lmm.Viagem_Navio,
+      Cia.Nome AS Companhia,
+      Nvo.Nome AS Nvocc,
+      Ter.Nome AS Terminal,
+      Mer.Nome AS Mercadoria,
+      Mer.Nome_Internacional AS Mercadoria_Ingles,
+      Lms.Numero_Conhecimento,
+      Lms.Numero_Reserva,
+      Lms.Modalidade_Pagamento,
+      Lmh.Numero_CE,
+      Lmh.Containers,
+      Lms.Data_Previsao_Embarque,
+      Lms.Data_Embarque,
+      Lms.Data_Previsao_Desembarque,
+      Lms.Data_Desembarque,
+      Lhs.Data_Previsao_Entrega,
+      Lhs.Data_Entrega
+    FROM mov_Logistica_House Lhs
+    LEFT JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
+    LEFT JOIN cad_Pessoa Imp ON Imp.IdPessoa = Lhs.IdImportador
+    LEFT JOIN cad_Pessoa Exp ON Exp.IdPessoa = Lhs.IdExportador
+    LEFT JOIN cad_Pessoa Nvo ON Nvo.IdPessoa = Lhs.IdNVOCC
+    LEFT JOIN cad_Mercadoria Mer ON Mer.IdMercadoria = Lhs.IdMercadoria
+    LEFT JOIN cad_Status_Processo_Logistico Sta ON Sta.IdStatus_Processo_Logistico = Lhs.IdStatus_Processo_Logistico
+    LEFT JOIN mov_Logistica_Master Lms ON Lms.IdLogistica_Master = Lhs.IdLogistica_Master
+    LEFT JOIN mov_Logistica_Maritima_Master Lmm ON Lmm.IdLogistica_Master = Lhs.IdLogistica_Master
+    LEFT JOIN cad_Navio Nav ON Nav.IdNavio = Lmm.IdNavio
+    LEFT JOIN cad_Pessoa Ter ON Ter.IdPessoa = Lmm.IdTerminal_Atracacao
+    LEFT JOIN cad_Origem_Destino Ori ON Ori.IdOrigem_Destino = Lms.IdOrigem
+    LEFT JOIN cad_Origem_Destino Des ON Des.IdOrigem_Destino = Lms.IdDestino
+    LEFT JOIN cad_Origem_Destino Fin ON Fin.IdOrigem_Destino = Lms.IdDestino_Final
+    LEFT JOIN cad_Pessoa Cia ON Cia.IdPessoa = Lms.IdCompanhia_Transporte
+    LEFT JOIN mov_Logistica_Maritima_House Lmh ON Lmh.IdLogistica_House = Lhs.IdLogistica_House
+    WHERE Lhs.IdLogistica_House = @house`);
+  const linha = cabeca.recordset[0];
+  if (!linha) return `Processo ${numero} não encontrado.`;
+  const caixas = await pool.request().input("house", sql.Int, house.IdLogistica_House).query(`
+    SELECT Number
+    FROM mov_Logistica_Maritima_Container
+    WHERE IdLogistica_House = @house
+      AND Number IS NOT NULL
+      AND LTRIM(RTRIM(Number)) <> ''`);
+  const notas = await pool.request().input("id", sql.Int, house.IdProjeto_Atividade).query(`
+    SELECT TOP 30
+      A.Data,
+      A.Descricao,
+      R.Nome AS Responsavel
+    FROM mov_Acompanhamento A
+    LEFT JOIN cad_Pessoa R ON R.IdPessoa = A.IdResponsavel
+    WHERE A.IdProjeto_Atividade = @id
+    ORDER BY A.Data DESC`);
+  const texto = (valor) => String(valor ?? "").replace(/\s+/g, " ").trim();
+  const medida = (valor, casas, sufixo) => {
+    if (valor == null || valor === "") return "";
+    const n = Number(valor);
+    if (!Number.isFinite(n)) return texto(valor);
+    const corpo = n.toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas });
+    return sufixo ? `${corpo} ${sufixo}` : corpo;
+  };
+  const fretes = ["COLLECT", "PREPAID", "PREPAID ABROAD", "COLLECT ABROAD", "OUTRO"];
+  const modalidade = (() => {
+    const bruto = linha.Tipo_Frete == null || linha.Tipo_Frete === "" ? linha.Modalidade_Pagamento : linha.Tipo_Frete;
+    const indice = Number(bruto);
+    return Number.isInteger(indice) && fretes[indice] ? fretes[indice] : "";
+  })();
+  const mercadoria = [texto(linha.Mercadoria), texto(linha.Mercadoria_Ingles)].filter(Boolean).join(" / ");
+  const containers = caixas.recordset.map((item) => texto(item.Number)).filter(Boolean).join(", ") || texto(linha.Containers);
+  const transporte = texto(linha.Nvocc) ? `${texto(linha.Nvocc)} (COLOADER)` : texto(linha.Companhia);
+  const hbl = texto(linha.HBL) || texto(linha.Numero_Conhecimento);
+  const hoje = new Date();
+  const dataDocumento = `${String(hoje.getDate()).padStart(2, "0")}/${String(hoje.getMonth() + 1).padStart(2, "0")}/${hoje.getFullYear()}`;
+  const campo = (label, value) => ({ label, value: texto(value) });
+  const emailsCliente = await emailsDoCliente(pool, linha.IdCliente, [linha.Email_Cliente, linha.Email_Pessoal]);
+  const modelo = {
+    modelo: "Followup",
+    numero: texto(linha.Numero_Processo) || numero,
+    cliente: texto(linha.Cliente),
+    emailCliente: emailsCliente[0] || texto(linha.Email_Cliente),
+    emailsCliente,
+    referencia: texto(linha.Referencia_Cliente),
+    situacao: texto(linha.Situacao),
+    origem: lugarFollowup(linha.Origem, linha.Origem_Sigla),
+    destino: lugarFollowup(linha.Destino, linha.Destino_Sigla),
+    navio: texto(linha.Navio),
+    viagem: texto(linha.Viagem_Navio),
+    companhia: texto(linha.Companhia),
+    conhecimento: texto(linha.Numero_Conhecimento),
+    ce: texto(linha.Numero_CE),
+    data: dataDocumento,
+    campos: [
+      campo("Exportador", linha.Exportador),
+      campo("Importador", linha.Importador),
+      campo("HBL", hbl),
+      campo("Navio/Viagem", [texto(linha.Navio), texto(linha.Viagem_Navio)].filter(Boolean).join(" / ")),
+      campo("Origem", linha.Origem),
+      campo("Destino", linha.Destino),
+      campo("CE Mercante", linha.Numero_CE),
+      campo("Destino final", linha.Destino_Final),
+      campo("Prev. de embarque", dataCurta(linha.Data_Previsao_Embarque)),
+      campo("Prev. de desembarque", dataCurta(linha.Data_Previsao_Desembarque)),
+      campo("Data de embarque", dataCurta(linha.Data_Embarque)),
+      campo("Data de desembarque", dataCurta(linha.Data_Desembarque)),
+      campo("Modalidade de frete", modalidade),
+      campo("Mercadoria", mercadoria),
+      campo("Peso bruto", medida(linha.Peso_Bruto, 2, "Kgs")),
+      campo("Qtde de volumes", medida(linha.Quantidade_Volumes, 2, "")),
+      campo("Cubagem", medida(linha.Metros_Cubicos, 2, "m3")),
+      campo("Term. desova", linha.Terminal),
+      campo("Cia de transporte", transporte),
+      campo("Containers", containers),
+      campo("Booking", linha.Numero_Reserva),
+    ],
+    marcos: [
+      marcoFollowup("Embarque", linha.Data_Embarque, linha.Data_Previsao_Embarque),
+      marcoFollowup("Desembarque", linha.Data_Desembarque, linha.Data_Previsao_Desembarque),
+      marcoFollowup("Entrega", linha.Data_Entrega, linha.Data_Previsao_Entrega),
+    ].filter(Boolean),
+    acompanhamentos: notas.recordset.map((item) => ({
+      data: dataCurta(item.Data),
+      responsavel: texto(item.Responsavel),
+      texto: texto(item.Descricao).slice(0, 1800),
+    })),
+    atividades: await atividadesDoProcesso(pool, house.IdProjeto_Atividade).catch(() => []),
+  };
+  return `\`\`\`modelo\n${JSON.stringify(modelo)}\n\`\`\``;
+}
+
+async function followDaAtividade(pool, pedido) {
+  const bloco = await modeloFollowup(pool, { numero: pedido.processo });
+  const miolo = String(bloco).match(/```modelo\s*([\s\S]*?)```/i)?.[1];
+  if (!miolo) return bloco;
+  const modelo = JSON.parse(miolo);
+  const nota = String(pedido.nota ?? "").trim();
+  if (nota) {
+    const hoje = new Date();
+    const p = (n) => String(n).padStart(2, "0");
+    const data = `${p(hoje.getDate())}/${p(hoje.getMonth() + 1)}/${hoje.getFullYear()}`;
+    const atual = Array.isArray(modelo.acompanhamentos) ? modelo.acompanhamentos : [];
+    if (atual[0]?.texto !== nota) modelo.acompanhamentos = [{ data, texto: nota }, ...atual];
+  }
+  if (pedido.assunto) modelo.assunto = String(pedido.assunto).trim();
+  return `\`\`\`modelo\n${JSON.stringify(modelo)}\n\`\`\``;
 }
 
 async function pendencias(pool, args, ctx) {
@@ -591,7 +843,7 @@ async function oQueMudou(pool, args, ctx) {
   if (ctx.acesso?.fazerLog === false && ctx.acesso?.papel !== "admin") {
     return "Este acesso não inclui o histórico de alterações.";
   }
-  const numero = numeroDe(args.numero);
+  const numero = numeroDe(args.numero, ctx);
   const house = await houseDoProcesso(pool, numero);
   if (!house) return `Processo ${numero} não encontrado.`;
   const desde = parseData(args.desde) || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
@@ -635,9 +887,9 @@ async function oQueMudou(pool, args, ctx) {
   return `${titulo}\n${lista(mudancas, "Nenhuma alteração nesse recorte.")}`;
 }
 
-async function propostaProcesso(pool, args, recorte) {
+async function propostaProcesso(pool, args, recorte, ctx) {
   if (recorte?.semComercial) return "Proposta e oferta são informação do comercial.";
-  const numero = numeroDe(args.numero);
+  const numero = numeroDe(args.numero, ctx);
   const r = await pool.request().input("n", sql.VarChar(30), numero).query(`
     SELECT TOP 1
       Lhs.Numero_Processo,
@@ -948,6 +1200,7 @@ async function resumoCarteira(pool, foco, recorte, ctx, quando = "") {
 }
 
 async function processosAbertosCliente(pool, args, recorte, ctx) {
+  if (pedidoFichaCliente([{ role: "user", content: ctx?.pergunta || args.perguntaOriginal || "" }])?.perguntar) return "Qual cliente você quer na ficha?";
   const foco = String(args.foco ?? "");
   if (foco === "abertos" || foco === "sem_proposta" || foco === "sem_movimento") {
     return resumoCarteira(pool, foco, recorte, ctx, args.quando);
@@ -970,7 +1223,7 @@ async function processosAbertosCliente(pool, args, recorte, ctx) {
     if (carteira) req.input("id", sql.Int, carteira);
     return req;
   };
-  const grupos = await pedido().input("t", sql.NVarChar(80), `%${termo}%`).query(`
+  const grupos = await pedido().input("t", sql.NVarChar(82), `%${termo}%`).query(`
     SELECT TOP 5 Nome, Abertos, SemProposta
     FROM (
       SELECT LTRIM(RTRIM(Cli.Nome)) AS Nome,
@@ -990,7 +1243,7 @@ async function processosAbertosCliente(pool, args, recorte, ctx) {
   let semProposta = escolha.tipo === "unico" ? escolha.cliente.semProposta : 0;
   const outros = escolha.tipo === "unico" ? escolha.outros.map((linha) => linha.nome) : [];
   if (!nome) {
-    const achado = await pedido().input("t", sql.NVarChar(80), `%${termo}%`).query(`
+    const achado = await pedido().input("t", sql.NVarChar(82), `%${termo}%`).query(`
       SELECT TOP 1 LTRIM(RTRIM(Cli.Nome)) AS Nome
       FROM mov_Logistica_House Lhs
       JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
@@ -999,7 +1252,7 @@ async function processosAbertosCliente(pool, args, recorte, ctx) {
     nome = String(achado.recordset[0]?.Nome ?? "").trim();
   }
   if (!nome && termoLivre && termoLivre.toLowerCase() !== termo.toLowerCase()) {
-    const amplo = await pedido().input("t", sql.NVarChar(80), `%${termoLivre}%`).query(`
+    const amplo = await pedido().input("t", sql.NVarChar(82), `%${termoLivre}%`).query(`
       SELECT TOP 1 LTRIM(RTRIM(Cli.Nome)) AS Nome
       FROM mov_Logistica_House Lhs
       JOIN cad_Pessoa Cli ON Cli.IdPessoa = Lhs.IdCliente
@@ -1291,7 +1544,7 @@ function textoCampoLivre(linha) {
   return bruto;
 }
 
-async function documentalCe(pool, args) {
+async function documentalCe(pool, args, ctx) {
   const foco = ["fila", "sem_liberacao", "processo", "campos", "pendencias"].includes(args.foco) ? args.foco : "fila";
   const caso = casoDocumental(args.caso || (foco === "pendencias" ? "ambos" : "ce"));
   if (foco === "fila" || foco === "sem_liberacao" || foco === "pendencias") {
@@ -1351,24 +1604,6 @@ async function documentalCe(pool, args) {
             : caso === "ambos"
               ? "Atividades do documental CE e do IM"
               : "Atividades com o documental CE";
-    const cartoes = r.recordset.map((linha) => {
-      const situacao = String(linha.Situacao ?? "").trim();
-      const liberado = situacao.toUpperCase() === "CE LIBERADO";
-      const ce = liberado ? "CE liberado" : situacao ? `CE não liberado · ${situacao}` : "CE sem situação";
-      const previsao = previsaoDe(linha.Previsao_Inicio, linha.Previsao_Termino);
-      const marca = linha.Caso === "IM" ? "IM" : "CE";
-      const idade = idadeDaFila(linha.Dias_Fila, linha.Responsavel);
-      const detalhes = [
-        String(linha.Cliente ?? "").trim(),
-        [`${marca} · ${String(linha.Atividade ?? "Atividade").trim()}`, String(linha.Responsavel ?? "").trim()].filter(Boolean).join(" · "),
-        idade,
-        ce,
-        previsao,
-        foco === "pendencias" ? `Falta: ${faltaDaAtividade(linha, liberado)}` : "",
-      ].filter(Boolean);
-      return `- **${linha.Numero_Processo}**\n${detalhes.map((item) => `  - ${item}`).join("\n")}`;
-    });
-    const texto = `#### ${titulo}\n\nOrdenado pelo que vence primeiro e, em seguida, pelo que está há mais tempo na fila.\n\n${cartoes.length ? cartoes.join("\n") : "Nenhuma atividade nesse recorte."}`;
     const linhas = r.recordset.map((linha) => ({
       Processo: linha.Numero_Processo,
       Cliente: String(linha.Cliente ?? "").trim(),
@@ -1381,10 +1616,10 @@ async function documentalCe(pool, args) {
       Termino: dataCurta(linha.Previsao_Termino),
       Falta: foco === "pendencias" ? faltaDaAtividade(linha, String(linha.Situacao ?? "").trim().toUpperCase() === "CE LIBERADO") : "",
     }));
-    return consultaPronta(texto, comando, linhas, { sem, ano: sufixo });
+    return consultaPronta(textoRegistros(titulo, linhas, "Nenhuma atividade nesse recorte.", "Ordenado pelo que vence primeiro e, em seguida, pelo que está há mais tempo na fila."), comando, linhas, { sem, ano: sufixo });
   }
 
-  const numero = numeroDe(args.numero);
+  const numero = numeroDe(args.numero, ctx);
   const house = await pool.request().input("n", sql.VarChar(30), numero).query(`
     SELECT TOP 1
       Lhs.IdLogistica_House,
@@ -1561,19 +1796,6 @@ async function atividadesPendentes(pool, args, recorte) {
       ${setor === "operacional" ? filtroModalidadeSql(recorte) : ""}
     ORDER BY CASE WHEN Ati.Previsao_Termino IS NULL THEN 1 ELSE 0 END, Ati.Previsao_Termino, Dias_Fila DESC, Lhs.Numero_Processo`;
   const r = await pool.request().input("ano", sql.VarChar(2), sufixo).query(comando);
-  const cartoes = r.recordset.map((linha) => {
-    const previsao = previsaoDe(linha.Previsao_Inicio, linha.Previsao_Termino);
-    const motivo = notaCurta(linha.Motivo) || "Motivo não informado";
-    const detalhes = [
-      String(linha.Cliente ?? "").trim(),
-      [String(linha.Papel ?? "").trim(), String(linha.Atividade ?? "Atividade").trim(), String(linha.Responsavel ?? "").trim()].filter(Boolean).join(" · "),
-      idadeDaFila(linha.Dias_Fila, linha.Responsavel),
-      previsao,
-      `Motivo: ${motivo}`,
-    ].filter(Boolean);
-    return `- **${linha.Numero_Processo}**\n${detalhes.map((item) => `  - ${item}`).join("\n")}`;
-  });
-  const texto = `#### ${titulo}\n\nOrdenado pelo que vence primeiro e, em seguida, pelo que está há mais tempo na fila.\n\n${cartoes.length ? cartoes.join("\n") : `Nenhuma atividade pendente em ${ano}.`}`;
   const linhas = r.recordset.map((linha) => ({
     Processo: linha.Numero_Processo,
     Cliente: String(linha.Cliente ?? "").trim(),
@@ -1585,7 +1807,7 @@ async function atividadesPendentes(pool, args, recorte) {
     Idade: idadeDaFila(linha.Dias_Fila, linha.Responsavel),
     Motivo: notaCurta(linha.Motivo) || "Motivo não informado",
   }));
-  return consultaPronta(texto, comando, linhas, { ano: sufixo });
+  return consultaPronta(textoRegistros(titulo, linhas, `Nenhuma atividade pendente em ${ano}.`, "Ordenado pelo que vence primeiro e, em seguida, pelo que está há mais tempo na fila."), comando, linhas, { ano: sufixo });
 }
 
 function diasDaViagem(previsto, realizado) {
@@ -1636,19 +1858,6 @@ async function divergenciasViagem(pool, args, recorte) {
       AND ABS(DATEDIFF(day, CAST(Lms.Data_Previsao_Desembarque AS date), CAST(Lms.Data_Desembarque AS date))) >= @dias
     ORDER BY ABS(DATEDIFF(day, CAST(Lms.Data_Previsao_Desembarque AS date), CAST(Lms.Data_Desembarque AS date))) DESC, Lhs.Numero_Processo`;
   const r = await pool.request().input("dias", sql.Int, dias).input("ano", sql.VarChar(2), sufixo).query(comando);
-  const cartoes = r.recordset.map((linha) => {
-    const embarque = diasDaViagem(linha.Data_Previsao_Embarque, linha.Data_Embarque);
-    const detalhe = [fraseDaViagem("Desembarque", Number(linha.Dias) || 0), embarque != null && Math.abs(embarque) >= dias ? fraseDaViagem("Embarque", embarque) : ""]
-      .filter(Boolean)
-      .join(" / ");
-    const partes = [
-      String(linha.Cliente ?? "").trim(),
-      `Previsto ${dataCurta(linha.Data_Previsao_Desembarque)} · Real ${dataCurta(linha.Data_Desembarque)}`,
-      detalhe,
-    ].filter(Boolean);
-    return `- **${linha.Numero_Processo}**\n${partes.map((item) => `  - ${item}`).join("\n")}`;
-  });
-  const texto = `#### Divergências de desembarque${faixa}\n\nProcessos${faixa} de ${ano} em que o desembarque real difere ${dias} dias ou mais da previsão.\n\n${cartoes.length ? cartoes.join("\n") : `Nenhuma divergência grande de desembarque${faixa} em ${ano}.`}`;
   const linhas = r.recordset.map((linha) => {
     const embarque = diasDaViagem(linha.Data_Previsao_Embarque, linha.Data_Embarque);
     const detalhe = [fraseDaViagem("Desembarque", Number(linha.Dias) || 0), embarque != null && Math.abs(embarque) >= dias ? fraseDaViagem("Embarque", embarque) : ""]
@@ -1664,7 +1873,7 @@ async function divergenciasViagem(pool, args, recorte) {
       Detalhe: detalhe,
     };
   });
-  return consultaPronta(texto, comando, linhas, { dias, ano: sufixo });
+  return consultaPronta(textoRegistros(`Divergências de desembarque${faixa}`, linhas, `Nenhuma divergência grande de desembarque${faixa} em ${ano}.`, `Processos${faixa} de ${ano} em que o desembarque real difere ${dias} dias ou mais da previsão.`), comando, linhas, { dias, ano: sufixo });
 }
 
 async function filaSetor(pool, recorte) {
@@ -2112,6 +2321,10 @@ function alteracaoDaLinha(campos) {
   return partes.join("; ");
 }
 
+function textoRegistros(titulo, linhas, vazio, nota = "") {
+  return juntar([`## ${titulo}`, nota, linhas.length ? tabelaMarkdown(Object.keys(linhas[0]), linhas) : vazio]);
+}
+
 async function mapaPorIds(pool, ids, comando, coluna) {
   const unicos = [...new Set(ids.filter((id) => id > 0))].slice(0, 80);
   if (!unicos.length) return new Map();
@@ -2247,9 +2460,8 @@ async function monitoramentosAlterados(pool, args, ctx) {
   return consultaPronta(texto, comando, [...doProjeto, ...daAtividade], { dias });
 }
 
-async function taxasProcesso(pool, args) {
-  const numero = String(args.numero ?? "").trim().toUpperCase();
-  if (!numero) throw new Error("Informe o número do processo.");
+async function taxasProcesso(pool, args, ctx) {
+  const numero = numeroDe(args.numero, ctx);
   const house = await houseDoProcesso(pool, numero);
   if (!house) return `Processo ${numero} não encontrado.`;
   const comando = `
@@ -2674,8 +2886,8 @@ async function linhasOpcionais(pool, master, comando) {
   }
 }
 
-async function rotaProcesso(pool, args) {
-  const numero = numeroDe(args.numero);
+async function rotaProcesso(pool, args, ctx) {
+  const numero = numeroDe(args.numero, ctx);
   const house = await houseDoProcesso(pool, numero);
   if (!house) return `Processo ${numero} não encontrado.`;
   const sqlCabeca = `
@@ -2883,7 +3095,280 @@ async function rotaProcesso(pool, args) {
   return pronto;
 }
 
+const MODAL_PROJETO = {
+  IM: {
+    prefixo: "IM",
+    filtro: "L.Modalidade_Maritimo = 1 AND ISNULL(L.Modalidade_Aereo, 0) = 0 AND ISNULL(L.Modalidade_Terrestre, 0) = 0 AND L.Operacao_Importacao = 1 AND ISNULL(L.Operacao_Exportacao, 0) = 0 AND ISNULL(L.Operacao_Nacional, 0) = 0",
+  },
+  EM: {
+    prefixo: "EM",
+    filtro: "L.Modalidade_Maritimo = 1 AND ISNULL(L.Modalidade_Aereo, 0) = 0 AND ISNULL(L.Modalidade_Terrestre, 0) = 0 AND ISNULL(L.Operacao_Importacao, 0) = 0 AND L.Operacao_Exportacao = 1 AND ISNULL(L.Operacao_Nacional, 0) = 0",
+  },
+  IA: {
+    prefixo: "IA",
+    filtro: "ISNULL(L.Modalidade_Maritimo, 0) = 0 AND L.Modalidade_Aereo = 1 AND ISNULL(L.Modalidade_Terrestre, 0) = 0 AND L.Operacao_Importacao = 1 AND ISNULL(L.Operacao_Exportacao, 0) = 0 AND ISNULL(L.Operacao_Nacional, 0) = 0",
+  },
+  EA: {
+    prefixo: "EA",
+    filtro: "ISNULL(L.Modalidade_Maritimo, 0) = 0 AND L.Modalidade_Aereo = 1 AND ISNULL(L.Modalidade_Terrestre, 0) = 0 AND ISNULL(L.Operacao_Importacao, 0) = 0 AND L.Operacao_Exportacao = 1 AND ISNULL(L.Operacao_Nacional, 0) = 0",
+  },
+};
+
+function modalidadeDaConta(ctx) {
+  const valor = String(ctx?.recorte?.modalidade ?? "").trim().toUpperCase();
+  return MODAL_PROJETO[valor] ? valor : "";
+}
+
+function rotuloSituacaoAtividade(valor) {
+  const nomes = { 1: "não iniciada", 2: "em andamento", 3: "em espera", 4: "concluída", 5: "não realizada", 6: "cancelada" };
+  return nomes[Number(valor)] || String(valor ?? "").trim();
+}
+
+function simNao(valor) {
+  if (valor === true || valor === 1 || valor === "1") return "sim";
+  if (valor === false || valor === 0 || valor === "0") return "não";
+  return "";
+}
+
+function camposCitados(xml) {
+  const texto = String(xml ?? "").slice(0, 800);
+  const nomes = new Set();
+  for (const achado of texto.matchAll(/\b([A-Za-z][A-Za-z0-9_]{2,40})\b/g)) {
+    const nome = achado[1];
+    if (/^(Id|xml|true|false|and|or|not|null)$/i.test(nome)) continue;
+    if (nome.includes("_")) nomes.add(nome);
+  }
+  return [...nomes].slice(0, 8);
+}
+
+async function projetoAtivoDaModalidade(pool, modalidade) {
+  const modal = MODAL_PROJETO[modalidade];
+  if (!modal) return null;
+  const r = await pool.request().input("prefixo", sql.VarChar(4), modal.prefixo).query(`
+    SELECT TOP 1 P.IdProjeto_Tarefa, P.Codigo, P.Nome
+    FROM cad_Projeto_Tarefa P
+    JOIN cad_Projeto_Tarefa_Logistica L ON L.IdProjeto_Tarefa = P.IdProjeto_Tarefa
+    WHERE L.Ativo = 1
+      AND P.Codigo NOT IN ('INATIVO', 'TESTE', 'SEGURO')
+      AND ${modal.filtro}
+    GROUP BY P.IdProjeto_Tarefa, P.Codigo, P.Nome
+    ORDER BY (
+      SELECT COUNT(*)
+      FROM mov_Logistica_House H
+      JOIN mov_Projeto_Atividade Pa ON Pa.IdProjeto_Atividade = H.IdProjeto_Atividade
+      WHERE Pa.IdProjeto_Tarefa = P.IdProjeto_Tarefa AND H.Numero_Processo LIKE @prefixo + '%'
+    ) DESC, P.Codigo`);
+  return r.recordset[0] || null;
+}
+
+async function projetosDoPedido(pool, args, ctx) {
+  const daConta = modalidadeDaConta(ctx);
+  const pedida = String(args.modalidade ?? "").trim().toUpperCase();
+  const modalidade = daConta || (MODAL_PROJETO[pedida] ? pedida : "");
+  const numero = String(args.numero ?? "").trim();
+  if (numero) {
+    const processo = numeroDe(numero, ctx);
+    const prefixo = processo.slice(0, 2).toUpperCase();
+    if (daConta && prefixo !== daConta) return { erro: `Sua modalidade é ${daConta}. O processo ${processo} é de ${prefixo}.` };
+    const r = await pool.request().input("n", sql.VarChar(40), processo).query(`
+      SELECT TOP 1 P.IdProjeto_Tarefa, P.Codigo, P.Nome, Lhs.Numero_Processo
+      FROM mov_Logistica_House Lhs
+      JOIN mov_Projeto_Atividade Pa ON Pa.IdProjeto_Atividade = Lhs.IdProjeto_Atividade
+      JOIN cad_Projeto_Tarefa P ON P.IdProjeto_Tarefa = Pa.IdProjeto_Tarefa
+      WHERE Lhs.Numero_Processo = @n`);
+    const linha = r.recordset[0];
+    if (!linha) return { erro: `Não encontrei o projeto de tarefas do processo ${processo}.` };
+    if (/^(INATIVO|TESTE|SEGURO)$/i.test(String(linha.Codigo ?? "").trim()) && MODAL_PROJETO[prefixo]) {
+      const atual = await projetoAtivoDaModalidade(pool, prefixo);
+      if (atual) return { projetos: [{ ...atual, Numero_Processo: processo }], processo, modalidade: prefixo };
+    }
+    return { projetos: [linha], processo, modalidade: MODAL_PROJETO[prefixo] ? prefixo : "" };
+  }
+  if (!modalidade) return { erro: "Diga o modal IM, IA, EM ou EA, ou o número do processo." };
+  const projeto = await projetoAtivoDaModalidade(pool, modalidade);
+  if (!projeto) return { erro: `Não encontrei projeto de tarefas ativo para o modal ${modalidade}.` };
+  return { projetos: [projeto], modalidade };
+}
+
+async function projetoTarefas(pool, args, ctx) {
+  if (!ehAdmin(ctx)) return "A aba de atividades e os comandos do bot são só do administrador.";
+  const achado = await projetosDoPedido(pool, args, ctx);
+  if (achado.erro) return achado.erro;
+  const projetos = [];
+  for (const projeto of achado.projetos) {
+    const tarefas = await pool.request().input("id", sql.Int, Number(projeto.IdProjeto_Tarefa)).query(`
+      SELECT Tar.IdTarefa, Tar.Codigo, Tar.Descricao, Prec.Codigo AS Precedente, Prec.Descricao AS Precedente_Nome
+      FROM cad_Tarefa Tar
+      LEFT JOIN cad_Tarefa Prec ON Prec.IdTarefa = Tar.IdTarefa_Precedente
+      WHERE Tar.IdProjeto_Tarefa = @id
+        AND ISNULL(Tar.Invisivel_Gerencial, 0) = 0
+        AND Tar.Descricao NOT LIKE '%INATIV%'
+      ORDER BY Tar.Codigo, Tar.IdTarefa`);
+    projetos.push({
+      codigo: String(projeto.Codigo ?? "").trim(), nome: String(projeto.Nome ?? "").trim(),
+      modalidade: achado.modalidade || "", processo: achado.processo || "",
+      tarefas: tarefas.recordset.map((linha) => ({
+        id: String(linha.IdTarefa), codigo: String(linha.Codigo ?? "").trim(), nome: String(linha.Descricao ?? "").trim(),
+        precedente: String(linha.Precedente ?? "").trim() ? { codigo: String(linha.Precedente).trim(), nome: String(linha.Precedente_Nome ?? "").trim() } : null,
+      })),
+    });
+  }
+  return `\`\`\`tarefas\n${JSON.stringify({ projetos })}\n\`\`\``;
+}
+
+async function monitoresCampo(pool, args, ctx) {
+  if (!ehAdmin(ctx)) return "A aba de atividades e os comandos do bot são só do administrador.";
+  const achado = await projetosDoPedido(pool, args, ctx);
+  if (achado.erro) return achado.erro;
+  const blocos = [];
+  for (const projeto of achado.projetos) {
+    const id = Number(projeto.IdProjeto_Tarefa);
+    const monitores = await pool.request().input("id", sql.Int, id).query(`
+      SELECT TOP 40 Descricao, Classe, Ao_Inserir, Ao_Excluir, Ao_Atualizar, Geracao_Atividades, Observacao,
+             LEFT(CAST(Dados_Registro AS nvarchar(800)), 800) AS Xml
+      FROM cad_Projeto_Tarefa_Monitor
+      WHERE IdProjeto_Tarefa = @id AND Ativo = 1
+      ORDER BY Descricao`);
+    const dasTarefas = await pool.request().input("id", sql.Int, id).query(`
+      SELECT TOP 40 Tar.Codigo, Tar.Descricao AS Atividade, M.Geracao_Atividade
+      FROM cad_Tarefa_Monitor M
+      JOIN cad_Tarefa Tar ON Tar.IdTarefa = M.IdTarefa
+      WHERE Tar.IdProjeto_Tarefa = @id
+      ORDER BY Tar.Codigo`);
+    const doProjeto = monitores.recordset.map((linha) => {
+      const quando = [
+        simNao(linha.Ao_Inserir) === "sim" ? "ao incluir" : "",
+        simNao(linha.Ao_Atualizar) === "sim" ? "ao atualizar" : "",
+        simNao(linha.Ao_Excluir) === "sim" ? "ao excluir" : "",
+      ].filter(Boolean).join(", ");
+      const campos = camposCitados(linha.Xml);
+      const gera = simNao(linha.Geracao_Atividades) === "sim" ? " Gera atividade." : "";
+      return `- ${String(linha.Descricao ?? "").trim() || "Monitor"}${linha.Classe ? ` (${String(linha.Classe).trim()})` : ""}${quando ? `. Dispara ${quando}` : ""}.${gera}${campos.length ? ` Campos: ${campos.join(", ")}.` : ""}`;
+    });
+    const dasAtividades = dasTarefas.recordset.map((linha) => {
+      const nome = [String(linha.Codigo ?? "").trim(), String(linha.Atividade ?? "").trim()].filter(Boolean).join(" ");
+      const gera = simNao(linha.Geracao_Atividade) === "sim" ? " Gera atividade." : "";
+      return `- ${nome}.${gera}`;
+    });
+    const titulo = [String(projeto.Codigo ?? "").trim(), String(projeto.Nome ?? "").trim()].filter(Boolean).join(" ");
+    blocos.push(
+      `Monitoramentos de campo do projeto ${titulo}\n\n${doProjeto.join("\n") || "Nenhum monitoramento ativo neste projeto."}` +
+        (dasAtividades.length ? `\n\nMonitor da atividade\n\n${dasAtividades.join("\n")}` : ""),
+    );
+  }
+  return blocos.join("\n\n");
+}
+
+async function gatilhosAtividade(pool, args, ctx) {
+  if (!ehAdmin(ctx)) return "A aba de atividades e os comandos do bot são só do administrador.";
+  const achado = await projetosDoPedido(pool, args, ctx);
+  if (achado.erro) return achado.erro;
+  const projetos = [];
+  for (const projeto of achado.projetos) {
+    const gatilhos = await pool.request().input("id", sql.Int, Number(projeto.IdProjeto_Tarefa)).query(`
+      SELECT G.IdTarefa_Gatilho_Situacao, Tar.Codigo, Tar.Descricao AS Atividade, G.Situacao_Atual, G.Situacao_Atualizar,
+             G.Gerar_Atividade, G.Observacao, Alvo.Codigo AS Codigo_Alvo, Alvo.Descricao AS Atividade_Alvo
+      FROM cad_Tarefa_Gatilho_Situacao G
+      JOIN cad_Tarefa Tar ON Tar.IdTarefa = G.IdTarefa
+      LEFT JOIN cad_Tarefa Alvo ON Alvo.IdTarefa = G.IdTarefa_Atualizar
+      WHERE Tar.IdProjeto_Tarefa = @id
+      ORDER BY Tar.Codigo, G.Situacao_Atual, Alvo.Codigo, G.IdTarefa_Gatilho_Situacao`);
+    projetos.push({
+      codigo: String(projeto.Codigo ?? "").trim(), nome: String(projeto.Nome ?? "").trim(),
+      gatilhos: gatilhos.recordset.map((linha) => ({
+        id: String(linha.IdTarefa_Gatilho_Situacao),
+        origem: { codigo: String(linha.Codigo ?? "").trim(), nome: String(linha.Atividade ?? "").trim() },
+        evento: rotuloSituacaoAtividade(linha.Situacao_Atual),
+        destino: { codigo: String(linha.Codigo_Alvo ?? "").trim(), nome: String(linha.Atividade_Alvo ?? "").trim() || "Atividade ligada" },
+        situacao: rotuloSituacaoAtividade(linha.Situacao_Atualizar),
+        geraAtividade: simNao(linha.Gerar_Atividade) === "sim",
+        observacao: String(linha.Observacao ?? "").trim(),
+      })),
+    });
+  }
+  return `\`\`\`gatilhos\n${JSON.stringify({ projetos })}\n\`\`\``;
+}
+
+export async function executarComandoBot(pool, args, ctx) {
+  if (!ehAdmin(ctx)) return "A aba de atividades e os comandos do bot são só do administrador.";
+  const acao = String(args.acao ?? "").trim().toLowerCase();
+  const botaoPedido = String(args.botao ?? "").trim();
+  const acaoNaFaixa = Boolean(botaoPedido) || !["ler", "preencher", ""].includes(acao);
+  if (!acao && !botaoPedido) throw new Error("Diga a ação: ler, preencher, ou o botão da faixa de Ações.");
+  const numero = String(args.numero ?? "").trim();
+  const codigo = String(args.codigo ?? "").trim();
+  const campo = String(args.campo ?? "").trim();
+  const valor = String(args.valor ?? "").trim();
+  const caminho = String(args.caminho ?? "").trim();
+  if (!numero) throw new Error("Diga o número do processo.");
+  if (acaoNaFaixa && acao !== "preencher" && !codigo) throw new Error("Diga o código da atividade.");
+  if (acao === "preencher" && !campo) throw new Error("Diga o campo que o bot deve procurar na tela.");
+  if (acao === "preencher" && !valor) return `Diga o valor que o bot deve digitar em ${campo} no processo ${numero}. Ele procura esse campo na tela do HeadCargo.`;
+  let resultado = "";
+  if (acao === "preencher") {
+    resultado = await textoDoPreenchimento(pool, { numero, campo, valor });
+  } else {
+    const botao = (botaoPedido || (acao === "ler" || acao === "preencher" ? "" : acao)).toUpperCase();
+    resultado = String(await andamentoAtividade(pool, { numero, codigo, requisitos: args.requisitos, concluir: botao === "CONCLUIR", restaurar: botao === "RESTAURAR", botao, caminho }, ctx));
+  }
+  registrarComandoBot({ email: ctx?.email, acao: botaoPedido || acao, numero, codigo, campo, valor: acaoNaFaixa ? caminho : valor, resultado });
+  return resultado;
+}
+
+function cartaoTarefa(tarefa) {
+  return { texto: textoTarefa(tarefa), tarefaId: tarefa.id, tarefaEstado: tarefa.estado, sql: "", linhas: [] };
+}
+
+async function comandoBot(pool, args, ctx) {
+  if (!ehAdmin(ctx)) throw new Error("Os comandos do bot são só do administrador.");
+  if (args.acao === "ler") return executarComandoBot(pool, args, ctx);
+  const motor = operacoesBot();
+  const acao = String(args.botao || args.acao).toLowerCase();
+  const conhecida = ["preencher", "concluir", "restaurar", "cancelar", "iniciar", "encerrar"].includes(acao);
+  const tarefa = motor.criar(ctx.email, { titulo: `${args.acao || args.botao} no HeadCargo`, etapas: [{ ...args, acao: conhecida ? acao : "botao", botao: conhecida ? "" : String(args.botao || args.acao) }] });
+  return cartaoTarefa(motor.controlar(tarefa.id, ctx.email, "executar"));
+}
+
+async function ferramentasOperacionais(pool, nome, dados, ctx) {
+  if (!ehAdmin(ctx)) throw new Error("Os comandos do bot são restritos ao administrador.");
+  const motor = operacoesBot();
+  if (Array.isArray(dados.valores)) dados = { ...dados, valores: Object.fromEntries(dados.valores.map((v) => [String(v.campo), String(v.valor ?? "")])) };
+  if (nome === "painel_excecoes") return JSON.stringify(await painelExcecoes(pool, motor, ctx.email));
+  if (nome === "regras_bot") {
+    if (dados.acao === "validar") return JSON.stringify(motor.salvarRegra(ctx.email, dados));
+    if (dados.acao === "remover") return JSON.stringify({ removida: motor.removerRegra(ctx.email, dados.id) });
+    return JSON.stringify(motor.regras(ctx.email));
+  }
+  if (nome === "rotina_bot") {
+    if (dados.acao === "salvar") return JSON.stringify(motor.salvarRotina(ctx.email, dados));
+    if (dados.acao === "prever") return cartaoTarefa(motor.daRotina(ctx.email, dados));
+    return JSON.stringify(motor.rotinas(ctx.email));
+  }
+  if (dados.acao === "criar") {
+    const t = motor.criar(ctx.email, dados);
+    return cartaoTarefa(dados.executar === true ? motor.controlar(t.id, ctx.email, "executar") : t);
+  }
+  if (["executar", "retomar", "pausar", "cancelar"].includes(dados.acao)) return cartaoTarefa(motor.controlar(dados.id, ctx.email, dados.acao, dados));
+  return dados.id ? cartaoTarefa(motor.obter(dados.id, ctx.email)) : JSON.stringify(motor.listar(ctx.email).map((t) => ({ id: t.id, estado: t.estado, texto: textoTarefa(t) }))) || "Nenhuma tarefa nesta conta.";
+}
+
 export function ferramentaDaVisao(nome, setor) {
+  if (["tarefa_bot", "rotina_bot", "painel_excecoes", "regras_bot"].includes(nome)) return true;
+  if (setor === "atividades") {
+    return [
+      "projeto_tarefas",
+      "monitores_campo",
+      "gatilhos_atividade",
+      "comando_bot",
+      "aprendizado_bot",
+      "andamento_atividade",
+      "explicar_campo_livre",
+      "resumo_processo",
+      "localizar_processo",
+      "buscar_tabelas",
+      "listar_colunas",
+    ].includes(nome);
+  }
   if (nome === "passagens_aereas") return setor === "financeiro" || setor === "gerencia";
   if (setor === "gerencia") return !["painel_ti", "log_recente", "monitoramentos_alterados"].includes(nome);
   if (nome === "painel_financeiro" || nome === "taxas_processo") return setor === "financeiro";
@@ -2913,7 +3398,7 @@ export function ferramentaDaVisao(nome, setor) {
   }
   if (nome === "painel_ti" || nome === "log_recente" || nome === "monitoramentos_alterados") return setor === "ti";
   if (setor === "ti") {
-    return !["fila_setor", "proposta_processo", "propostas_periodo", "comissao_periodo", "processos_parados", "documental_ce", "atividades_pendentes", "divergencias_viagem"].includes(nome);
+    return !["fila_setor", "proposta_processo", "propostas_periodo", "montar_proposta", "comissao_periodo", "processos_parados", "documental_ce", "atividades_pendentes", "divergencias_viagem"].includes(nome);
   }
   if (nome === "fila_setor") return setor === "admin";
   if (nome === "prazos") return true;
@@ -2921,19 +3406,108 @@ export function ferramentaDaVisao(nome, setor) {
   if (nome === "documental_ce") return setor === "documental" || setor === "admin";
   if (nome === "atividades_pendentes") return ["operacional", "inside", "comercial", "admin"].includes(setor);
   if (nome === "proposta_processo" || nome === "propostas_periodo" || nome === "comissao_periodo") return setor !== "operacional" && setor !== "documental";
+  if (nome === "montar_proposta") return setor === "comercial" || setor === "inside" || setor === "gerencia";
   return true;
 }
 
-async function andamentoAtividade(pool, args) {
+function mesmoCodigoAtividade(valor, pedido) {
+  const limpar = (item) => String(item ?? "").trim().replace(/^0+(?=\d)/, "");
+  const esperado = limpar(pedido);
+  return Boolean(esperado) && limpar(valor) === esperado;
+}
+
+function escolherParaConcluir(linhas, codigo) {
+  let escolhidas = linhas;
+  if (codigo) {
+    const peloCodigo = linhas.filter((linha) => mesmoCodigoAtividade(linha.Codigo, codigo));
+    if (peloCodigo.length) escolhidas = peloCodigo;
+  }
+  const abertas = escolhidas.filter((linha) => ![4, 5, 6].includes(Number(linha.Situacao)));
+  if (abertas.length === 1) return { unica: abertas[0] };
+  if (escolhidas.length === 1) return { unica: escolhidas[0] };
+  return { varias: abertas.length ? abertas : escolhidas };
+}
+
+function atividadeInativa(linha) {
+  return /inativ/i.test(`${linha.Codigo ?? ""} ${linha.Atividade ?? ""}`);
+}
+
+function escolherParaRestaurar(linhas, codigo) {
+  let escolhidas = linhas;
+  if (codigo) {
+    const peloCodigo = linhas.filter((linha) => mesmoCodigoAtividade(linha.Codigo, codigo));
+    if (peloCodigo.length) escolhidas = peloCodigo;
+  }
+  const alvo = escolhidas.filter((linha) => [4, 5, 6].includes(Number(linha.Situacao)) || atividadeInativa(linha));
+  const lista = alvo.length ? alvo : escolhidas;
+  if (lista.length === 1) return { unica: lista[0] };
+  return { varias: lista };
+}
+
+async function textoProximaAtividade(pool, numero, codigo) {
+  const pedido = String(codigo ?? "").trim();
+  if (!pedido) return "";
+  const r = await pool.request().input("n", sql.VarChar(40), numero).input("c", sql.VarChar(25), pedido).query(`
+    SELECT TOP 3 Tar.Codigo, Tar.Descricao
+    FROM mov_Logistica_House Lhs
+    JOIN mov_Projeto_Atividade Pa ON Pa.IdProjeto_Atividade = Lhs.IdProjeto_Atividade
+    JOIN cad_Tarefa Atual ON Atual.IdProjeto_Tarefa = Pa.IdProjeto_Tarefa
+      AND CAST(Atual.Codigo AS varchar(60)) = @c
+    JOIN cad_Tarefa Tar ON Tar.IdTarefa_Precedente = Atual.IdTarefa
+    WHERE Lhs.Numero_Processo = @n
+    ORDER BY Tar.Codigo`);
+  const nomes = r.recordset
+    .map((linha) => [String(linha.Codigo ?? "").trim(), String(linha.Descricao ?? "").trim()].filter(Boolean).join(" "))
+    .filter(Boolean);
+  if (!nomes.length) return "";
+  return ` A próxima do fluxo é ${nomes.join("; ")}. Diga se quer seguir.`;
+}
+
+function semConfirmacaoDoBot(texto) {
+  return /não confirmou/i.test(String(texto ?? ""));
+}
+
+async function estadoAtividade(pool, id) {
+  const conferido = await pool.request().input("id", sql.Int, Number(id)).query(`
+    SELECT TOP 1 Situacao, Data_Termino, Data_Inicio FROM mov_Atividade WHERE IdAtividade = @id`);
+  const linha = conferido.recordset[0];
+  if (!linha) return null;
+  return { situacao: Number(linha.Situacao), termino: linha.Data_Termino || null, inicio: linha.Data_Inicio || null };
+}
+
+async function esperarEstado(pool, id, pronto) {
+  let atual = null;
+  for (let tentativa = 0; tentativa < 8; tentativa++) {
+    atual = await estadoAtividade(pool, id);
+    if (atual && pronto(atual)) return atual;
+    await new Promise((resolver) => setTimeout(resolver, 700));
+  }
+  return atual;
+}
+
+async function andamentoAtividade(pool, args, ctx) {
   const bruto = String(args.numero ?? "");
+  const pedidoTeste = numeroParaConsulta(bruto, ehAdmin(ctx));
+  if (!pedidoTeste.ok) throw new Error(pedidoTeste.erro);
   const citado = bruto.match(/\b([A-Za-z]{1,4}\d{2,6}-\d{2})\b/i);
-  const numero = (citado?.[1] ?? bruto).replace(/\s+/g, " ").trim().slice(0, 40).toUpperCase();
-  const codigo = String(args.codigo ?? "").trim().slice(0, 60);
+  const numero = pedidoTeste.numero || (citado?.[1] ?? bruto).replace(/\s+/g, " ").trim().slice(0, 40).toUpperCase();
+  const pedido = limparNomeAtividade(args.codigo);
+  const partes = partesDoNomeAtividade(pedido);
+  const codigo = partes.codigo;
+  const descricao = partes.descricao.replace(/[%_[\]]/g, "").slice(0, 70);
   const pendentes = args.pendentes === true || args.pendentes === "true" || args.pendentes === 1;
+  const botao = String(args.botao ?? "").trim().toUpperCase();
+  const concluir = args.concluir === true || args.concluir === "true" || args.concluir === 1 || botao === "CONCLUIR";
+  const restaurar = args.restaurar === true || args.restaurar === "true" || args.restaurar === 1 || botao === "RESTAURAR";
+  const outroBotao = botao && botao !== "CONCLUIR" && botao !== "RESTAURAR" ? botao : "";
   if (!numero) throw new Error("Informe o número do processo, como IM5328-26.");
+  if (concluir && !codigo && !descricao) throw new Error("Diga o nome da atividade que deve ser concluída.");
+  if (restaurar && !codigo && !descricao) throw new Error("Diga o nome da atividade que deve ser restaurada.");
+  if (outroBotao && !codigo && !descricao) throw new Error(`Diga o nome da atividade para ${outroBotao.toLowerCase()}.`);
   const limite = pendentes ? 40 : 5;
-  const r = await pool.request().input("n", sql.VarChar(40), numero).input("c", sql.VarChar(60), codigo).query(`
+  const r = await pool.request().input("n", sql.VarChar(40), numero).input("c", sql.VarChar(25), codigo).input("d", sql.VarChar(80), descricao ? `%${descricao}%` : "").query(`
     SELECT TOP ${limite}
+      Ati.IdAtividade,
       Lhs.Numero_Processo,
       Tar.Codigo,
       Tar.Descricao AS Atividade,
@@ -2959,15 +3533,154 @@ async function andamentoAtividade(pool, args) {
       ORDER BY A.Data DESC
     ) Aco
     WHERE Lhs.Numero_Processo = @n
-      AND (@c = '' OR CAST(Tar.Codigo AS varchar(60)) = @c OR Tar.Descricao LIKE '%' + @c + '%')
+      AND (
+        (@c = '' AND @d = '')
+        OR (@c <> '' AND CAST(Tar.Codigo AS varchar(60)) = @c)
+        OR (@d <> '' AND Tar.Descricao LIKE @d)
+      )
       ${pendentes ? "AND Ati.Data_Termino IS NULL AND Ati.Situacao NOT IN (4, 5, 6)" : ""}
-    ORDER BY CASE WHEN Ati.Situacao IN (4, 5, 6) THEN 1 ELSE 0 END, CASE WHEN Ati.Previsao_Termino IS NULL THEN 1 ELSE 0 END, Ati.Previsao_Termino`);
+    ORDER BY CASE WHEN @c <> '' AND CAST(Tar.Codigo AS varchar(60)) = @c THEN 0 ELSE 1 END, CASE WHEN Ati.Situacao IN (4, 5, 6) THEN 1 ELSE 0 END, CASE WHEN Ati.Previsao_Termino IS NULL THEN 1 ELSE 0 END, Ati.Previsao_Termino`);
   const linhas = r.recordset;
   if (!linhas.length) {
     if (pendentes) return `Nenhuma atividade pendente no processo ${numero}.`;
-    return codigo
-      ? `Não encontrei a atividade ${codigo} no processo ${numero}.`
+    const alvo = descricao || codigo;
+    return alvo
+      ? `Não encontrei a atividade ${alvo} no processo ${numero}.`
       : `Não encontrei atividades no processo ${numero}.`;
+  }
+  if (args.requisitos && !concluir && !restaurar && !outroBotao) {
+    if (linhas.length !== 1) return `Encontrei mais de uma atividade no processo ${numero}. Informe o código exato da atividade para consultar o que falta.`;
+    const alvo = linhas[0];
+    let validados = [];
+    try { validados = operacoesBot().regras(ctx.email).filter((r) => r.codigo === String(alvo.Codigo).trim() && (!r.processo || r.processo.toLowerCase() === numero.toLowerCase())).map((r) => r.campo); } catch { /* não há regras validadas disponíveis */ }
+    return requisitosAtividade(pool, { numero, atividade: alvo, requisitos: [...exigenciasDoProcesso(numero, alvo.Codigo), ...validados] });
+  }
+  if (concluir) {
+    const escolha = escolherParaConcluir(linhas, codigo);
+    if (!escolha.unica) {
+      const nomes = escolha.varias.map((linha) => {
+        const cod = String(linha.Codigo ?? "").trim();
+        const atividade = String(linha.Atividade ?? "").trim();
+        const quando = dataCurta(linha.Previsao_Termino);
+        return [cod && atividade ? `${cod} ${atividade}` : atividade || cod, quando].filter(Boolean).join(" ");
+      });
+      return `Encontrei ${escolha.varias.length} atividades iguais no processo ${numero}: ${nomes.join("; ")}. Diga o código da que deve ser concluída.`;
+    }
+    const unica = escolha.unica;
+    const nome = String(unica.Atividade ?? "").trim();
+    const situacao = Number(unica.Situacao);
+    if (situacao === 4) return `A atividade ${nome} do processo ${numero} já está concluída.`;
+    if (!pedidoTeste.numero) return `A atividade ${nome} é do processo ${numero}. Só concluo atividade de processo teste, como IM2099-25 teste.`;
+    const antes = { situacao: Number(unica.Situacao), termino: unica.Data_Termino || null };
+    const clique = await concluirAtividadeNoHeadCargo({
+      numero: pedidoTeste.numero,
+      nome,
+      codigo: String(unica.Codigo ?? codigo ?? "").trim(),
+      caminho: String(args.caminho ?? "").trim(),
+      confirmar: unica.IdAtividade ? async () => {
+        const atual = await estadoAtividade(pool, unica.IdAtividade);
+        return Boolean(atual && (atual.situacao === 4 || (atual.termino && !antes.termino)));
+      } : undefined,
+    });
+    let estado = antes;
+    if (unica.IdAtividade && (clique.ok || semConfirmacaoDoBot(clique.texto))) {
+      estado = (await esperarEstado(
+        pool,
+        unica.IdAtividade,
+        (item) => item.situacao === 4 || (item.termino && !antes.termino),
+      )) || antes;
+    }
+    if (estado.situacao === 4 || (estado.termino && !antes.termino)) {
+      let seguinte = "";
+      if (estado.situacao === 4) {
+        try {
+          seguinte = await textoProximaAtividade(pool, numero, String(unica.Codigo ?? codigo ?? "").trim());
+        } catch {
+          seguinte = "";
+        }
+      }
+      return `Concluí a atividade ${nome} do processo ${numero} no HeadCargo.${seguinte}`;
+    }
+    if (!clique.ok) {
+      const campos = camposPedidos(clique.texto);
+      if (campos.length) {
+        guardarExigencia({ codigo: String(unica.Codigo ?? codigo ?? ""), nome, numero, campos });
+        return `${clique.texto} Diga o valor de cada campo, na mesma ordem, para eu preencher e tentar concluir de novo.`;
+      }
+      return clique.texto;
+    }
+    return `Persistência não confirmada: o clique foi enviado para ${nome} no processo ${numero}, mas a consulta ainda não confirmou a conclusão. Revisão necessária antes de repetir.`;
+  }
+  if (restaurar) {
+    const escolha = escolherParaRestaurar(linhas, codigo);
+    if (!escolha.unica) {
+      const nomes = escolha.varias.map((linha) => {
+        const cod = String(linha.Codigo ?? "").trim();
+        const atividade = String(linha.Atividade ?? "").trim();
+        return cod && atividade ? `${cod} ${atividade}` : atividade || cod;
+      });
+      return `Encontrei ${escolha.varias.length} atividades no processo ${numero}: ${nomes.join("; ")}. Diga o código da que deve ser restaurada.`;
+    }
+    const unica = escolha.unica;
+    const nome = String(unica.Atividade ?? "").trim();
+    if (!pedidoTeste.numero) return `A atividade ${nome} é do processo ${numero}. Só restauro atividade de processo teste, como IM2099-25 teste.`;
+    const clique = await concluirAtividadeNoHeadCargo({
+      numero: pedidoTeste.numero,
+      nome,
+      codigo: String(unica.Codigo ?? codigo ?? "").trim(),
+      caminho: String(args.caminho ?? "").trim(),
+      acao: "restaurar",
+    });
+    const antes = { situacao: Number(unica.Situacao), termino: unica.Data_Termino || null };
+    const abriu = (item) => {
+      const eraFechada = [4, 5, 6].includes(antes.situacao) || Boolean(antes.termino);
+      if (!eraFechada) return false;
+      return ![4, 5, 6].includes(item.situacao) || (antes.termino && !item.termino);
+    };
+    let estado = antes;
+    if (unica.IdAtividade && (clique.ok || semConfirmacaoDoBot(clique.texto))) {
+      estado = (await esperarEstado(pool, unica.IdAtividade, abriu)) || antes;
+    }
+    if (abriu(estado)) return `Restaurei a atividade ${nome} do processo ${numero} no HeadCargo.`;
+    if (!clique.ok) return clique.texto;
+    return `Persistência não confirmada: a restauração de ${nome} ainda não foi confirmada na consulta. Revisão necessária antes de repetir.`;
+  }
+  if (outroBotao) {
+    const escolha = escolherParaConcluir(linhas, codigo);
+    if (!escolha.unica) {
+      const nomes = escolha.varias.map((linha) => {
+        const cod = String(linha.Codigo ?? "").trim();
+        const atividade = String(linha.Atividade ?? "").trim();
+        return cod && atividade ? `${cod} ${atividade}` : atividade || cod;
+      });
+      return `Encontrei ${escolha.varias.length} atividades no processo ${numero}: ${nomes.join("; ")}. Diga o código da que deve receber ${outroBotao.toLowerCase()}.`;
+    }
+    const unica = escolha.unica;
+    const nome = String(unica.Atividade ?? "").trim();
+    if (!pedidoTeste.numero) return `A atividade ${nome} é do processo ${numero}. Só clico em botão de atividade de processo teste, como IM2099-25 teste.`;
+    const clique = await concluirAtividadeNoHeadCargo({
+      numero: pedidoTeste.numero,
+      nome,
+      codigo: String(unica.Codigo ?? codigo ?? "").trim(),
+      caminho: String(args.caminho ?? "").trim(),
+      botao: outroBotao,
+    });
+    const antes = { situacao: Number(unica.Situacao), termino: unica.Data_Termino || null, inicio: unica.Data_Inicio || null };
+    const efeito = (item) => {
+      if (outroBotao === "CANCELAR") return item.situacao === 6 || item.situacao === 5;
+      if (outroBotao === "INICIAR") return item.situacao === 2 || Boolean(item.inicio);
+      return false;
+    };
+    const conhece = ["CANCELAR", "INICIAR"].includes(outroBotao);
+    let estado = antes;
+    if (conhece && unica.IdAtividade && (clique.ok || semConfirmacaoDoBot(clique.texto))) {
+      estado = (await esperarEstado(pool, unica.IdAtividade, efeito)) || antes;
+    }
+    const rotulo = outroBotao.charAt(0) + outroBotao.slice(1).toLowerCase();
+    const feito = outroBotao === "CANCELAR" ? `Cancelei a atividade ${nome}` : outroBotao === "ENCERRAR" ? `Encerrei a atividade ${nome}` : outroBotao === "INICIAR" ? `Iniciei a atividade ${nome}` : `Cliquei em ${rotulo} na atividade ${nome}`;
+    if (conhece && efeito(estado)) return `${feito} do processo ${numero} no HeadCargo.`;
+    if (!clique.ok) return clique.texto;
+    return `Persistência não confirmada: clique em ${rotulo} enviado para ${nome}. Revisão necessária antes de repetir.`;
   }
   const blocos = linhas.map((linha) => {
     const nome = [String(linha.Codigo ?? "").trim(), String(linha.Atividade ?? "").trim()].filter(Boolean).join(" — ") || "Atividade";
@@ -2977,9 +3690,9 @@ async function andamentoAtividade(pool, args) {
       situacao === 4
         ? `Concluída${quando ? ` em ${quando}` : ""}`
         : situacao === 5
-          ? `Cancelada${quando ? ` em ${quando}` : ""}`
+          ? `Não realizada${quando ? ` em ${quando}` : ""}`
           : situacao === 6
-            ? `Encerrada${quando ? ` em ${quando}` : ""}`
+            ? `Cancelada${quando ? ` em ${quando}` : ""}`
             : situacao === 2 || linha.Data_Inicio
               ? `Em andamento${linha.Data_Inicio ? ` desde ${dataCurta(linha.Data_Inicio)}` : ""}`
               : situacao === 3
@@ -3015,9 +3728,9 @@ function visaoComDocumental(recorte) {
   return ["documental", "operacional", "tudo", "gerencia"].includes(String(recorte?.visao || ""));
 }
 
-async function fichaDoProcesso(pool, args, recorte) {
-  const numero = numeroDe(args.numero);
-  const resumo = await resumoProcesso(pool, { numero }, recorte);
+async function fichaDoProcesso(pool, args, recorte, ctx) {
+  const numero = numeroDe(args.numero, ctx);
+  const resumo = await resumoProcesso(pool, { numero }, recorte, ctx);
   if (/não encontrado/.test(String(resumo))) return resumo;
   const resumoTexto = String(resumo).trim();
   const partes = [cabecalhoDaFicha(resumoTexto), resumoTexto].filter(Boolean);
@@ -3053,6 +3766,8 @@ async function meuDia(pool, _args, _recorte, ctx) {
   }
   const r = await pool.request().input("id", sql.Int, pessoa.IdPessoa).query(`
     SELECT
+      Ati.IdAtividade,
+      Tar.Codigo,
       Tar.Descricao AS Atividade,
       Lhs.Numero_Processo,
       Cli.Nome AS Cliente,
@@ -3079,33 +3794,57 @@ export async function executarFuncao(pool, nome, args, ctx) {
   if (!FUNCOES.has(nome)) throw new Error("Função desconhecida.");
   const dados = args && typeof args === "object" ? args : {};
   const recorte = ctx.recorte ?? {};
-  if (nome === "resumo_processo") return embalagem(await resumoProcesso(pool, dados, recorte));
-  if (nome === "ficha_processo") return embalagem(await fichaDoProcesso(pool, dados, recorte));
+  if (consultaDeAtividade(ctx.pergunta) && ["comando_bot", "andamento_atividade"].includes(nome)) {
+    return embalagem(await andamentoAtividade(pool, { numero: dados.numero, codigo: dados.codigo, pendentes: dados.pendentes, requisitos: dados.requisitos === true || /o que falta|o que precisa|requisit|obrigat/i.test(ctx.pergunta) }, ctx));
+  }
+  if (consultaDeAtividade(ctx.pergunta) && nome === "tarefa_bot" && (dados.executar === true || ["executar", "retomar"].includes(dados.acao))) throw new Error("O pedido é uma consulta. Não execute alterações para descobrir o que falta na atividade.");
+  if (["tarefa_bot", "rotina_bot", "painel_excecoes", "regras_bot"].includes(nome)) return embalagem(await ferramentasOperacionais(pool, nome, dados, ctx));
+  if (nome === "resumo_processo") return embalagem(await resumoProcesso(pool, dados, recorte, ctx));
+  if (nome === "ficha_processo") return embalagem(await fichaDoProcesso(pool, dados, recorte, ctx));
   if (nome === "meu_dia") return embalagem(await meuDia(pool, dados, recorte, ctx));
   if (nome === "buscar_processos") return embalagem(await buscarProcessos(pool, dados, recorte));
   if (nome === "processos_abertos") return embalagem(await processosAbertos(pool, dados, recorte));
-  if (nome === "acompanhamentos_processo") return embalagem(await acompanhamentosProcesso(pool, dados));
+  if (nome === "acompanhamentos_processo") return embalagem(await acompanhamentosProcesso(pool, dados, ctx));
+  if (nome === "modelo_followup") return embalagem(await modeloFollowup(pool, dados, ctx));
+  if (nome === "email_atividade") {
+    if (String(dados.numero ?? "").trim()) dados.numero = numeroDe(dados.numero, ctx);
+    const gerado = await emailDaAtividade(pool, dados);
+    if (gerado && typeof gerado === "object" && gerado.follow) return embalagem(await followDaAtividade(pool, gerado));
+    return embalagem(gerado);
+  }
   if (nome === "pendencias") return embalagem(await pendencias(pool, dados, ctx));
   if (nome === "o_que_mudou") return embalagem(await oQueMudou(pool, dados, ctx));
-  if (nome === "proposta_processo") return embalagem(await propostaProcesso(pool, dados, recorte));
+  if (nome === "proposta_processo") return embalagem(await propostaProcesso(pool, dados, recorte, ctx));
+  if (nome === "montar_proposta") {
+    const carteira = await idDaCarteira(pool, recorte, ctx);
+    return embalagem(await montarPropostaEmail(pool, dados, { ...ctx, carteira, recorte }));
+  }
   if (nome === "propostas_periodo") return embalagem(await propostasPeriodo(pool, dados, recorte, ctx));
   if (nome === "comissao_periodo") return embalagem(await comissaoPeriodo(pool, dados, recorte, ctx));
   if (nome === "processos_abertos_cliente") return embalagem(await processosAbertosCliente(pool, dados, recorte, ctx));
   if (nome === "prazos") return embalagem(await prazos(pool, dados, recorte));
   if (nome === "processos_parados") return embalagem(await processosParados(pool, dados, recorte));
-  if (nome === "documental_ce") return embalagem(await documentalCe(pool, dados));
+  if (nome === "documental_ce") return embalagem(await documentalCe(pool, dados, ctx));
   if (nome === "atividades_pendentes") return embalagem(await atividadesPendentes(pool, dados, recorte));
   if (nome === "divergencias_viagem") return embalagem(await divergenciasViagem(pool, dados, recorte));
-  if (nome === "rota_processo") return embalagem(await rotaProcesso(pool, dados));
-  if (nome === "andamento_atividade") return embalagem(await andamentoAtividade(pool, dados));
+  if (nome === "rota_processo") return embalagem(await rotaProcesso(pool, dados, ctx));
+  if (nome === "andamento_atividade") {
+    if (dados.concluir || dados.restaurar || dados.botao) return embalagem(await comandoBot(pool, { ...dados, acao: dados.restaurar ? "restaurar" : dados.botao ? String(dados.botao).toLowerCase() : "concluir" }, ctx));
+    return embalagem(await andamentoAtividade(pool, dados, ctx));
+  }
+  if (nome === "projeto_tarefas") return embalagem(await projetoTarefas(pool, dados, ctx));
+  if (nome === "monitores_campo") return embalagem(await monitoresCampo(pool, dados, ctx));
+  if (nome === "gatilhos_atividade") return embalagem(await gatilhosAtividade(pool, dados, ctx));
+  if (nome === "comando_bot") return embalagem(await comandoBot(pool, dados, ctx));
+  if (nome === "aprendizado_bot") return embalagem(textoComandosBot(dados.limite));
   if (nome === "painel_ti") return embalagem(await painelTi(pool, dados, ctx));
   if (nome === "log_recente") return embalagem(await logRecente(pool, dados, ctx));
   if (nome === "monitoramentos_alterados") return embalagem(await monitoramentosAlterados(pool, dados, ctx));
   if (nome === "painel_financeiro") return embalagem(await painelFinanceiro(pool, dados));
   if (nome === "relacionamento_clientes") return embalagem(await relacionamentoClientes(pool, dados));
-  if (nome === "taxas_processo") return embalagem(await taxasProcesso(pool, dados));
+  if (nome === "taxas_processo") return embalagem(await taxasProcesso(pool, dados, ctx));
   if (nome === "passagens_aereas") return embalagem(await pesquisarPassagens(dados));
-  if (nome === "explicar_itens_carga") return embalagem(await explicarItensCarga(pool, dados));
-  if (nome === "explicar_campo_livre") return embalagem(await explicarCampoLivre(pool, dados));
+  if (nome === "explicar_itens_carga") return embalagem(await explicarItensCarga(pool, dados, ctx));
+  if (nome === "explicar_campo_livre") return embalagem(await explicarCampoLivre(pool, dados, ctx));
   return embalagem(await filaSetor(pool, recorte));
 }

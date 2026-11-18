@@ -12,6 +12,7 @@ import "./estilos/pdf.css";
 import "./estilos/chat.css";
 import "./estilos/ia.css";
 import "./estilos/login.css";
+import "./estilos/respostas.css";
 
 instalarTokenNaApi();
 
@@ -34,6 +35,13 @@ function Raiz() {
     return () => {
       ativo = false;
     };
+  }, [usuario]);
+
+  useEffect(() => {
+    const ended = () => { setUsuario(null); setPronto(true); };
+    window.addEventListener('maicon-session-ended', ended);
+    const timer = setInterval(() => { if (usuario && document.visibilityState === 'visible') void fetch('/api/sessao').catch(() => undefined); }, 30000);
+    return () => { window.removeEventListener('maicon-session-ended', ended); clearInterval(timer); };
   }, [usuario]);
 
   if (!usuario && !pronto) {

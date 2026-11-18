@@ -1,6 +1,7 @@
 import sql from "mssql";
+import { numeroParaConsulta } from "./headcargoDesktop.js";
 
-const PROCESSO = /^[A-Z]{1,4}\d{2,6}-\d{2}$/;
+const PROCESSO = /^[A-Z]{1,4}\d{2,6}-\d{2}(?: TESTE)?$/;
 const CONTAINER = /^[A-Z]{4}\d{7}$/;
 
 const PRIMEIROS = {
@@ -488,15 +489,15 @@ async function ajustesDosDias(pool, ids, inclusoes) {
   return ajustes;
 }
 
-export async function explicarItensCarga(pool, args) {
-  const numero = String(args?.numero ?? "")
-    .trim()
-    .toUpperCase();
+export async function explicarItensCarga(pool, args, ctx) {
+  const pedidoNumero = numeroParaConsulta(args?.numero, ctx?.papel === "admin" || ctx?.acesso?.papel === "admin");
+  if (!pedidoNumero.ok) return { texto: pedidoNumero.erro, sql: "", linhas: [] };
+  const numero = (pedidoNumero.numero || String(args?.numero ?? "").trim()).toUpperCase();
   if (!PROCESSO.test(numero)) {
     return { texto: "Informe o número do processo, como IM3052-26.", sql: "", linhas: [] };
   }
   const pedido = pool.request();
-  pedido.input("numero", sql.VarChar(20), numero);
+  pedido.input("numero", sql.VarChar(30), numero);
   const consulta = await pedido.query(`
     SELECT
       H.Numero_Processo,

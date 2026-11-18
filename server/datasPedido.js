@@ -288,13 +288,15 @@ function inserirFiltro(sql, indice, profundidade, filtro) {
   return `${antes}\nWHERE ${filtro}${depois ? `\n${depois}` : ""}`;
 }
 
-export function sqlSemExcecao(sql, pedido) {
+export function sqlSemExcecao(sql, pedido, opcoes = {}) {
   let texto = String(sql ?? "");
   const houses = housesNoSql(texto);
   if (!houses.length) return texto;
   const house = houses[0];
+  const admin = opcoes === true || opcoes?.admin === true;
+  const pediuTeste = admin && pediuTermo(pedido, "testes?");
   const partes = [];
-  if (!pediuTermo(pedido, "testes?") && !/numero_processo\s+not\s+like\s+'%teste%'/i.test(texto)) {
+  if (!pediuTeste && !/numero_processo\s+not\s+like\s+'%teste%'/i.test(texto)) {
     partes.push(`${house.alias}.Numero_Processo NOT LIKE '%TESTE%'`);
   }
   if (!pediuTermo(pedido, "demu") && !/numero_processo\s+not\s+like\s+'demu%'/i.test(texto)) {
@@ -307,7 +309,7 @@ export function sqlSemExcecao(sql, pedido) {
     }
   }
   const cliente = aliasDoCliente(texto, house.alias);
-  if (cliente && !pediuTermo(pedido, "testes?") && !new RegExp(`${cliente}\\.Nome\\s+NOT\\s+LIKE\\s+'%TESTE%'`, "i").test(texto)) {
+  if (cliente && !pediuTeste && !new RegExp(`${cliente}\\.Nome\\s+NOT\\s+LIKE\\s+'%TESTE%'`, "i").test(texto)) {
     partes.push(`(${cliente}.Nome IS NULL OR ${cliente}.Nome NOT LIKE '%TESTE%')`);
   }
   if (!partes.length) return texto;

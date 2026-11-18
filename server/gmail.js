@@ -67,6 +67,36 @@ function semLinks(texto) {
     .join("\n");
 }
 
+function anexoUtil(nome, tamanho) {
+  const arquivo = String(nome || "").trim();
+  if (!arquivo || arquivo.length > 180) return false;
+  if (tamanho > 20 * 1024 * 1024) return false;
+  if (/^smime\.p7s$/i.test(arquivo)) return false;
+  if (/^image\d{3,}\.(png|jpe?g|gif)$/i.test(arquivo) && tamanho < 40_000) return false;
+  return true;
+}
+
+function anexosDaMensagem(mensagem) {
+  const lista = [];
+  const visitar = (parte) => {
+    if (!parte) return;
+    const nome = String(parte.filename || "").trim();
+    const id = String(parte.body?.attachmentId || "");
+    const tamanho = Number(parte.body?.size) || 0;
+    if (nome && id && anexoUtil(nome, tamanho)) {
+      lista.push({
+        nome,
+        tipo: String(parte.mimeType || "application/octet-stream"),
+        tamanho,
+        id,
+      });
+    }
+    for (const filho of parte.parts ?? []) visitar(filho);
+  };
+  visitar(mensagem.payload);
+  return lista.slice(0, 8);
+}
+
 function corpoDoEmail(mensagem) {
   const partes = partesDe(mensagem.payload);
   const plano = partes.find((parte) => parte.tipo === "text/plain" && parte.texto.trim());
@@ -133,6 +163,7 @@ async function lerCaixa(acesso, consulta, limite) {
     const assunto = cabeca(mensagem, "subject") || "(sem assunto)";
     const trecho = corpoDoEmail(mensagem) || trechoLimpo(mensagem.snippet);
     mensagens.push({
+      id: String(item.id),
       de: remetente(deBruto),
       email: (deBruto.match(/<([^>]+)>/)?.[1] || deBruto).trim().toLowerCase(),
       resposta: (cabeca(mensagem, "reply-to").match(/<([^>]+)>/)?.[1] || cabeca(mensagem, "reply-to")).trim().toLowerCase(),
@@ -144,9 +175,19 @@ async function lerCaixa(acesso, consulta, limite) {
       chamado: /chamado|ticket|help\s*desk|suporte/i.test(`${assunto} ${trecho}`),
       head: /head\s*cargo|headcargo|integra[cç][aã]o|falha|erro|exception|timeout/i.test(`${assunto} ${trecho}`),
       suspeito: sinaisSuspeitos(deBruto, cabeca(mensagem, "reply-to"), cabeca(mensagem, "authentication-results"), `${assunto} ${trecho}`),
+      anexos: anexosDaMensagem(mensagem),
     });
   }
   return { mensagens };
+}
+
+export async function mensagensDaConsulta(token, consulta, limite = 4) {
+  const acesso = String(token ?? "").trim();
+  const busca = String(consulta ?? "").trim();
+  if (!acesso || !busca) return [];
+  const caixa = await lerCaixa(acesso, busca, limite);
+  if (caixa.erro) return [];
+  return caixa.mensagens || [];
 }
 
 function numerosDeProcesso(mensagens) {
@@ -158,7 +199,7 @@ function numerosDeProcesso(mensagens) {
   return [...achados].slice(0, 12);
 }
 
-export async function resumirGmail(token, visao = "", processo = "") {
+export async function resumirGmail(token, visao = "", processo = "", documentos = false) {
   const acesso = String(token ?? "").trim();
   const numero = String(processo ?? "").trim().toUpperCase();
   if (!acesso) {
@@ -171,10 +212,17 @@ export async function resumirGmail(token, visao = "", processo = "") {
     if (!/^[A-Z]{1,4}\d{2,6}-\d{2}$/.test(numero)) {
       return { texto: "Informe o número do processo, como IM5328-26.", processos: [] };
     }
-    const caixa = await lerCaixa(acesso, `in:inbox ${numero} newer_than:365d`, 8);
+    const consulta = documentos ? `${numero} has:attachment newer_than:365d` : `in:inbox ${numero} newer_than:365d`;
+    const caixa = await lerCaixa(acesso, consulta, 8);
     if (caixa.erro) return { texto: caixa.erro, processos: [numero] };
+    const mensagens = documentos ? caixa.mensagens.filter((item) => item.anexos.length) : caixa.mensagens;
+    const vazio = documentos
+      ? `Nenhum documento anexo dos últimos 12 meses cita ${numero}.`
+      : `Nenhum e-mail dos últimos 12 meses cita ${numero}.`;
+    const titulo = documentos ? `Documentos do processo ${numero}` : `E-mails do processo ${numero}`;
+    const intro = documentos && mensagens.length ? "Os arquivos abaixo podem ser baixados neste chat.\n\n" : "";
     return {
-      texto: bloco(`E-mails do processo ${numero}`, caixa.mensagens, `Nenhum e-mail dos últimos 12 meses cita ${numero}.`),
+      texto: `${intro}${bloco(titulo, mensagens, vazio)}`,
       processos: [numero],
     };
   }
@@ -283,8 +331,36 @@ function cartao(item) {
     processo: processoDoEmail(item),
     alerta: item.suspeito.length ? item.suspeito.join("; ") : "",
     corpo: corpoArrumado(item.trecho, item.assunto),
+    anexos: (item.anexos || []).map((anexo) => ({
+      nome: anexo.nome,
+      tamanho: anexo.tamanho,
+      id: anexo.id,
+      mensagem: item.id,
+    })),
   };
   return "```email\n" + JSON.stringify(dados) + "\n```";
+}
+
+export async function baixarAnexoGmail(token, mensagem, anexo) {
+  const acesso = String(token ?? "").trim();
+  const idMensagem = String(mensagem ?? "").trim();
+  const idAnexo = String(anexo ?? "").trim();
+  if (!acesso) throw new Error("A leitura do Gmail ainda não foi autorizada.");
+  if (!/^[A-Za-z0-9_-]{8,}$/.test(idMensagem) || !/^[A-Za-z0-9_-]{8,}$/.test(idAnexo)) {
+    throw new Error("Anexo inválido.");
+  }
+  const resp = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(idMensagem)}/attachments/${encodeURIComponent(idAnexo)}`,
+    { headers: { Authorization: `Bearer ${acesso}` } },
+  );
+  const dados = await resp.json().catch(() => ({}));
+  if (resp.status === 401 || resp.status === 403) throw new Error("A sessão do Gmail expirou.");
+  if (!resp.ok) throw new Error(dados?.error?.message || "Não consegui baixar o documento.");
+  const bruto = String(dados.data || "").replace(/-/g, "+").replace(/_/g, "/");
+  const buffer = Buffer.from(bruto, "base64");
+  if (!buffer.length) throw new Error("O documento veio vazio.");
+  if (buffer.length > 20 * 1024 * 1024) throw new Error("O documento passa de 20 MB e não entra no chat.");
+  return buffer;
 }
 
 function bloco(titulo, itens, vazio) {

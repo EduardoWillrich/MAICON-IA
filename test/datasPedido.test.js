@@ -132,9 +132,11 @@ test("consulta de processo deixa de fora TESTE, DEMU e cancelado 6", () => {
   assert.equal(ajustado.match(/NOT LIKE '%TESTE%'/g).length, 2);
 });
 
-test("pedido de teste ou cancelado mantém esses registros", () => {
+test("pedido de teste fica com o administrador; cancelado continua no pedido", () => {
   const sql = "SELECT Lhs.Numero_Processo FROM dbo.mov_Logistica_House Lhs";
-  const testes = sqlSemExcecao(sql, "liste os processos TESTE");
+  const semAdmin = sqlSemExcecao(sql, "liste os processos TESTE");
+  assert.match(semAdmin, /NOT LIKE '%TESTE%'/);
+  const testes = sqlSemExcecao(sql, "liste os processos TESTE", { admin: true });
   assert.doesNotMatch(testes, /NOT LIKE '%TESTE%'/);
   assert.match(testes, /NOT LIKE 'DEMU%'/);
   const cancelados = sqlSemExcecao(sql, "quais processos foram cancelados");

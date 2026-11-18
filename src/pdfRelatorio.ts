@@ -36,7 +36,7 @@ function temaDe(fonte: string) {
 }
 
 async function fonteDoTema(): Promise<string> {
-  const url = new URL("./pdfRelatorio.css", import.meta.url);
+  const url = new URL("./estilos/pdfRelatorio.css", import.meta.url);
   try {
     const { readFile } = await import("node:fs/promises");
     return await readFile(url, "utf8");

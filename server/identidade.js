@@ -1,4 +1,5 @@
-import { randomBytes } from "node:crypto";
+import { appSessions } from './centralSessions.js';
+import { randomBytes, createHash } from "node:crypto";
 import { fotoDaConta, registrarConta } from "./acesso.js";
 import { abrirSqlite } from "./sqlite.js";
 import { criarSessaoAssinada, lerSessaoAssinada } from "./sessaoAssinada.js";
@@ -13,7 +14,16 @@ db.exec(`
   );
 `);
 
+db.exec('CREATE TABLE IF NOT EXISTS sessoes_emissao(credential_ref TEXT PRIMARY KEY,issued_at INTEGER NOT NULL,sid TEXT)');
+if (!db.prepare('PRAGMA table_info(sessoes_emissao)').all().some(c => c.name === 'sid')) db.exec('ALTER TABLE sessoes_emissao ADD COLUMN sid TEXT');
+for (const row of db.prepare('SELECT credential_ref FROM sessoes_emissao WHERE sid IS NULL').all()) db.prepare('UPDATE sessoes_emissao SET sid=? WHERE credential_ref=?').run(randomBytes(16).toString('base64url'),row.credential_ref);
 const pendentes = new Map();
+function emitirSessao(email, nome, google) {
+  const reference = createHash('sha256').update(google).digest('hex');
+  db.prepare('INSERT OR IGNORE INTO sessoes_emissao(credential_ref,issued_at,sid) VALUES(?,?,?)').run(reference, Date.now(),randomBytes(16).toString('base64url'));
+  const { issued_at, sid } = db.prepare('SELECT issued_at,sid FROM sessoes_emissao WHERE credential_ref=?').get(reference);
+  return criarSessaoAssinada(email, nome, issued_at, sid);
+}
 
 function lerSessao(id) {
   return db.prepare("SELECT id, email, nome, google FROM sessoes WHERE id = ?").get(id);
@@ -23,11 +33,11 @@ function guardarSessao(email, nome, google) {
   const atual = db.prepare("SELECT id FROM sessoes WHERE email = ?").get(email);
   if (atual) {
     db.prepare("UPDATE sessoes SET nome = ?, google = ? WHERE email = ?").run(nome, google, email);
-    return criarSessaoAssinada(email, nome);
+    return emitirSessao(email, nome, google);
   }
   const id = `maicon.${randomBytes(32).toString("base64url")}`;
   db.prepare("INSERT INTO sessoes (id, email, nome, google) VALUES (?, ?, ?, ?)").run(id, email, nome, google);
-  return criarSessaoAssinada(email, nome);
+  return emitirSessao(email, nome, google);
 }
 
 export async function adotarTokenGoogle(emailConta, acesso) {
@@ -154,7 +164,7 @@ export async function completarFotos(emails) {
   );
 }
 
-export async function contaDoToken(token) {
+async function resolverContaDoToken(token) {
   const acesso = String(token ?? "").trim();
   if (!acesso || acesso.length > 4096) {
     throw new Error("Entre de novo com o Google.");
@@ -167,7 +177,7 @@ export async function contaDoToken(token) {
       email: assinada.email,
       nome: assinada.nome,
       token: String(salva?.google || ""),
-      entregarSessao: assinada.renovar ? criarSessaoAssinada(assinada.email, assinada.nome) : "",
+      entregarSessao: assinada.renovar ? criarSessaoAssinada(assinada.email, assinada.nome, Date.now(), assinada.sid) : "",
     };
   }
   if (acesso.startsWith("maicon.")) {
@@ -187,4 +197,17 @@ export async function contaDoToken(token) {
   });
   pendentes.set(acesso, promessa);
   return promessa;
+}
+
+export async function contaDoToken(token) {
+  if (appSessions.isRevoked(token)) throw Object.assign(new Error('Sessão encerrada pela central. Entre de novo com o Google.'), { code: 'session_revoked' });
+  const conta = await resolverContaDoToken(token);
+  const signed = String(token || '').startsWith('maicon.v2.') ? lerSessaoAssinada(token) : null;
+  const expiresAt = signed?.exp || Date.now() + (String(token || '').startsWith('maicon.') ? 30 * 86400000 : 3600000);
+  if (!appSessions.touch(token, { email: conta.email, name: conta.nome, expiresAt })) throw Object.assign(new Error('Sessão encerrada. Entre de novo com o Google.'), { code: 'session_ended' });
+  if (conta.entregarSessao) {
+    const replacement = lerSessaoAssinada(conta.entregarSessao);
+    if (!appSessions.linkTokens(token, conta.entregarSessao, { expiresAt: replacement?.exp })) throw Object.assign(new Error('Sessão encerrada. Entre de novo com o Google.'), { code: 'session_ended' });
+  }
+  return conta;
 }

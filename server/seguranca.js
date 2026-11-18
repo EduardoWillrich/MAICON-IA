@@ -1,20 +1,25 @@
 const PROIBIDOS =
   /\b(insert|update|delete|merge|drop|alter|create|truncate|exec|execute|grant|revoke|deny|into|openrowset|opendatasource|openquery|bulk|shutdown|backup|restore|dbcc|reconfigure|waitfor|kill)\b|\b(sp|xp)_\w+/i;
 
+function semLiterais(texto) {
+  return texto.replace(/'(?:''|[^'])*'/g, "''");
+}
+
 export function exigirSomenteLeitura(texto) {
   const comando = String(texto ?? "");
   const semComentarios = comando.replace(/--[^\n]*/g, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
-  if (!/^\s*(select|with)\b/i.test(semComentarios)) {
+  const analise = semLiterais(semComentarios);
+  if (!/^\s*(select|with)\b/i.test(analise)) {
     throw new Error("Bloqueado: só consultas de leitura (Select) são permitidas.");
   }
-  if (/^\s*with\b/i.test(semComentarios) && !/\bselect\b/i.test(semComentarios)) {
+  if (/^\s*with\b/i.test(analise) && !/\bselect\b/i.test(analise)) {
     throw new Error("Bloqueado: a consulta precisa de um Select.");
   }
-  const proibido = semComentarios.match(PROIBIDOS);
+  const proibido = analise.match(PROIBIDOS);
   if (proibido) {
     throw new Error(`Bloqueado: comando "${proibido[0]}" não é permitido. Esta ferramenta só lê dados.`);
   }
-  if (/;\s*\S/.test(semComentarios)) {
+  if (/;\s*\S/.test(analise)) {
     throw new Error("Bloqueado: apenas um comando por consulta.");
   }
 }

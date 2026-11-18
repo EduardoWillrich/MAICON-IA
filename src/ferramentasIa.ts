@@ -4,7 +4,7 @@ import { montarRelatorio, nomeDaChave } from "./relatorio";
 import type { LogPdf } from "./PdfHistorico";
 import type { CadastroAtual, ChavePrimaria, EventoLog, FiltrosLog, TipoLog } from "./types";
 import { lerTokenGmail } from "./sessao";
-import { renovarTokenGmail } from "./tokenGmail";
+import { garantirEnvioGmail, renovarTokenGmail } from "./tokenGmail";
 
 const API = "";
 
@@ -42,6 +42,46 @@ export function completarConsultaLog(args: Record<string, unknown>, pedido: stri
     ...(processos.length && !args.processo ? { processo: processos.join(", ") } : {}),
   };
   return completarContainers(base, pedido);
+}
+
+function aplicarLogPedido(args: Record<string, unknown>) {
+  const pedido = texto(args.perguntaOriginal);
+  const nomeado = pedido.match(/\bmov_logistica_(master|house|taxa)\s+(\d{3,})\b/i);
+  if (nomeado) {
+    const mapa: Record<string, [string, string]> = {
+      master: ["mov_Logistica_Master", "IdLogistica_Master"],
+      house: ["mov_Logistica_House", "IdLogistica_House"],
+      taxa: ["mov_Logistica_Taxa", "IdLogistica_Taxa"],
+    };
+    const [tabela, campo] = mapa[nomeado[1].toLowerCase()];
+    args.tabela = tabela;
+    args.campo_chave = campo;
+    args.valores = nomeado[2];
+    args.tipo = 0;
+  }
+  const dia = pedido.match(/\b(\d{1,2})[/\-.](\d{1,2})(?:[/\-.](\d{2,4}))?\b/);
+  if (!dia || !/\bat[eé]\s+(?:hoje|agora)\b/i.test(pedido)) return;
+  let ano = dia[3] ?? String(new Date().getFullYear());
+  if (ano.length === 2) ano = `20${ano}`;
+  const hoje = new Date();
+  const dois = (n: number) => String(n).padStart(2, "0");
+  args.data_inicio = `${dois(Number(dia[1]))}/${dois(Number(dia[2]))}/${ano}`;
+  args.data_fim = `${dois(hoje.getDate())}/${dois(hoje.getMonth() + 1)}/${hoje.getFullYear()}`;
+  args.ancorar = false;
+}
+
+function recortarLogPedido(lista: EventoLog[], tabela: string, pedido: string) {
+  let eventos = lista.filter((evento) => !evento.tabela || evento.tabela.toLowerCase() === tabela.toLowerCase());
+  const querMudanca = /\b(?:alter|mudou|mexeu)\b/i.test(pedido) && !/\binclu/i.test(pedido);
+  if (querMudanca) {
+    const mudancas = eventos.filter((evento) => evento.tipo !== 1);
+    if (mudancas.length) eventos = mudancas;
+  }
+  return [...eventos].sort((a, b) => {
+    const da = new Date(a.data || a.dataInicioTransacao || 0).getTime();
+    const db = new Date(b.data || b.dataInicioTransacao || 0).getTime();
+    return db - da;
+  });
 }
 
 function completarContainers(args: Record<string, unknown>, pedido: string): Record<string, unknown> {
@@ -126,12 +166,16 @@ export async function executarFerramentaIa(
   conta?: { email?: string; nome?: string; visao?: string },
 ): Promise<string> {
   const funcoesProntas = new Set([
+    "tarefa_bot", "rotina_bot", "painel_excecoes", "regras_bot",
     "resumo_processo",
     "ficha_processo",
     "meu_dia",
     "buscar_processos",
     "processos_abertos",
     "acompanhamentos_processo",
+    "modelo_followup",
+    "email_atividade",
+    "montar_proposta",
     "pendencias",
     "o_que_mudou",
     "proposta_processo",
@@ -155,8 +199,21 @@ export async function executarFerramentaIa(
     "explicar_itens_carga",
     "explicar_campo_livre",
     "andamento_atividade",
+    "projeto_tarefas",
+    "monitores_campo",
+    "gatilhos_atividade",
+    "comando_bot",
+    "aprendizado_bot",
   ]);
   if (funcoesProntas.has(nome)) {
+    let token = "";
+    if (nome === "montar_proposta") {
+      try {
+        token = (await renovarTokenGmail()) || lerTokenGmail();
+      } catch {
+        token = lerTokenGmail();
+      }
+    }
     const resp = await fetch(`${API}/api/ia/funcoes`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -164,19 +221,49 @@ export async function executarFerramentaIa(
       body: JSON.stringify({
         funcao: nome,
         args,
+        pergunta: String(args.perguntaOriginal || ""),
         email: conta?.email,
         nome: conta?.nome,
         visao: conta?.visao,
         conversaId: conversaDaConsulta(),
+        token,
       }),
     });
     const dados = await resp.json();
     if (!resp.ok) return `Erro: ${dados.erro || "falha na consulta"}`;
-    const pacote: { sql: string; linhas: unknown[]; texto: string; log?: unknown } = {
+    const acompanhar = dados.tarefaId && ["fila", "executando"].includes(dados.tarefaEstado) && (nome === "comando_bot" || nome === "andamento_atividade" || (nome === "tarefa_bot" && ["criar", "executar", "retomar"].includes(String(args.acao))));
+    if (acompanhar) {
+      const inicio = Date.now();
+      let ultimoStatus = "";
+      try {
+        while (["fila", "executando"].includes(dados.tarefaEstado) && Date.now() - inicio < 600000) {
+          if (sinal?.aborted) throw new DOMException("Cancelado", "AbortError");
+          const r = await fetch(`${API}/api/bot/tarefas/${encodeURIComponent(dados.tarefaId)}`, { signal: sinal });
+          const tarefa = await r.json();
+          if (!r.ok) { dados.texto = `A execução foi iniciada, mas não consegui consultar o andamento. Peça o andamento da tarefa nesta conversa.`; break; }
+          dados.texto = tarefa.texto;
+          dados.tarefaEstado = tarefa.estado;
+          const status = tarefa.eventos?.at(-1)?.mensagem || "Aguardando a execução no HeadCargo…";
+          if (status !== ultimoStatus) {
+            window.dispatchEvent(new CustomEvent("maicon-bot-progresso", { detail: String(status).slice(0, 180) }));
+            ultimoStatus = status;
+          }
+          if (["fila", "executando"].includes(tarefa.estado)) await new Promise((resolve) => window.setTimeout(resolve, 750));
+        }
+      } catch (erro) {
+        if (sinal?.aborted) {
+          await fetch(`${API}/api/bot/tarefas/${encodeURIComponent(dados.tarefaId)}/controle`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ acao: "cancelar" }) }).catch(() => {});
+          throw erro;
+        }
+        dados.texto = "A execução continua registrada, mas a conexão de acompanhamento foi interrompida. Peça o andamento da tarefa nesta conversa antes de repetir o comando.";
+      }
+    }
+    const pacote: { sql: string; linhas: unknown[]; texto: string; log?: unknown; tarefaId?: string; tarefaEstado?: string } = {
       sql: typeof dados.sql === "string" ? dados.sql : "",
       linhas: Array.isArray(dados.linhas) ? dados.linhas : [],
       texto: typeof dados.texto === "string" ? dados.texto : "",
     };
+    if (dados.tarefaId) { pacote.tarefaId = dados.tarefaId; pacote.tarefaEstado = dados.tarefaEstado; }
     if (dados.log && typeof dados.log === "object") pacote.log = dados.log;
     if (nome === "ficha_processo") {
       const numero = texto(args.numero).toUpperCase();
@@ -204,20 +291,67 @@ export async function executarFerramentaIa(
     return JSON.stringify(pacote);
   }
   if (nome === "emails_gmail") {
-    const resp = await fetch(`${API}/api/gmail/resumo`, {
+    const semAcesso =
+      "A caixa de e-mail ainda não está ligada nesta conta. Entre com o Google uma vez, marcando a leitura dos e-mails. Depois disso a IA usa a mesma sessão, sem pedir login de novo.";
+    const pedirResumo = (token: string) =>
+      fetch(`${API}/api/gmail/resumo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: sinal,
+        body: JSON.stringify({
+          token,
+          email: conta?.email,
+          visao: conta?.visao,
+          processo: texto(args.processo),
+          documentos: args.documentos === true,
+        }),
+      });
+    let token = "";
+    try {
+      token = (await renovarTokenGmail()) || lerTokenGmail();
+    } catch {
+      token = lerTokenGmail();
+    }
+    if (!token) return semAcesso;
+    let resp = await pedirResumo(token);
+    let dados = await resp.json().catch(() => ({}));
+    const textoResposta = typeof dados.texto === "string" ? dados.texto : typeof dados.erro === "string" ? dados.erro : "";
+    if (/expirou|não foi autorizada|nao foi autorizada/i.test(textoResposta)) {
+      try {
+        const novo = await renovarTokenGmail(true);
+        if (novo && novo !== token) {
+          resp = await pedirResumo(novo);
+          dados = await resp.json().catch(() => ({}));
+        }
+      } catch {
+        /* mantém a resposta da tentativa com o token salvo */
+      }
+    }
+    const textoFinal = typeof dados.texto === "string" ? dados.texto : "";
+    if (!resp.ok) return typeof dados.erro === "string" && dados.erro ? dados.erro : semAcesso;
+    if (/não foi autorizada|nao foi autorizada/i.test(textoFinal)) return semAcesso;
+    return JSON.stringify({ texto: textoFinal, sql: "", linhas: [] });
+  }
+  if (nome === "enviar_followup") {
+    const numero = texto(args.numero).toUpperCase();
+    const para = texto(args.para);
+    if (!/^[A-Z]{1,4}\d{2,6}-\d{2}$/.test(numero)) return "Informe o número do processo, como IM5944-26.";
+    if (!para) return "Informe o e-mail de destino, ou diga que é para o cliente.";
+    let token = "";
+    try {
+      token = await garantirEnvioGmail();
+    } catch {
+      return "Para enviar, autorize o Gmail na janela do Google. Se a janela não abriu, permita o pop-up e peça o envio de novo.";
+    }
+    const resp = await fetch(`${API}/api/gmail/enviar`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: sinal,
-      body: JSON.stringify({
-        token: await renovarTokenGmail(),
-        email: conta?.email,
-        visao: conta?.visao,
-        processo: texto(args.processo),
-      }),
+      body: JSON.stringify({ token, numero, para, assunto: texto(args.assunto), visao: conta?.visao }),
     });
-    const dados = await resp.json();
-    if (!resp.ok) return `Erro: ${dados.erro || "falha ao ler o Gmail"}`;
-    return JSON.stringify({ texto: typeof dados.texto === "string" ? dados.texto : "", sql: "", linhas: [] });
+    const dados = await resp.json().catch(() => ({}));
+    if (!resp.ok) return typeof dados.erro === "string" && dados.erro ? dados.erro : "Não consegui enviar o follow-up.";
+    return typeof dados.texto === "string" ? dados.texto : "Follow-up enviado.";
   }
   if (nome === "lembrar_preferencia" || nome === "esquecer_preferencia") {
     const resp = await fetch(`${API}/api/memoria`, {
@@ -230,10 +364,12 @@ export async function executarFerramentaIa(
     return nome === "esquecer_preferencia" ? "Preferência removida." : "Preferência salva.";
   }
   if (nome === "localizar_processo") {
-    const numero = texto(args.numero).trim();
-    if (!/^[A-Za-z]{1,4}\d{2,6}-\d{2}$/i.test(numero)) {
-      return `${numero} não é número de processo. O número tem letras, hífen e ano, como IM5944-26. Uma referência de cliente, como 136.763, não se busca em mov_Logistica_House.`;
+    const bruto = texto(args.numero).trim().replace(/\s+/g, " ");
+    const formato = bruto.match(/^([A-Za-z]{1,4}\d{2,6}-\d{2})(?:\s+teste)?$/i);
+    if (!formato) {
+      return `${bruto} não é número de processo. O número tem letras, hífen e ano, como IM5944-26. Processo de teste do administrador termina com a palavra teste, como IM2099-25 teste.`;
     }
+    const numero = /\steste$/i.test(bruto) ? `${formato[1].toUpperCase()} teste` : formato[1].toUpperCase();
     const resp = await fetch(`${API}/api/processo?numero=${encodeURIComponent(numero)}&email=${encodeURIComponent(conta?.email ?? "")}&nome=${encodeURIComponent(conta?.nome ?? "")}&visao=${encodeURIComponent(conta?.visao ?? "")}&conversaId=${encodeURIComponent(conversaDaConsulta())}`, { signal: sinal });
     const dados = await resp.json();
     if (!resp.ok) throw new Error(dados.erro || "Falha ao localizar o processo");
@@ -303,6 +439,7 @@ export async function executarFerramentaIa(
   }
   if (nome === "consultar_log") {
     const { colunasDaTabela, NOMES_TABELAS } = await import("./dicionario");
+    aplicarLogPedido(args);
     const tabela = NOMES_TABELAS.find((t) => t.toLowerCase() === texto(args.tabela).toLowerCase());
     if (!tabela) return "Tabela não encontrada. Use buscar_tabelas.";
     if (!texto(args.valores)) {
@@ -338,7 +475,7 @@ export async function executarFerramentaIa(
     const dados = await resp.json();
     if (!resp.ok) throw new Error(dados.erro || "Falha na consulta");
     const brutos: unknown[] = Array.isArray(dados.eventos) ? dados.eventos : [];
-    const lista = eventosDasChaves(normalizarEventos(brutos), filtros.chaves);
+    const lista = recortarLogPedido(eventosDasChaves(normalizarEventos(brutos), filtros.chaves), tabela, texto(args.perguntaOriginal));
     const cadastro = normalizarCadastro(dados.cadastroAtual);
     logPendente = {
       eventos: lista,

@@ -1,0 +1,343 @@
+/* Shared visual language for chat responses. Keep status colors semantic. */
+:root {
+  --reply-surface: #1c1c21;
+  --reply-elevated: #24242b;
+  --reply-cell: #2b2b33;
+  --reply-border: #3b3b45;
+  --reply-text: #f2f2f5;
+  --reply-muted: #b3b3bf;
+  --reply-accent: #ff8585;
+  --reply-accent-soft: rgba(220, 65, 65, .12);
+  --reply-accent-line: rgba(255, 133, 133, .36);
+  --reply-action: #b92b2b;
+  --reply-action-hover: #9f2323;
+  --reply-success: #70c69c;
+  --reply-success-soft: rgba(64, 172, 112, .12);
+  --reply-warning: #e7b75c;
+  --reply-warning-soft: rgba(209, 155, 48, .12);
+  --reply-radius: 14px;
+  --reply-radius-inner: 10px;
+  --reply-space: 24px;
+  --reply-font: Inter, "Segoe UI", system-ui, sans-serif;
+}
+
+html.tema-claro {
+  --reply-surface: #fff;
+  --reply-elevated: #f6f6f8;
+  --reply-cell: #eeeef2;
+  --reply-border: #dedee6;
+  --reply-text: #24242b;
+  --reply-muted: #62626f;
+  --reply-accent: #b32626;
+  --reply-accent-soft: rgba(179, 38, 38, .07);
+  --reply-accent-line: rgba(179, 38, 38, .3);
+  --reply-success: #207a4f;
+  --reply-success-soft: rgba(32, 122, 79, .08);
+  --reply-warning: #805500;
+  --reply-warning-soft: rgba(128, 85, 0, .08);
+}
+
+/* Map the existing card families to the same tokens instead of maintaining
+   separate palettes for reports, timelines, lists, charts and routes. */
+html :is(.chat-assistant, .chat-rota-tela),
+html :is(.chat-assistant, .chat-rota-tela) :is(.resposta, .painel-ti, .hl-root, .historico-log, .chat-rota, .chat-grafico, .chat-sites, .chat-email, .chat-modelo, .chat-ficha, .chat-relacao) {
+  --bg: var(--reply-elevated);
+  --panel: var(--reply-surface);
+  --card: var(--reply-elevated);
+  --cell: var(--reply-cell);
+  --line: var(--reply-border);
+  --text: var(--reply-text);
+  --muted: var(--reply-muted);
+  --accent: var(--reply-accent);
+  --accent-bg: var(--reply-accent-soft);
+  --accent-line: var(--reply-accent-line);
+  --tint: transparent;
+  --danger: var(--reply-accent);
+  --danger-bg: var(--reply-accent-soft);
+  --danger-line: var(--reply-accent-line);
+  --warn: var(--reply-warning);
+  --warn-bg: var(--reply-warning-soft);
+  --warn-line: color-mix(in srgb, var(--reply-warning) 35%, transparent);
+  --pt-card: var(--reply-surface);
+  --pt-elev: var(--reply-elevated);
+  --pt-border: var(--reply-border);
+  --pt-text: var(--reply-text);
+  --pt-muted: var(--reply-muted);
+  --pt-accent: var(--reply-accent);
+  --pt-accent-2: var(--reply-action);
+  --pt-add: var(--reply-success);
+  --pt-upd: var(--reply-warning);
+  --pt-del: var(--reply-accent);
+  --hl-panel: var(--reply-surface);
+  --hl-bg: var(--reply-elevated);
+  --hl-card: var(--reply-elevated);
+  --hl-cell: var(--reply-cell);
+  --hl-line: var(--reply-border);
+  --hl-text: var(--reply-text);
+  --hl-muted: var(--reply-muted);
+  --hl-tint: transparent;
+  --hl-accent: var(--reply-accent);
+  --hl-accent-bg: var(--reply-accent-soft);
+  --hl-accent-line: var(--reply-accent-line);
+  --hl-new-bg: var(--reply-success-soft);
+  --hl-new-line: color-mix(in srgb, var(--reply-success) 35%, transparent);
+  --vr-panel: var(--reply-surface);
+  --vr-card: var(--reply-elevated);
+  --vr-line: var(--reply-border);
+  --vr-text: var(--reply-text);
+  --vr-muted: var(--reply-muted);
+  --vr-tint: transparent;
+  --vr-accent: var(--reply-accent);
+  --vr-accent-bg: var(--reply-accent-soft);
+  --vr-accent-line: var(--reply-accent-line);
+  --vr-ok: var(--reply-success);
+  --vr-ok-bg: var(--reply-success-soft);
+  --vr-ok-line: color-mix(in srgb, var(--reply-success) 35%, transparent);
+  --vr-warn: var(--reply-warning);
+  --vr-warn-bg: var(--reply-warning-soft);
+  --vr-warn-line: color-mix(in srgb, var(--reply-warning) 35%, transparent);
+  --rel-text: var(--reply-text);
+  --rel-muted: var(--reply-muted);
+  --rel-danger: var(--reply-accent);
+  --rel-danger-bg: var(--reply-accent-soft);
+}
+
+.chat-linha:has(> .chat-assistant) { width: 100%; }
+html .chat-assistant {
+  width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box;
+  padding: 4px 0; border: 0;
+  border-radius: 0; background: transparent;
+  color: var(--reply-text); font-family: var(--reply-font); font-size: 15px; line-height: 1.75;
+}
+html .chat-assistant:has(.resposta, .painel-ti, .hl-root, .historico-log, .chat-rota, .chat-grafico, .chat-sites, .chat-email, .chat-modelo, .chat-ficha, .chat-relacao, .chat-relatorio, .fu) {
+  padding: 0; background: transparent; border: 0; box-shadow: none;
+}
+html .chat-assistant.chat-digitando { width: auto; padding: 0; background: transparent; border: 0; color: var(--reply-muted); }
+
+html .chat-assistant :is(.resposta, .painel-ti, .hl-painel, .historico-log .historico, .chat-grafico, .chat-sites, .chat-email, .chat-ficha, .chat-relacao, .chat-previa, .chat-relatorio),
+html :is(.chat-assistant, .chat-rota-tela) .chat-rota .cartao {
+  width: 100%; max-width: none; box-sizing: border-box; margin-inline: auto;
+  padding: var(--reply-space); border: 1px solid var(--reply-border); border-radius: var(--reply-radius);
+  background: var(--reply-surface); color: var(--reply-text); box-shadow: none;
+  font-family: var(--reply-font); font-size: 14px; line-height: 1.6;
+}
+html .chat-assistant :is(.hl-root, .historico-log, .chat-modelo) { width: 100%; max-width: none; color: var(--reply-text); font-family: var(--reply-font); }
+html .chat-assistant :is(.chat-ficha, .chat-relacao) { padding: 0; }
+html .chat-assistant :is(.chat-ficha-corpo, .chat-relacao > header) { padding: var(--reply-space); }
+html .chat-assistant .chat-relacao .chat-encartes { padding: 0 var(--reply-space) var(--reply-space); }
+html .chat-assistant .chat-encarte { background: var(--reply-elevated); border-color: var(--reply-border); border-radius: var(--reply-radius-inner); box-shadow: none; }
+html .chat-assistant .chat-encarte::after { display: none; }
+html .chat-assistant .chat-encarte em { color: var(--metal, var(--reply-accent)); }
+html .chat-assistant .chat-ficha .chat-encarte { border-radius: var(--reply-radius) var(--reply-radius) 0 0; padding: var(--reply-space); }
+html .chat-assistant .chat-modelo-html { border: 1px solid var(--reply-border); border-radius: var(--reply-radius); }
+
+html .chat-assistant :is(h1, h2), .chat-rota-tela .chat-rota .cartao h2 {
+  color: var(--reply-text); font-family: var(--reply-font); font-size: 20px; font-weight: 650; letter-spacing: -.02em; line-height: 1.35;
+}
+html .chat-assistant h3 { color: var(--reply-text); font-size: 16px; font-weight: 650; line-height: 1.4; }
+html .chat-assistant :is(.sub, .chat-grafico-sub, .chat-email header p, .chat-sites header p) { color: var(--reply-muted); font-size: 12px; line-height: 1.6; }
+html .chat-assistant :is(.prazos-topo, .gatilhos-cabecalho, .projeto-tarefas-cabecalho, .historico-topo, .hl-topo) { margin-bottom: 0; padding-bottom: 20px; }
+html .chat-assistant .painel-ti h2 { font-size: 11px; color: var(--reply-muted); letter-spacing: .06em; }
+html .chat-assistant :is(.gatilhos-projeto, .projeto-tarefas-grupo) h3 { font-size: 13px; }
+html .chat-assistant :is(.gatilhos-cabecalho, .projeto-tarefas-cabecalho) p { color: var(--reply-muted); font-size: 12px; }
+html .chat-assistant :is(.gatilhos-atividade > strong, .projeto-tarefas-nome > strong) { font-size: 14px; line-height: 1.5; }
+html .chat-assistant :is(.gatilhos-atividade > p, .projeto-tarefas-precedente) { font-size: 12px; }
+html .chat-assistant :is(.gatilhos-codigo, .projeto-tarefas-nome > span, .gatilhos-projeto h3 > span, .projeto-tarefas-grupo h3 > span) { font-size: 11px; color: var(--reply-accent); }
+html .chat-assistant :is(.gatilhos-total, .projeto-tarefas-cabecalho > strong) { font-size: 30px; color: var(--reply-text); }
+html .chat-assistant :is(.gatilhos-atividade b.gatilhos-concluida, .chat-encarte small.em-dia) { color: var(--reply-success); }
+
+html .chat-assistant :is(.prazo-item, .atividade-linha, .gatilhos-item, .projeto-tarefas-lista > li, .hl-card, .evento-card, .painel-ti .stat, .painel-ti .chip, .painel-ti .painel-rank li, .painel-ti .painel-log li, .painel-ti .dia-item, .chat-grafico-stat) {
+  border-color: var(--reply-border); border-radius: var(--reply-radius-inner); background: var(--reply-elevated); box-shadow: none;
+}
+html .chat-assistant :is(.prazo-item, .painel-ti .stat, .painel-ti .painel-rank li, .painel-ti .painel-log li, .chat-encarte):hover { transform: none; box-shadow: none; }
+html .chat-assistant :is(.prazo-item, .historico-log .evento) { animation: none; }
+html .chat-assistant :is(.resposta-campos > div, .atividade-meta > div, .chat-rota dl.meta > div) { background: var(--reply-cell); border-radius: var(--reply-radius-inner); }
+html .chat-assistant :is(.resposta-campos dt, .atividade-meta dt, .chat-rota .meta dt) { color: var(--reply-muted); font-size: 11px; font-weight: 600; letter-spacing: .03em; }
+html .chat-assistant :is(.resposta-campos dd, .atividade-meta dd, .chat-rota .meta dd) { color: var(--reply-text); font-size: 14px; font-weight: 600; }
+html .chat-assistant .atividade-linha.atrasada .atividade-meta div:first-child dd { color: var(--reply-warning); }
+html .chat-assistant :is(.atividade-nome, .resposta .empresa) { font-size: 14px; font-weight: 650; line-height: 1.5; }
+html .chat-assistant :is(.atividade-nota, .resposta-detalhe) { color: var(--reply-muted); font-size: 12px; line-height: 1.6; }
+html .chat-assistant :is(.historico-log .avatar, .hl-avatar) { color: var(--reply-accent); border-color: var(--reply-accent-line); background: var(--reply-accent-soft); }
+html .chat-assistant :is(.historico-log .tipo, .hl-tipo, .resposta .codigo, .atividade-codigo, .chat-previa-campos span, .gatilhos-nova, .chat-rota .selo) { border-radius: 6px; font-size: 11px; }
+html .chat-assistant :is(.resposta .codigo, .atividade-codigo, .chat-previa-campos span, .gatilhos-nova) { color: var(--reply-accent); border-color: var(--reply-accent-line); background: var(--reply-accent-soft); }
+
+html .chat-assistant a { color: var(--reply-accent); text-underline-offset: 3px; }
+html .chat-assistant a:hover { text-decoration: underline; }
+html .chat-assistant :is(.chat-ver-consulta, .chat-email-baixar, .chat-email-acao, .chat-modelo-acao, .chat-sites a, .atividade-concluir, .chat-previa-acoes button, .projeto-tarefas-grupo > footer button) {
+  border: 1px solid var(--reply-accent-line); border-radius: 8px; background: var(--reply-accent-soft); color: var(--reply-accent); font-family: inherit; font-size: 12px; font-weight: 600; line-height: 1.4; box-shadow: none;
+}
+html .chat-assistant :is(.atividade-concluir, .chat-previa-acoes button, .projeto-tarefas-grupo > footer button) { padding: 8px 12px; }
+html .chat-assistant :is(.chat-previa-acoes button, .chat-email-enviar, .chat-modelo-enviar) { background: var(--reply-action); border-color: var(--reply-action); color: #fff; border-radius: 8px; }
+html .chat-assistant :is(.chat-previa-acoes button, .chat-email-enviar, .chat-modelo-enviar):hover:not(:disabled) { background: var(--reply-action-hover); border-color: var(--reply-action-hover); }
+html .chat-assistant :is(button, a, input, textarea, select):focus-visible { outline: 2px solid var(--reply-accent); outline-offset: 3px; }
+html .chat-assistant :is(.chat-email, .chat-modelo) :is(input, textarea, select) { border-color: var(--reply-border); border-radius: 8px; background: var(--reply-elevated); color: var(--reply-text); font: inherit; }
+html .chat-assistant :is(.chat-modelo-destinos, .chat-modelo-atividades) { background: var(--reply-surface); color: var(--reply-text); border-color: var(--reply-border); border-radius: var(--reply-radius-inner); }
+html .chat-assistant .chat-modelo-destinos span { background: var(--reply-elevated); color: var(--reply-text); }
+html .chat-assistant .chat-modelo-atividades strong { color: var(--reply-accent); }
+.chat-consulta-linha :is(.chat-ver-consulta, .chat-ferramenta) { border-color: var(--reply-border); color: var(--reply-accent); border-radius: 6px; }
+
+html .chat-assistant :is(.chat-tabela, .chat-relatorio-tabela-wrap) { border: 1px solid var(--reply-border); border-radius: var(--reply-radius-inner); background: var(--reply-surface); }
+html .chat-assistant .chat-tabela { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+html .chat-assistant .chat-tabela table { width: max-content; min-width: 100%; max-width: none; table-layout: auto; }
+html .chat-assistant .chat-tabela :is(th, td) { width: auto; min-width: 90px; max-width: 320px; white-space: normal; word-break: normal; overflow-wrap: break-word; }
+html .chat-assistant .chat-tabela th { white-space: nowrap; }
+html .chat-assistant .chat-tabela:focus-visible { outline: 2px solid var(--reply-accent); outline-offset: 3px; }
+html .chat-assistant :is(table, .chat-relatorio-tabela) { color: var(--reply-text); font-family: inherit; font-size: 13px; }
+html .chat-assistant :is(th, .chat-relatorio-tabela th) { padding: 10px 12px; background: var(--reply-elevated); border-color: var(--reply-border); color: var(--reply-accent); font-size: 11px; font-weight: 650; }
+html .chat-assistant :is(td, .chat-relatorio-tabela td) { padding: 10px 12px; border-color: var(--reply-border); font-size: 13px; }
+html .chat-assistant .chat-relatorio-tabela tbody tr:nth-child(even) { background: var(--reply-elevated); }
+html .chat-assistant blockquote { border-color: var(--reply-accent); color: var(--reply-muted); padding: 10px 14px; border-radius: 0 8px 8px 0; background: var(--reply-accent-soft); }
+html .chat-assistant :is(pre, .chat-consulta) { border: 1px solid var(--reply-border); border-radius: var(--reply-radius-inner); background: var(--reply-elevated); }
+html .chat-assistant .chat-consulta { color: var(--reply-text); }
+html .chat-assistant :not(pre) > code { color: var(--reply-accent); background: var(--reply-accent-soft); border-radius: 4px; padding: 2px 5px; }
+
+html .chat-assistant .chat-grafico { --low: var(--reply-success); --low-soft: var(--reply-success-soft); --mid: var(--reply-warning); --high: var(--reply-accent); --high-soft: var(--reply-accent-soft); --avg: var(--reply-muted); --glow: transparent; }
+html .chat-assistant .chat-grafico-stat strong { font-size: 20px; font-weight: 650; }
+html .chat-assistant .chat-grafico-stat span { font-size: 11px; }
+html .chat-assistant .chat-grafico-lista li { font-size: 13px; }
+html .chat-assistant .chat-sites a { padding: 12px; background: var(--reply-elevated); border-color: var(--reply-border); }
+html .chat-assistant .chat-sites a span { color: var(--reply-muted); }
+html :is(.chat-assistant, .chat-rota-tela) .chat-rota .consulta { padding: 0; border: 0; border-radius: var(--reply-radius); background: transparent; }
+html :is(.chat-assistant, .chat-rota-tela) .chat-rota .cartao { padding: 0; }
+html :is(.chat-assistant, .chat-rota-tela) .chat-rota .cartao-topo { padding: var(--reply-space); background: none; }
+html :is(.chat-assistant, .chat-rota-tela) .chat-rota .trechos { padding: var(--reply-space) var(--reply-space) 0; }
+
+/* The live follow-up shares the chat theme; exported documents and iframe
+   contents retain their document formatting. */
+html .chat-assistant .fu { --page: var(--reply-surface); --surface: var(--reply-surface); --ink: var(--reply-text); --muted: var(--reply-muted); --line: var(--reply-border); --red: var(--reply-accent); --red-dark: var(--reply-action); --red-soft: var(--reply-accent-soft); --ok: var(--reply-success); --ok-soft: var(--reply-success-soft); --warn: var(--reply-warning); --warn-soft: var(--reply-warning-soft); padding: 0; font-family: var(--reply-font); font-size: 14px; border-radius: var(--reply-radius); }
+html .chat-assistant .fu__card { border-radius: var(--reply-radius); border-color: var(--reply-border); box-shadow: none; }
+html .chat-assistant .fu__head { padding: var(--reply-space); border-bottom: 1px solid var(--reply-border); }
+html .chat-assistant .fu__title { font-size: 20px; font-weight: 650; }
+html .chat-assistant .fu__meta { background: var(--reply-elevated); border-radius: var(--reply-radius-inner); }
+html .chat-assistant .fu__section-title { background: var(--reply-elevated); color: var(--reply-accent); border-bottom: 1px solid var(--reply-border); }
+html .chat-assistant .chat-modelo-acoes button,
+html .chat-assistant .chat-email-baixar { border: 1px solid var(--reply-action); border-radius: 8px; background: var(--reply-action); color: #fff; }
+html .chat-assistant .chat-modelo-acoes button.secundario { background: var(--reply-accent-soft); color: var(--reply-accent); border-color: var(--reply-accent-line); }
+html .chat-assistant .chat-modelo-acoes button:hover:not(:disabled),
+html .chat-assistant .chat-email-baixar:hover { background: var(--reply-action-hover); color: #fff; }
+html .chat-assistant .chat-email header em.processo { color: var(--reply-accent); background: var(--reply-accent-soft); }
+html .chat-assistant .chat-email > b { color: var(--reply-accent); }
+html .chat-assistant .chat-ficha-corpo dt { color: var(--reply-muted); }
+html .chat-assistant .chat-ficha-corpo dd { color: var(--reply-text); }
+html .chat-assistant > .chat-encartes > .chat-encarte small.em-dia,
+html .chat-assistant > .chat-encarte small.em-dia { color: var(--reply-success); }
+.chat-erro { border-color: var(--reply-accent-line); border-radius: var(--reply-radius-inner); background: var(--reply-accent-soft); color: var(--reply-accent); font-size: 13px; }
+
+@media (max-width: 620px) {
+  :root { --reply-space: 16px; }
+  html .chat-assistant :is(h1, h2), .chat-rota-tela .chat-rota .cartao h2 { font-size: 18px; }
+  html .chat-assistant .painel-ti h2 { font-size: 11px; }
+  html .chat-assistant :is(.gatilhos-cabecalho, .projeto-tarefas-cabecalho) h2 { font-size: 18px; }
+  html .chat-assistant :is(.gatilhos-total, .projeto-tarefas-cabecalho > strong) { font-size: 26px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html .chat-assistant *, .chat-assistant *::before, .chat-assistant *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+
+/* Conversation first: prose stays open; structured data gets one quiet frame. */
+html .chat-assistant > .chat-resposta-autor { display: flex; align-items: center; gap: 10px; margin: 0 0 18px; padding: 0; color: var(--reply-text); font-size: 13px; font-weight: 650; line-height: 1.3; }
+html .chat-assistant .chat-resposta-autor b { color: var(--reply-muted); font-weight: 400; margin-left: 3px; }
+html .chat-assistant .chat-resposta-marca { display: grid; place-items: center; width: 28px; height: 28px; background: transparent; }
+html .chat-assistant .chat-resposta-marca img { display: block; width: 28px; height: auto; object-fit: contain; }
+html.tema-claro .chat-assistant .chat-resposta-marca img { filter: invert(1); }
+html .chat-assistant .resposta-documento { width: 100%; min-width: 0; color: var(--reply-text); font: inherit; }
+html .chat-assistant .resposta-documento + .resposta-documento { margin-top: 22px; }
+html .chat-assistant .resposta-documento-topo { margin-bottom: 20px; }
+html .chat-assistant .resposta-documento-topo h2 { margin: 0; font-size: 21px; font-weight: 650; line-height: 1.4; letter-spacing: -.02em; }
+html .chat-assistant .resposta-contexto { margin: 7px 0 0; color: var(--reply-muted); font-size: 13px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+html .chat-assistant .resposta-prosa { min-width: 0; font-size: 15px; line-height: 1.75; }
+html .chat-assistant .resposta-prosa p { margin: 0 0 14px; }
+html .chat-assistant .resposta-prosa > :last-child { margin-bottom: 0; }
+html .chat-assistant .resposta-prosa :is(ul, ol) { padding-left: 24px; margin: 12px 0 18px; }
+html .chat-assistant .resposta-prosa li { padding-left: 3px; margin-block: 5px; }
+html .chat-assistant .resposta-prosa :is(h2, h3) { margin: 22px 0 10px; }
+html .chat-assistant .resposta-estado-vazio { display: flex; align-items: center; gap: 14px; padding: 20px; border: 1px solid var(--reply-border); border-radius: 12px; background: var(--reply-surface); }
+html .chat-assistant .resposta-estado-icone { flex: 0 0 36px; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; background: var(--reply-elevated); color: var(--reply-muted); }
+html .chat-assistant .resposta-estado-icone svg { width: 21px; height: 21px; }
+html .chat-assistant .resposta-estado-vazio .resposta-prosa { color: var(--reply-muted); font-size: 14px; }
+html .chat-assistant .resposta:has(> .resposta-texto:only-child) { padding: 0; border: 0; border-radius: 0; background: transparent; font-size: 15px; line-height: 1.75; }
+html .chat-assistant .resposta-texto > :is(p, ul, ol) { margin-block: 0 16px; }
+html .chat-assistant .resposta-texto > :last-child { margin-bottom: 0; }
+html .chat-assistant :is(h1, h2) { margin-block: 24px 12px; font-size: 21px; font-weight: 650; }
+html .chat-assistant :is(h1, h2, h3):first-child { margin-top: 0; }
+html .chat-assistant h3 { margin-block: 20px 10px; }
+html .chat-assistant .resposta-texto :is(ul, ol) > li { margin-block: 5px; }
+html .chat-assistant .resultado-consulta { margin-top: 20px; width: 100%; min-width: 0; color: var(--reply-text); font-size: 14px; line-height: 1.55; }
+html .chat-assistant .resultado-consulta:first-child { margin-top: 0; }
+html .chat-assistant .resultado-cabecalho { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 12px; }
+html .chat-assistant .resultado-cabecalho h3 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: 0; }
+html .chat-assistant .resultado-cabecalho > span { color: var(--reply-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+html .chat-assistant .resultado-tabela { width: 100%; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; border: 1px solid var(--reply-border); border-radius: 12px; background: var(--reply-surface); }
+html .chat-assistant .resultado-tabela table { width: max-content; min-width: 100%; table-layout: auto; border-collapse: separate; border-spacing: 0; margin: 0; font-size: 13px; }
+html .chat-assistant .resultado-tabela :is(th, td) { width: auto; min-width: 130px; max-width: 380px; padding: 12px 16px; text-align: left; vertical-align: top; white-space: normal; overflow-wrap: break-word; word-break: normal; border: 0; border-bottom: 1px solid var(--reply-border); }
+html .chat-assistant .resultado-tabela th { background: var(--reply-elevated); color: var(--reply-muted); font-size: 12px; font-weight: 600; white-space: nowrap; }
+html .chat-assistant .resultado-tabela th:first-child { color: var(--reply-text); }
+html .chat-assistant .resultado-tabela tbody tr:last-child td { border-bottom: 0; }
+html .chat-assistant .resultado-tabela tbody tr:hover { background: var(--reply-elevated); }
+html .chat-assistant .resultado-tabela .numero { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+html .chat-assistant .resultado-tabela .vazio { color: var(--reply-muted); }
+html .chat-assistant .resultado-rodape { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding-block: 12px 4px; color: var(--reply-muted); font-size: 12px; }
+html .chat-assistant .resultado-rodape button { display: inline-flex; align-items: center; gap: 10px; min-height: 36px; padding: 7px 12px; border: 1px solid var(--reply-accent-line); border-radius: 8px; background: var(--reply-accent-soft); color: var(--reply-accent); font: inherit; font-weight: 600; cursor: pointer; }
+html .chat-assistant .resultado-rodape button span { font-weight: 400; opacity: .8; }
+html .chat-assistant .resultado-rodape button:hover { border-color: var(--reply-accent); }
+html .chat-assistant .resultado-tabela:focus-visible { outline: 2px solid var(--reply-accent); outline-offset: 3px; }
+html .chat-assistant .resultado-totais { display: flex; flex-wrap: wrap; gap: 8px 20px; padding: 0 0 14px; margin: 0; list-style: none; font-size: 13px; color: var(--reply-muted); }
+html .chat-assistant .resultado-totais li { margin: 0; }
+html .chat-consulta-linha { gap: 8px; margin-top: 12px; }
+html .chat-consulta-linha :is(.chat-ver-consulta, .chat-ferramenta) { background: transparent; border-color: transparent; color: var(--reply-muted); font-size: 12px; padding: 5px 7px; }
+html .chat-consulta-linha :is(.chat-ver-consulta, .chat-ferramenta):hover { background: var(--reply-accent-soft); color: var(--reply-accent); }
+html .chat-assistant .chat-consulta-linha { gap: 4px; padding-top: 4px; }
+html .chat-assistant .chat-consulta-linha :is(.chat-ver-consulta, .chat-avaliacao > button) { display: inline-flex; align-items: center; justify-content: center; min-height: 32px; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--reply-muted); box-shadow: none; opacity: 1; filter: none; font-size: 12px; font-weight: 400; cursor: pointer; }
+html .chat-assistant .chat-consulta-linha :is(.chat-ver-consulta, .chat-avaliacao > button):hover { background: var(--reply-elevated); color: var(--reply-text); }
+html .chat-assistant .chat-consulta-linha :is(.chat-ver-consulta, .chat-avaliacao > button):focus-visible { outline: 2px solid var(--reply-accent); outline-offset: 2px; }
+html .chat-assistant .chat-consulta-linha :is(.chat-copiar-resposta, .chat-avaliacao > button) { width: 32px; height: 32px; padding: 8px; }
+html .chat-assistant .chat-consulta-linha .chat-avaliacao { gap: 2px; }
+html .chat-assistant .chat-consulta-linha .chat-avaliacao > button.ativo { color: var(--reply-accent); }
+html .chat-assistant .chat-consulta-linha .chat-tempo { margin-left: 8px; color: var(--reply-muted); font-size: 11px; opacity: .75; font-variant-numeric: tabular-nums; }
+html .chat-assistant .chat-consulta-linha .chat-uso { display: inline-flex; align-items: center; gap: 5px; height: auto; padding: 0; margin-left: 6px; border: 0; border-radius: 0; background: transparent; color: var(--reply-muted); font-size: 11px; line-height: 1.5; opacity: .75; font-variant-numeric: tabular-nums; }
+html .chat-assistant .chat-consulta-linha .chat-uso :is(b, em) { color: inherit; font-style: normal; font-weight: 400; }
+.chat-pensando-resposta { display: flex; align-items: center; gap: 10px; min-height: 40px; max-width: 100%; padding: 4px 0; color: var(--reply-muted); font-family: var(--reply-font); font-size: 14px; line-height: 1.5; }
+.pensando-simbolo { position: relative; flex: 0 0 28px; width: 28px; height: 24px; }
+.pensando-simbolo img { display: block; width: 100%; height: 100%; object-fit: contain; opacity: .45; }
+html.tema-claro .pensando-simbolo img { filter: invert(1); }
+.pensando-simbolo > .pensando-brilho { position: absolute; inset: 0; overflow: hidden; mask: var(--pensando-logo) center / contain no-repeat; -webkit-mask: var(--pensando-logo) center / contain no-repeat; }
+.pensando-brilho > i { position: absolute; inset: 0; background: linear-gradient(110deg, transparent 15%, var(--reply-accent) 50%, transparent 85%); will-change: transform; animation: pensando-brilho 1.8s linear infinite; }
+.pensando-texto { min-width: 0; overflow-wrap: anywhere; }
+.pensando-pontos { display: inline-flex; flex: 0 0 auto; gap: 4px; align-items: center; margin-left: -4px; }
+.pensando-pontos i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; opacity: .3; animation: pensando-ponto 1.5s ease-in-out infinite; }
+.pensando-pontos i:nth-child(2) { animation-delay: .18s; }
+.pensando-pontos i:nth-child(3) { animation-delay: .36s; }
+@keyframes pensando-brilho { from { transform: translate3d(-110%, 0, 0); } to { transform: translate3d(110%, 0, 0); } }
+@keyframes pensando-ponto { 0%, 65%, 100% { opacity: .25; transform: translateY(0); } 30% { opacity: .9; transform: translateY(-2px); } }
+@media (prefers-reduced-motion: reduce) {
+  .pensando-brilho > i, .pensando-pontos i { animation: none; will-change: auto; }
+  .pensando-simbolo > span { display: none; }
+  .pensando-simbolo img, .pensando-pontos i { opacity: .65; }
+}
+@media (max-width: 620px) {
+  html .chat-assistant { font-size: 15px; }
+  html .chat-assistant .resultado-tabela :is(th, td) { padding: 11px 12px; min-width: 115px; }
+}
+
+/* One quiet action style across previews, pagination and response actions. */
+html .chat-assistant :is(.chat-previa-acoes button, .atividade-concluir, .resultado-rodape button, .projeto-tarefas-grupo > footer button, .chat-modelo-acoes button, .chat-modelo-acoes button.secundario, .chat-email-baixar, .chat-email-acao, .chat-modelo-acao, .chat-relatorio-acoes button, .chat-pdf),
+html .fila-atividades footer button {
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  min-height:36px; height:auto; padding:8px 12px;
+  border:1px solid var(--reply-border); border-radius:9px;
+  background:var(--reply-elevated); color:var(--reply-text); box-shadow:none;
+  font:inherit; font-size:12px; font-weight:550; line-height:1.4;
+  text-decoration:none; cursor:pointer;
+  transition:background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+html .chat-assistant :is(.chat-previa-acoes button, .atividade-concluir, .resultado-rodape button, .projeto-tarefas-grupo > footer button, .chat-modelo-acoes button, .chat-modelo-acoes button.secundario, .chat-email-baixar, .chat-email-acao, .chat-modelo-acao, .chat-relatorio-acoes button, .chat-pdf):hover:not(:disabled),
+html .fila-atividades footer button:hover:not(:disabled) { background:var(--reply-cell); border-color:var(--reply-accent-line); color:var(--reply-text); text-decoration:none; }
+html .chat-assistant :is(.chat-previa-acoes button, .atividade-concluir, .resultado-rodape button, .projeto-tarefas-grupo > footer button, .chat-modelo-acoes button, .chat-modelo-acoes button.secundario, .chat-email-baixar, .chat-email-acao, .chat-modelo-acao, .chat-relatorio-acoes button, .chat-pdf):disabled { opacity:.45; cursor:not-allowed; }
+html .chat-assistant .chat-previa-campos { gap:6px; }
+html .chat-assistant .chat-previa .chat-previa-campos span { padding:4px 8px; border:1px solid var(--reply-border); border-radius:6px; background:var(--reply-elevated); color:var(--reply-muted); font-size:11px; font-weight:400; line-height:1.4; cursor:default; }
+html .chat-assistant .chat-previa-acoes { gap:12px; padding-top:4px; }
+html .chat-assistant .chat-previa-acoes button svg { flex-shrink:0; color:var(--reply-accent); }
+html .chat-assistant .chat-previa-acoes small { color:var(--reply-muted); font-size:12px; line-height:1.5; }
+html .chat-assistant .chat-previa .chat-relatorio-tabela th { color:var(--reply-muted); }
+@media (prefers-reduced-motion:reduce) { html .fila-atividades footer button { transition:none; } }

@@ -1,4 +1,5 @@
 import { memo, useState } from "react";
+import { IconeAcaoResposta } from "./IconeAcaoResposta";
 
 type Props = { pergunta: string; resposta: string; visao: string };
 
@@ -17,7 +18,7 @@ export const AvaliacaoResposta = memo(function AvaliacaoResposta({ pergunta, res
   const [enviado, setEnviado] = useState(false);
 
   if (!pergunta.trim()) return null;
-  if (enviado) return <span className="chat-avaliacao-ok">Obrigado, a IA vai levar isso em conta.</span>;
+  if (enviado) return <span className="chat-avaliacao-ok" role="status">Avaliação enviada</span>;
 
   return (
     <span className="chat-avaliacao">
@@ -26,6 +27,7 @@ export const AvaliacaoResposta = memo(function AvaliacaoResposta({ pergunta, res
         className={nota === 1 ? "ativo" : ""}
         title="Resposta boa"
         aria-label="Resposta boa"
+        aria-pressed={nota === 1}
         onClick={() => {
           setNota(1);
           setAberta(false);
@@ -33,19 +35,20 @@ export const AvaliacaoResposta = memo(function AvaliacaoResposta({ pergunta, res
           setEnviado(true);
         }}
       >
-        👍
+        <IconeAcaoResposta nome="positivo" />
       </button>
       <button
         type="button"
         className={nota === -1 ? "ativo" : ""}
         title="Resposta errada"
         aria-label="Resposta errada"
+        aria-pressed={nota === -1}
         onClick={() => {
           setNota(-1);
           setAberta(true);
         }}
       >
-        👎
+        <IconeAcaoResposta nome="negativo" />
       </button>
       {aberta ? (
         <form

@@ -1,0 +1,37 @@
+.meu-dia { width:100%; min-width:0; color:var(--reply-text); font-family:var(--reply-font); }
+.meu-dia-abertura { margin-bottom:24px; padding:20px 22px; background:var(--reply-surface); border:1px solid var(--reply-border); border-radius:14px; }
+.meu-dia-topo { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:14px 20px; }
+html .chat-assistant .meu-dia-topo h2 { margin:0; font-size:20px; font-weight:650; line-height:1.35; }
+.meu-dia-topo p { margin:5px 0 0; color:var(--reply-muted); font-size:11px; line-height:1.5; letter-spacing:.015em; }
+.meu-dia-calendario { display:inline-flex; align-items:center; gap:8px; padding-top:4px; color:var(--reply-muted); font-size:12px; line-height:1.5; }
+.meu-dia-calendario svg { flex-shrink:0; opacity:.7; }
+.meu-dia-resumo { display:flex; flex-wrap:wrap; gap:8px; margin:18px 0 0; padding:0; }
+.meu-dia-resumo > div { display:flex; align-items:center; gap:8px; min-width:0; padding:8px 12px; background:var(--reply-elevated); border-radius:8px; }
+.meu-dia-resumo dt { color:var(--reply-muted); font-size:12px; font-weight:400; line-height:1.5; }
+.meu-dia-resumo dd { order:-1; margin:0; color:var(--reply-muted); font-size:18px; font-weight:600; line-height:1.2; letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
+.meu-dia-resumo .com-pendencias dd { color:var(--reply-text); }
+.meu-dia-resumo .com-pendencias.atrasada { background:var(--reply-accent-soft); }
+.meu-dia-resumo .com-pendencias.atrasada dd { color:var(--reply-accent); }
+.meu-dia-grupos { display:flex; flex-direction:column; gap:24px; }
+html .chat-assistant .meu-dia-grupos .resultado-consulta { margin:0; }
+html .chat-assistant .meu-dia .resultado-tabela table { width:100%; min-width:700px; table-layout:fixed; }
+html .chat-assistant .meu-dia .resultado-tabela :is(th,td) { min-width:0; max-width:none; }
+html .chat-assistant .meu-dia .resultado-tabela th:first-child { width:32%; }
+html .chat-assistant .meu-dia .resultado-tabela th:nth-child(2) { width:18%; }
+html .chat-assistant .meu-dia .resultado-tabela th:nth-child(3) { width:26%; }
+html .chat-assistant .meu-dia .resultado-tabela th:nth-child(4),html .chat-assistant .meu-dia .resultado-tabela th:nth-child(5) { width:12%; }
+html .chat-assistant .meu-dia .resultado-tabela table:has(th:nth-child(6)) th { width:auto; }
+html .chat-assistant .meu-dia .resultado-tabela table:has(th:nth-child(6)) th:first-child { width:26%; }
+.meu-dia-vazio { margin:0; padding:18px 20px; border:1px solid var(--reply-border); border-radius:12px; background:var(--reply-surface); color:var(--reply-muted); font-size:14px; line-height:1.6; }
+html .chat-assistant .meu-dia-abrir { display:inline-flex; align-items:flex-start; gap:8px; padding:0; border:0; background:transparent; color:var(--reply-text); font:inherit; text-align:left; line-height:inherit; cursor:pointer; }
+.meu-dia-abrir svg { flex-shrink:0; margin-top:3px; opacity:.5; }
+html .chat-assistant .meu-dia-abrir:hover { color:var(--reply-accent); }
+html .chat-assistant .meu-dia-abrir:disabled { opacity:.5; cursor:wait; }
+.meu-dia-abertura-status { margin:0 0 18px; color:var(--reply-muted); font-size:13px; }
+.meu-dia-abertura-status.falhou { color:var(--reply-accent); }
+@media(max-width:620px) {
+ .meu-dia-abertura { padding:16px; }
+ .meu-dia-calendario { padding:0; font-size:11px; }
+ .meu-dia-resumo > div { padding:8px 10px; gap:6px; }
+ .meu-dia-resumo dt { font-size:11px; }
+}

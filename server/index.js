@@ -1,4 +1,6 @@
+import { appSessions, startAppSessionBridge } from './centralSessions.js';
 import { emailsAdmin } from "./env.js";
+import { modeloGoogle } from "./google.js";
 import { listarSqlite, lerLinhaSqlite, lerTabelaSqlite } from "./sqliteVisao.js";
 import { adotarTokenGoogle, apagarSessao, completarFotos, contaDoToken, puxarFotoDaConta } from "./identidade.js";
 import express from "express";
@@ -9,13 +11,21 @@ import { montarSelect, montarXpaths, tabelasDaLinha } from "./query.js";
 import { enriquecerNomes, nomearSql } from "./nomes.js";
 import { compararComCadastro } from "./atual.js";
 import { conversar } from "./ia.js";
+import { consultouNoTurno } from "./turnoConversa.js";
 import { calendarioAtual, sqlDoPeriodo, sqlParaExecutar, sqlSemExcecao } from "./datasPedido.js";
+import { numeroCitado } from "./headcargoDesktop.js";
+import { operacoesBot, classificarResultado, textoTarefa } from "./operacoesBot.js";
+import { instalarRotasBot } from "./rotasBot.js";
+import { verificarPreenchimento } from "./inteligenciaOperacional.js";
+import { executarNoDesktop } from "./filaDesktop.js";
 import { textoCalculos } from "./calculos.js";
-import { resumirGmail } from "./gmail.js";
+import { baixarAnexoGmail, resumirGmail } from "./gmail.js";
+import { enviarFollowupGmail, enviarHtmlGmail } from "./emailFollowup.js";
 import { pedidoPassagemDaConversa, pesquisarPassagens, respostaPassagemIncompleta } from "./passagens.js";
 import { pedeHistorico, pedidoFichaCliente, pedidoRelacionamento, responderPorRegra } from "./regras.js";
-import { executarFuncao, chaveConsulta, consultaEmCache, consultaFresca, guardarConsulta, perguntaMeuDia } from "./funcoes.js";
-import { painelDoUsuario, resumoInicial } from "./inicio.js";
+import { executarFuncao, executarComandoBot, emailsDoProcesso, chaveConsulta, consultaEmCache, consultaFresca, guardarConsulta, perguntaMeuDia } from "./funcoes.js";
+import { pedidoProjetoDaConversa } from "./projetoPedido.js";
+import { mudancasDosAcompanhados, painelDoUsuario, resumoInicial } from "./inicio.js";
 import { apagarConta, fotoDaConta, fotoPadrao, listarContas, permissaoDe, registrarConta, salvarConta } from "./acesso.js";
 import { perfilDaConta } from "./setor.js";
 import { filtrarLinhas, motivoBloqueio, recorteDaVisao } from "./recorte.js";
@@ -105,6 +115,7 @@ app.get("/api/ia/saude", (_req, res) => {
   res.json({
     ok: true,
     commit: process.env.MAICON_GIT_SHA || "",
+    recursos: { tarefasBot: true, requisitosAtividade: true },
     provedores: {
       google: Boolean(String(process.env.GOOGLE_API_KEY || "").trim()) || compartilhados.has("google"),
       deepseek: Boolean(String(process.env.OPENROUTER_API_KEY || "").trim()) || compartilhados.has("openrouter"),
@@ -120,7 +131,7 @@ app.use("/api", async (req, res, next) => {
     if (req.conta.entregarSessao) res.setHeader("X-Sessao", req.conta.entregarSessao);
     next();
   } catch (erro) {
-    res.status(401).json({ erro: erro?.message || "Entre de novo com o Google." });
+    res.status(401).json({ erro: erro?.message || "Entre de novo com o Google.", code: erro?.code || "unauthorized" });
   }
 });
 
@@ -196,6 +207,15 @@ async function conectar() {
   return poolCompartilhado();
 }
 
+const motorBot = operacoesBot((etapa, conta) => executarNoDesktop(async () => {
+  const acesso = permissaoDe(conta);
+  if (acesso.removida || acesso.papel !== "admin") throw new Error("O solicitante não tem mais permissão para executar o bot.");
+  const pool = await conectar();
+  const resultado = classificarResultado(await executarComandoBot(pool, etapa, { email: conta, acesso, recorte: { visao: "atividades" } }), etapa);
+  return etapa.acao === "preencher" ? verificarPreenchimento(pool, etapa, resultado) : resultado;
+}));
+instalarRotasBot(app, { motor: motorBot, acesso: permissaoDe, conectar });
+
 async function derrubarPool() {
   const atual = poolFixo;
   poolFixo = null;
@@ -240,7 +260,10 @@ async function testar(_req, res) {
   }
 }
 
+app.get("/api/sessao", (req, res) => res.json({ nome: req.conta.nome, email: req.conta.email }));
+
 app.delete("/api/sessao", (req, res) => {
+  appSessions.end(String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim());
   apagarSessao(req.conta.email);
   res.json({ ok: true });
 });
@@ -288,6 +311,19 @@ app.post("/api/inicio/resumo", async (req, res) => {
     }));
   } catch (erro) {
     res.status(400).json({ erro: mensagemErro(erro) });
+  } finally {
+    await pool?.close().catch(() => {});
+  }
+});
+
+app.get("/api/inicio/mudancas", async (req, res) => {
+  let pool;
+  try {
+    pool = await conectar();
+    res.json(await mudancasDosAcompanhados(pool, emailDaSessao(req)));
+  } catch (erro) {
+    console.error("mudancas dos acompanhados:", erro?.message || erro);
+    res.json({ itens: [] });
   } finally {
     await pool?.close().catch(() => {});
   }
@@ -606,12 +642,13 @@ async function escreverAosPoucos(enviar, texto) {
 function numeroPedidoRota(mensagens) {
   const usuarios = (Array.isArray(mensagens) ? mensagens : []).filter((item) => item?.role === "user");
   const ultimo = String(usuarios.at(-1)?.content ?? "");
-  const numero = ultimo.match(/\b([A-Za-z]{1,4}\d{2,6}-\d{2})\b/i);
+  const numero = numeroCitado(ultimo);
   if (!numero) return "";
   const contexto = usuarios.slice(-3).map((item) => String(item.content ?? "")).join("\n");
-  const soNumero = ultimo.trim().length <= numero[1].length + 8;
+  const soNumero = ultimo.trim().length <= numero.length + 8;
   if (pedeHistorico(ultimo)) return "";
-  if (/rota|navio|rastre/i.test(ultimo) || (soNumero && /rota|navio|rastre/i.test(contexto))) return numero[1].toUpperCase();
+  if (/\batividad/i.test(ultimo)) return "";
+  if (/rota|navio|rastre/i.test(ultimo) || (soNumero && /rota|navio|rastre/i.test(contexto))) return numero;
   return "";
 }
 
@@ -643,24 +680,66 @@ function pedidoLogDePessoa(mensagens) {
   return { usuario, hoje: /\bhoje\b/i.test(contexto) };
 }
 
+function pedidoPreencherCampo(mensagens) {
+  const usuarios = (Array.isArray(mensagens) ? mensagens : []).filter((item) => item?.role === "user");
+  let frase = String(usuarios.at(-1)?.content ?? "");
+  const anterior = String(usuarios.at(-2)?.content ?? "");
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(frase.trim()) && /\b(pr[e]?ench|digit|coloque|ponha|informe)\w*/i.test(anterior)) {
+    frase = `${anterior} ${frase.trim()}`;
+  }
+  if (!/\b(pr[e]?ench|digit|coloque|ponha|informe)\w*/i.test(frase)) return null;
+  const numero = numeroCitado(frase);
+  if (!numero || !/\steste$/i.test(numero)) return null;
+  const data = frase.match(/\b(\d{1,2}\/\d{1,2}\/\d{2,4})\b/);
+  const aspas = frase.match(/[“"]([^”"]{1,80})[”"]/);
+  const valor = String(data?.[1] || aspas?.[1] || "").trim();
+  let campo = frase
+    .replace(/\b(preencha|preencher|preenche|prencha|prenche|digite|digita|digita[ae]|coloque|ponha|informe|informar)\b/gi, " ")
+    .replace(/\b(nesse|neste|desse|deste)\s+processo\b/gi, " ")
+    .replace(/\bprocesso\b/gi, " ")
+    .replace(/\baqui\b/gi, " ")
+    .replace(/\bcom\b/gi, " ")
+    .replace(new RegExp(numero.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), " ");
+  if (valor) campo = campo.replace(valor, " ");
+  campo = campo.replace(/^\s*(?:a|o|as|os)\s+/i, "").replace(/\s+/g, " ").trim();
+  if (campo.length < 3) return null;
+  return { numero, campo, valor };
+}
+
+function pedidoModalAtividade(mensagens) {
+  const usuarios = (Array.isArray(mensagens) ? mensagens : []).filter((item) => item?.role === "user");
+  const ultimo = String(usuarios.at(-1)?.content ?? "").trim().toUpperCase();
+  if (!/^(IM|IA|EM|EA)$/.test(ultimo)) return null;
+  const anterior = String(usuarios.at(-2)?.content ?? "");
+  if (!anterior) return null;
+  const args = { modalidade: ultimo };
+  if (/gatilh/i.test(anterior)) return { nome: "gatilhos_atividade", args };
+  if (/monitorament/i.test(anterior)) return { nome: "monitores_campo", args };
+  if (/projeto de tarefas/i.test(anterior)) return { nome: "projeto_tarefas", args };
+  return null;
+}
+
 function pedidoContinuacao(mensagens) {
   const lista = Array.isArray(mensagens) ? mensagens : [];
   const usuarios = lista.filter((item) => item?.role === "user");
   const ultimo = String(usuarios.at(-1)?.content ?? "");
-  const numero = ultimo.match(/\b([A-Za-z]{1,4}\d{2,6}-\d{2})\b/i);
-  if (!numero || ultimo.trim().length > numero[1].length + 8) return null;
+  const numero = numeroCitado(ultimo);
+  if (!numero || ultimo.trim().length > numero.length + 8) return null;
   let assunto = "";
   for (let i = usuarios.length - 2; i >= 0; i--) {
     const texto = String(usuarios[i]?.content ?? "");
-    const achado = texto.match(/\b([A-Za-z]{1,4}\d{2,6}-\d{2})\b/i);
-    const soNumero = achado && texto.trim().length <= achado[1].length + 8;
+    const achado = numeroCitado(texto);
+    const soNumero = achado && texto.trim().length <= achado.length + 8;
     if (!soNumero && texto.trim()) {
       assunto = texto;
       break;
     }
   }
   if (!assunto) return null;
-  const n = numero[1].toUpperCase();
+  const n = numero;
+  if (/documento|anexo/i.test(assunto) && /e-?mail/i.test(assunto)) {
+    return { nome: "emails_gmail", args: { processo: n, documentos: true } };
+  }
   if (/campo(?:s)? livres?/i.test(assunto) && !/quem (?:alter|inclu|mud)|hist[oó]rico/i.test(assunto)) {
     return { nome: "documental_ce", args: { foco: "campos", numero: n } };
   }
@@ -668,7 +747,8 @@ function pedidoContinuacao(mensagens) {
     return { nome: "documental_ce", args: { foco: "processo", caso: "ambos", numero: n } };
   }
   if (pedeHistorico(assunto)) return null;
-  if (/rota|navio|rastre/i.test(assunto)) return { nome: "rota_processo", args: { numero: n } };
+  if (/follow[\s-]?up/i.test(assunto) && !/\benvi|\bmand|\bencaminh/i.test(assunto)) return { nome: "modelo_followup", args: { numero: n } };
+  if (/rota|navio|rastre/i.test(assunto) && !/\batividad/i.test(assunto)) return { nome: "rota_processo", args: { numero: n } };
   if (/acompanhament/i.test(assunto)) return { nome: "acompanhamentos_processo", args: { numero: n } };
   if (/proposta|oferta/i.test(assunto)) return { nome: "proposta_processo", args: { numero: n } };
   if (/\btaxas?\b/i.test(assunto)) return { nome: "taxas_processo", args: { numero: n } };
@@ -704,10 +784,32 @@ app.post("/api/chat", async (req, res) => {
       return;
     }
     const mensagens = Array.isArray(req.body?.mensagens) ? req.body.mensagens : [];
-    const jaConsultou = mensagens.some((m) => m.role === "tool");
+    const jaConsultou = consultouNoTurno(mensagens);
     const pedido = [...mensagens].reverse().find((m) => m.role === "user")?.content;
+    if (pedido && !req.body?.relatorio && acessoChat.papel === "admin") {
+      const preenchimento = pedidoPreencherCampo(mensagens);
+      const tarefaPendente = motorBot.listar(emailChat).some((t) => ["aguardando", "pausada", "revisao", "falhou"].includes(t.estado) && t.etapas.some((e) => e.numero.toLowerCase() === preenchimento?.numero?.toLowerCase()));
+      if (preenchimento && !tarefaPendente) {
+        let texto = `Diga o valor que o bot deve digitar em ${preenchimento.campo} no processo ${preenchimento.numero}. Ele procura esse campo na tela do HeadCargo.`;
+        if (preenchimento.valor) {
+          const poolPreencher = await conectar();
+          try {
+            const r = await executarFuncao(poolPreencher, "comando_bot", { ...preenchimento, acao: "preencher" }, { email: emailChat, acesso: acessoChat, recorte: { visao: "atividades" } });
+            texto = r.texto;
+            if (r.tarefaId) texto = textoTarefa(await motorBot.aguardar(r.tarefaId, emailChat, { sinal: controle.signal, progresso: (status) => enviar({ tipo: "status", texto: status }) }));
+          } finally {
+            await poolPreencher.close().catch(() => {});
+          }
+        }
+        encerrado = true;
+        await escreverAosPoucos(enviar, texto);
+        enviar({ tipo: "fim", mensagem: { role: "assistant", content: texto } });
+        res.end();
+        return;
+      }
+    }
     if (!jaConsultou && pedido && !req.body?.relatorio) {
-      const direta = await responderPorRegra(conectar, pedido);
+      const direta = await responderPorRegra(conectar, pedido, acessoChat.papel === "admin");
       if (direta) {
         encerrado = true;
         await escreverAosPoucos(enviar, direta);
@@ -736,6 +838,29 @@ app.post("/api/chat", async (req, res) => {
           }
         } finally {
           await poolDoc.close().catch(() => {});
+        }
+      }
+      const modalAtividade = pedidoModalAtividade(mensagens);
+      if (modalAtividade && acessoChat.papel === "admin") {
+        const poolModal = await conectar();
+        try {
+          const resultado = await executarFuncao(poolModal, modalAtividade.nome, modalAtividade.args, {
+            recorte: { visao: "atividades" },
+            email: emailChat,
+            nome: nomeDaSessao(req),
+            papel: acessoChat.papel,
+            acesso: acessoChat,
+          });
+          const texto = typeof resultado?.texto === "string" ? resultado.texto : "";
+          if (texto) {
+            encerrado = true;
+            await escreverAosPoucos(enviar, texto);
+            enviar({ tipo: "fim", mensagem: { role: "assistant", content: texto } });
+            res.end();
+            return;
+          }
+        } finally {
+          await poolModal.close().catch(() => {});
         }
       }
       if (numeroRota) {
@@ -915,6 +1040,30 @@ app.post("/api/chat", async (req, res) => {
         await poolLog.close().catch(() => {});
       }
     }
+    const projetoPedido = acessoChat.papel === "admin" && !req.body?.relatorio && !req.body?.apresentacao ? pedidoProjetoDaConversa(mensagens) : null;
+    if (projetoPedido) {
+      const poolProjeto = await conectar();
+      try {
+        const recorte = await recorteDoPedido(poolProjeto, emailChat, nomeDaSessao(req), String(req.body?.visao ?? ""));
+        const resultado = await executarFuncao(poolProjeto, "projeto_tarefas", projetoPedido, {
+          recorte,
+          email: emailChat,
+          nome: nomeDaSessao(req),
+          papel: acessoChat.papel,
+          acesso: acessoChat,
+        });
+        const texto = typeof resultado?.texto === "string" ? resultado.texto : "";
+        if (texto) {
+          encerrado = true;
+          enviar({ tipo: "texto", texto });
+          enviar({ tipo: "fim", mensagem: { role: "assistant", content: texto } });
+          res.end();
+          return;
+        }
+      } finally {
+        await poolProjeto.close().catch(() => {});
+      }
+    }
     const mensagem = await conversar(mensagens, (texto) => enviar({ tipo: "texto", texto }), {
       completo: Boolean(req.body?.completo),
       relatorio: Boolean(req.body?.relatorio),
@@ -1028,6 +1177,8 @@ app.post("/api/ia/funcoes", async (req, res) => {
           nome: nomeDaSessao(req),
           acesso,
           contas: funcao === "painel_ti" ? listarContas() : [],
+          pergunta: String(req.body?.pergunta || ""),
+          gmailToken: funcao === "montar_proposta" ? String(req.body?.token ?? "").trim() : "",
         });
         const visaoReal = recorte.visao === "tudo" ? "tudo" : recorte.visao;
         if (ATALHOS_PRONTOS.some(([nome, , visao]) => nome === funcao && visao === visaoReal)) {
@@ -1057,11 +1208,14 @@ app.post("/api/ia/funcoes", async (req, res) => {
 app.get("/api/processo", async (req, res) => {
   let pool;
   try {
-    const numero = String(req.query.numero ?? "").trim();
-    if (!/^[A-Za-z0-9./-]{3,30}$/.test(numero)) throw new Error("Número de processo inválido.");
+    const numeroBruto = String(req.query.numero ?? "").trim().replace(/\s+/g, " ");
+    const formato = numeroBruto.match(/^([A-Za-z]{1,4}\d{2,6}-\d{2})(?:\s+teste)?$/i);
+    if (!formato) throw new Error("Número de processo inválido.");
+    const codigo = formato[1].toUpperCase();
+    let numero = /\steste$/i.test(numeroBruto) ? `${codigo} teste` : codigo;
+    const admin = permissaoDe(emailDaSessao(req)).papel === "admin";
+    if (/\steste$/i.test(numero) && !admin) throw new Error("Processo de teste só pode ser pedido por um administrador.");
     pool = await conectar();
-    const houseReq = pool.request();
-    houseReq.input("n", sql.VarChar(30), numero);
     const sqlHouse =
       `SELECT DISTINCT TOP 5
     Lhs.IdLogistica_House AS IdLogistica_House,
@@ -1082,22 +1236,35 @@ LEFT OUTER JOIN cad_Pessoa Exp ON Exp.IdPessoa = Lhs.IdExportador
 LEFT OUTER JOIN cad_Pessoa Ven ON Ven.IdPessoa = Lhs.IdVendedor
 LEFT OUTER JOIN cad_Status_Processo_Logistico Sta ON Sta.IdStatus_Processo_Logistico = Lhs.IdStatus_Processo_Logistico
 WHERE Lhs.Numero_Processo = @n`;
-    const house = await houseReq.query(sqlHouse);
+    const consultar = async (valor) => {
+      const houseReq = pool.request();
+      houseReq.input("n", sql.VarChar(40), valor);
+      const house = await houseReq.query(sqlHouse);
+      const masterReq = pool.request();
+      masterReq.input("n", sql.VarChar(40), valor);
+      const master = await masterReq.query(
+        `Select Top 5 IdLogistica_Master, Numero_Processo
+         From mov_Logistica_Master Where Numero_Processo = @n`,
+      );
+      return { house, master };
+    };
+    let encontrado = await consultar(numero);
+    if (!encontrado.house.recordset.length && !encontrado.master.recordset.length && admin && !/\steste$/i.test(numero)) {
+      const teste = await consultar(`${numero} teste`);
+      if (teste.house.recordset.length || teste.master.recordset.length) {
+        numero = `${numero} teste`;
+        encontrado = teste;
+      }
+    }
     salvarConsulta(sqlHouse, "localizar_processo");
     registrarConsultaDoPedido(req, "localizar_processo", sqlHouse);
-    const masterReq = pool.request();
-    masterReq.input("n", sql.VarChar(30), numero);
-    const master = await masterReq.query(
-      `Select Top 5 IdLogistica_Master, Numero_Processo
-       From mov_Logistica_Master Where Numero_Processo = @n`,
-    );
     const recorte = await recorteDoPedido(pool, emailDaSessao(req), nomeDaSessao(req), req.query.visao);
-    const houseFiltrado = filtrarLinhas(house.recordset, recorte);
+    const houseFiltrado = filtrarLinhas(encontrado.house.recordset, recorte);
     res.json({
       numero,
       sql: sqlHouse.replace("@n", `N'${numero.replace(/'/g, "''")}'`),
       house: houseFiltrado,
-      master: master.recordset,
+      master: encontrado.master.recordset,
     });
   } catch (erro) {
     res.status(400).json({ erro: mensagemErro(erro) });
@@ -1280,7 +1447,8 @@ app.post("/api/sql", async (req, res) => {
   let pool;
   try {
     const pedido = String(req.body?.pergunta ?? "");
-    const base = sqlSemExcecao(sqlDoPeriodo(String(req.body?.sql ?? ""), pedido, calendarioAtual()), pedido);
+    const adminSql = permissaoDe(emailDaSessao(req)).papel === "admin";
+    const base = sqlSemExcecao(sqlDoPeriodo(String(req.body?.sql ?? ""), pedido, calendarioAtual()), pedido, { admin: adminSql });
     const texto = sqlParaExecutar(base, pedido, Boolean(req.body?.previa));
     if (!texto) throw new Error("SQL vazio.");
     if (/\blimit\s+\d/i.test(texto)) throw new Error("No SQL Server use TOP, não LIMIT.");
@@ -1359,7 +1527,7 @@ function modalidadeEfetiva(acesso, perfil, visao) {
 function setorEfetivo(acesso, perfilSetor, visaoPedida) {
   if (acesso?.papel === "admin") {
     const pedida = String(visaoPedida ?? "");
-    return ["inside", "comercial", "operacional", "documental", "tudo", "ti", "financeiro", "gerencia"].includes(pedida) ? pedida : "tudo";
+    return ["inside", "comercial", "operacional", "documental", "tudo", "ti", "financeiro", "gerencia", "atividades"].includes(pedida) ? pedida : "tudo";
   }
   if (["inside", "comercial", "operacional", "documental", "financeiro", "gerencia"].includes(acesso?.setorManual)) return acesso.setorManual;
   return perfilSetor || "geral";
@@ -1605,7 +1773,7 @@ function saudacaoDoDia(nome) {
 app.post("/api/gmail/resumo", async (req, res) => {
   try {
     const visao = String(req.body?.visao ?? "");
-    const lido = await resumirGmail(await tokenParaGmail(req), visao, req.body?.processo);
+    const lido = await resumirGmail(await tokenParaGmail(req), visao, req.body?.processo, Boolean(req.body?.documentos));
     let pendencias = "";
     if (lido.processos?.length) {
       try {
@@ -1617,6 +1785,81 @@ app.post("/api/gmail/resumo", async (req, res) => {
     const corpo = [lido.texto, pendencias].filter(Boolean).join("\n\n");
     const texto = req.body?.entrada ? `${saudacaoDoDia(nomeDaSessao(req))}\n\nSeparei o que chegou na caixa e o que ficou parado.\n\n${corpo}` : corpo;
     res.json({ texto });
+  } catch (erro) {
+    res.status(400).json({ erro: mensagemErro(erro) });
+  }
+});
+
+app.get("/api/followup/emails", async (req, res) => {
+  let pool;
+  try {
+    pool = await conectar();
+    const emails = await emailsDoProcesso(pool, req.query?.numero, { acesso: permissaoDe(emailDaSessao(req)) });
+    res.json({ emails });
+  } catch (erro) {
+    res.status(400).json({ erro: mensagemErro(erro) });
+  } finally {
+    await pool?.close().catch(() => {});
+  }
+});
+
+app.post("/api/gmail/enviar", async (req, res) => {
+  let pool;
+  try {
+    const token = await tokenParaGmail(req);
+    const htmlPronto = String(req.body?.html ?? "");
+    if (htmlPronto.trim() && String(req.body?.assunto ?? "").trim()) {
+      const enviado = await enviarHtmlGmail(token, {
+        para: req.body?.para,
+        assunto: req.body?.assunto,
+        html: htmlPronto,
+        numero: req.body?.numero,
+      });
+      res.json({
+        texto: `Enviei o e-mail para ${enviado.para.join(", ")}.`,
+        ...enviado,
+      });
+      return;
+    }
+    const visao = String(req.body?.visao ?? "");
+    const semStatus = Boolean(req.body?.semStatus) || visao === "operacional";
+    let modelo = req.body?.modelo && typeof req.body.modelo === "object" ? req.body.modelo : null;
+    if (!modelo) {
+      pool = await conectar();
+      const gerado = await executarFuncao(pool, "modelo_followup", { numero: req.body?.numero }, { email: emailDaSessao(req), recorte: {}, acesso: permissaoDe(emailDaSessao(req)) });
+      const bruto = String(gerado?.texto ?? "");
+      const json = bruto.match(/```modelo\s*([\s\S]*?)```/i)?.[1];
+      if (!json) {
+        res.status(400).json({ erro: bruto || "Não encontrei o processo." });
+        return;
+      }
+      modelo = JSON.parse(json);
+    }
+    const enviado = await enviarFollowupGmail(token, modelo, {
+      para: req.body?.para,
+      assunto: req.body?.assunto,
+      semStatus,
+    });
+    res.json({
+      texto: `Enviei o follow-up ${enviado.numero} para ${enviado.para.join(", ")}. O corpo do e-mail está no modelo da ficha.`,
+      ...enviado,
+    });
+  } catch (erro) {
+    res.status(400).json({ erro: mensagemErro(erro) });
+  } finally {
+    await pool?.close().catch(() => {});
+  }
+});
+
+app.post("/api/gmail/anexo", async (req, res) => {
+  try {
+    const buffer = await baixarAnexoGmail(await tokenParaGmail(req), req.body?.mensagem, req.body?.anexo);
+    const nome = String(req.body?.nome || "documento").replace(/[\r\n"]/g, "").replace(/[\\/:*?<>|]/g, "-").slice(0, 160) || "documento";
+    const ascii = nome.replace(/[^\x20-\x7E]/g, "_");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Content-Disposition", `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(nome)}`);
+    res.send(buffer);
   } catch (erro) {
     res.status(400).json({ erro: mensagemErro(erro) });
   }
@@ -1762,6 +2005,13 @@ app.post("/api/avaliacao", (req, res) => {
   }
 });
 
+app.use("/api", (_req, res) => res.status(404).json({ erro: "Esta função não está disponível nesta versão do servidor. Atualize o Maicon e tente novamente." }));
+app.use((erro, req, res, next) => {
+  if (!req.path.startsWith("/api/")) return next(erro);
+  const status = erro?.type === "entity.too.large" ? 413 : erro instanceof SyntaxError ? 400 : 500;
+  return res.status(status).json({ erro: status === 413 ? "O arquivo enviado excedeu o limite do servidor." : status === 400 ? "Os dados enviados não estão em um formato válido." : "Não foi possível processar a solicitação." });
+});
+
 function iso(valor) {
   if (!valor) return "";
   const d = valor instanceof Date ? valor : new Date(valor);
@@ -1783,6 +2033,9 @@ function mensagemErro(erro) {
   if (/database is locked|SQLITE_BUSY/i.test(texto)) {
     return "O arquivo local de contas está ocupado. Tente de novo em alguns segundos.";
   }
+  if (/high demand|try again later|overloaded/i.test(texto)) {
+    return "O modelo está sobrecarregado agora. Tente de novo em alguns segundos.";
+  }
   if (/usage limit|monthly usage/i.test(texto)) {
     return "A cota mensal do Ollama desta chave acabou. Em Configurações, use outra chave, ou aguarde a renovação.";
   }
@@ -1797,8 +2050,10 @@ const server = app.listen(porta, "0.0.0.0", () => {
     .map((e) => e.address);
   console.log(`Administradores: ${emailsAdmin().length}`);
   console.log(`SQL ${process.env.SQL_SERVER || "(SQL_SERVER vazio)"}:${process.env.SQL_PORT || "1433"} / ${process.env.SQL_DATABASE || "(SQL_DATABASE vazio)"}`);
+  console.log(`Modelo do chat: ${modeloGoogle()}`);
   console.log(`API de log em http://localhost:${porta}`);
   for (const ip of ips) console.log(`API na rede em http://${ip}:${porta}`);
+  startAppSessionBridge();
   void aquecerAtalhos();
   setInterval(() => void aquecerAtalhos(), 2 * 60 * 1000);
 });

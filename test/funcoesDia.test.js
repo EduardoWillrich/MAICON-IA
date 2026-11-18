@@ -174,6 +174,15 @@ test("ficha do processo junta a situação e os próximos passos", async () => {
   assert.match(resultado.texto, /Vincular a proposta/);
 });
 
+test("o painel do dia preserva todas as pendências para o Ver mais", () => {
+  const linhas=Array.from({length:25},(_,i)=>({Atividade:`ATIVIDADE ${i}`,Numero_Processo:`IM${1000+i}-26`,Previsao_Termino:new Date(Date.UTC(2026,10,1))}));
+  const dia=montarPainelDia("Eduardo",linhas,new Date('2026-11-18T15:00:00Z'));
+  assert.equal(dia.grupos[0].itens.length,25);
+  assert.equal(dia.grupos[0].ocultos,0);
+  assert.equal(dia.chips[0].valor,25);
+  assert.equal(dia.grupos[0].itens[24].atividade,'ATIVIDADE 24');
+});
+
 test("o painel do dia separa atrasadas, hoje e a semana", () => {
   const painel = montarPainelDia("Eduardo Willrich", [
     { Atividade: "Liberar BL", Numero_Processo: "IM1-26", Cliente: "Acme", Previsao_Termino: new Date(Date.UTC(2026, 10, 1)), Motivo: "Falta o BL" },

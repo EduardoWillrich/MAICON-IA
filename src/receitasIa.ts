@@ -1,9 +1,12 @@
 import { formatarDatasNoTexto } from "./datas";
+import { botaoDaPergunta, consultaDeAtividade } from "../server/intencaoAtividade.js";
+import { pedidoProjetoTarefas } from "../server/projetoPedido.js";
+import { pedidoFichaCliente } from "../server/pedidoFicha.js";
 
 export type Receita = { nome: string; args: Record<string, unknown> };
 
 const CHAVE = "maicon-receitas";
-const PROCESSO = "\\b([A-Za-z]{1,4}\\d{2,6}-\\d{2})\\b";
+const PROCESSO = "\\b([A-Za-z]{1,4}\\d{2,6}-\\d{2}(?:\\s+teste)?)\\b";
 
 const FIXAS: Record<string, Receita[]> = {
   "monte o painel do ti das últimas 24 horas.": [{ nome: "painel_ti", args: { horas: 24 } }],
@@ -100,6 +103,10 @@ const VARIAVEIS: { re: RegExp; montar: (m: RegExpMatchArray) => Receita[] }[] = 
     montar: (m) => [{ nome: "emails_gmail", args: { processo: m[1].toUpperCase() } }],
   },
   {
+    re: new RegExp(`^quais documentos chegaram por e-mail no processo ${PROCESSO}`, "i"),
+    montar: (m) => [{ nome: "emails_gmail", args: { processo: m[1].toUpperCase(), documentos: true } }],
+  },
+  {
     re: new RegExp(`^monte a ficha do processo ${PROCESSO}\\.?$`, "i"),
     montar: (m) => [{ nome: "ficha_processo", args: { numero: m[1].toUpperCase() } }],
   },
@@ -120,6 +127,10 @@ const VARIAVEIS: { re: RegExp; montar: (m: RegExpMatchArray) => Receita[] }[] = 
     montar: (m) => [{ nome: "proposta_processo", args: { numero: m[1].toUpperCase() } }],
   },
   {
+    re: new RegExp(`^monte o followup do processo ${PROCESSO}, com os acompanhamentos, no modelo pronto para baixar\\.?$`, "i"),
+    montar: (m) => [{ nome: "modelo_followup", args: { numero: m[1].toUpperCase() } }],
+  },
+  {
     re: new RegExp(`^quais os acompanhamentos do processo ${PROCESSO}\\?$`, "i"),
     montar: (m) => [{ nome: "acompanhamentos_processo", args: { numero: m[1].toUpperCase() } }],
   },
@@ -132,7 +143,7 @@ const VARIAVEIS: { re: RegExp; montar: (m: RegExpMatchArray) => Receita[] }[] = 
   },
   {
     re: new RegExp(`(?:rota|navio|rastre)[\\s\\S]{0,80}${PROCESSO}|${PROCESSO}[\\s\\S]{0,80}(?:rota|navio|rastre)`, "i"),
-    montar: (m) => [{ nome: "rota_processo", args: { numero: (m[1] || m[2]).toUpperCase() } }],
+    montar: (m) => (/\batividad/i.test(m.input ?? "") ? [] : [{ nome: "rota_processo", args: { numero: (m[1] || m[2]).toUpperCase() } }]),
   },
   {
     re: new RegExp(`^o que mudou no processo ${PROCESSO} nos últimos 30 dias\\?$`, "i"),
@@ -163,14 +174,21 @@ const VARIAVEIS: { re: RegExp; montar: (m: RegExpMatchArray) => Receita[] }[] = 
     montar: (m) => [{ nome: "rota_processo", args: { numero: (m[1] || m[2]).toUpperCase() } }],
   },
   {
-    re: new RegExp(`(?:atividad|pend[eê]ncia)[\\s\\S]{0,80}?${PROCESSO}|${PROCESSO}[\\s\\S]{0,80}?(?:atividad|pend[eê]ncia)`, "i"),
-    montar: (m) => [{
-      nome: "andamento_atividade",
-      args: {
-        numero: (m[1] || m[2]).toUpperCase(),
-        pendentes: /pendent/i.test(m.input ?? ""),
-      },
-    }],
+    re: new RegExp(`(?:atividad|pend[eê]ncia)[\\s\\S]{0,120}?${PROCESSO}|${PROCESSO}[\\s\\S]{0,80}?(?:atividad|pend[eê]ncia)`, "i"),
+    montar: (m) => {
+      const texto = m.input ?? "";
+      if (botaoDaPergunta(texto)) return [];
+      const nome = texto.match(/atividade\s+(.+?)\s+(?:no|do|da|nesse|neste|deste|para)\b/i)?.[1]?.trim() || "";
+      return [{
+        nome: "andamento_atividade",
+        args: {
+          numero: (m[1] || m[2]).toUpperCase(),
+          ...(nome ? { codigo: nome } : {}),
+          pendentes: /pendent/i.test(texto),
+          requisitos: /o que falta|o que precisa|requisit|obrigat/i.test(texto),
+        },
+      }];
+    },
   },
 ];
 
@@ -191,17 +209,33 @@ function ler(): Record<string, Receita[]> {
 function semente(pergunta: string): Receita[] | null {
   const chave = chaveDa(pergunta);
   if (FIXAS[chave]) return FIXAS[chave];
+  const botao = botaoDaPergunta(chave);
+  if (botao) {
+    const numero = chave.match(/\b([a-z]{1,4}\d{2,6}-\d{2}(?:\s+teste)?)\b/i)?.[1]?.toUpperCase() || "";
+    const nome = chave.match(/atividade\s+(.+?)(?:\s+(?:no|do|da|nesse|neste|deste)\s+processo\b|$)/i)?.[1]?.trim() || "";
+    if (nome) {
+      return [{
+        nome: "andamento_atividade",
+        args: { codigo: nome, numero, botao, concluir: botao === "CONCLUIR", restaurar: botao === "RESTAURAR" },
+      }];
+    }
+  }
+  const projeto = pedidoProjetoTarefas(chave);
+  if (projeto) return [{ nome: "projeto_tarefas", args: projeto }];
   for (const item of VARIAVEIS) {
     const achado = chave.match(item.re);
-    if (achado) return item.montar(achado);
+    const montada = achado ? item.montar(achado) : [];
+    if (montada.length) return montada;
   }
   return null;
 }
 
 export function receitaSalva(pergunta: string): Receita[] | null {
+  if (pedidoFichaCliente([{ role: "user", content: pergunta }])?.perguntar) return null;
   const fixa = semente(pergunta);
   if (fixa) return fixa;
   const salvas = ler()[chaveDa(pergunta)];
+  if (consultaDeAtividade(pergunta) && Array.isArray(salvas) && salvas.some((r) => r.nome === "comando_bot" || r.args?.concluir || r.args?.restaurar || r.args?.botao)) return null;
   if (Array.isArray(salvas) && salvas.length) return salvas;
   return null;
 }

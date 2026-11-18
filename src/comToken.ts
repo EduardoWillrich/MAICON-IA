@@ -1,4 +1,4 @@
-import { gravarSessao, lerSessao, lerTokenGmail } from "./sessao";
+import { gravarSessao, lerSessao, lerTokenGmail, limparUsuario, marcarSaida } from "./sessao";
 
 const original = window.fetch.bind(window);
 
@@ -31,6 +31,13 @@ export function instalarTokenNaApi() {
     if (token) headers.set("Authorization", `Bearer ${token}`);
     const primeiraEntrada = input instanceof Request ? input.clone() : input;
     let resp = await original(primeiraEntrada, { ...init, headers });
+    if (resp.status === 401) {
+      const error = await resp.clone().json().catch(() => ({}));
+      if (error.code === 'session_revoked' || error.code === 'session_ended') {
+        marcarSaida(); limparUsuario(); window.dispatchEvent(new Event('maicon-session-ended'));
+        return resp;
+      }
+    }
     if (resp.status === 401 && sessaoAtual && gmail && gmail !== sessaoAtual) {
       const headersGoogle = new Headers(init?.headers);
       headersGoogle.set("Authorization", `Bearer ${gmail}`);

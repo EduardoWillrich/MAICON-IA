@@ -1,6 +1,8 @@
 const PROVEDORES = ["google"];
 
 const AMBIENTE_POR_PROVEDOR = {
+  openrouter: "OPENROUTER_API_KEY",
+  ollama: "OLLAMA_API_KEY",
   google: "GOOGLE_API_KEY",
 };
 
@@ -88,6 +90,9 @@ function erroIndisponivel(erro) {
   if (/per minute|tokens per minute|retry in\s+[0-9]/i.test(texto)) {
     return new Error("O Google limitou o ritmo desta chave. Espere um minuto e tente de novo.");
   }
+  if (/high demand|try again later|overloaded|unavailable|sobrecarreg/i.test(texto)) {
+    return new Error("O modelo está sobrecarregado agora. Tente de novo em alguns segundos.");
+  }
   if (semCredito(erro)) return new Error("A cota do Google acabou. Tente de novo mais tarde.");
   return new Error(MENSAGEM_INDISPONIVEL);
 }
@@ -104,7 +109,9 @@ export async function executarFilaComFallback(fila, chamar, aoFalhar = () => {})
       aoFalhar({ provedor: item.provedor, status: statusDoErro(erro) || null });
       const temReserva = indice < fila.length - 1;
       if (!temReserva || !podeTrocarChave(erro)) {
-        if (semCredito(erro)) throw erroIndisponivel(erro);
+        if (semCredito(erro) || /high demand|try again later|overloaded|unavailable/i.test(String(erro?.message ?? ""))) {
+          throw erroIndisponivel(erro);
+        }
         throw erro;
       }
     }

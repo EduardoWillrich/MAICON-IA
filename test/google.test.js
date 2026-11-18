@@ -2,13 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { modeloGoogle, pedidoGoogle, partesGoogle, urlGoogle } from "../server/google.js";
 
-test("o modelo do Google é o Gemma 4, sem o prefixo da OpenRouter", () => {
-  assert.equal(modeloGoogle("gemma-4-26b-a4b-it"), "gemma-4-26b-a4b-it");
-  assert.equal(modeloGoogle("google/gemma-4-26b-a4b-it"), "gemma-4-26b-a4b-it");
-  assert.equal(modeloGoogle(""), "gemma-4-26b-a4b-it");
+test("o chat usa só o Gemini 3.5 Flash-Lite", () => {
+  assert.equal(modeloGoogle(), "gemini-3.5-flash-lite");
+  assert.equal(modeloGoogle("gemma-4-26b-a4b-it"), "gemini-3.5-flash-lite");
+  assert.equal(modeloGoogle(""), "gemini-3.5-flash-lite");
   assert.equal(
-    urlGoogle("gemma-4-26b-a4b-it", "stream"),
-    "https://generativelanguage.googleapis.com/v1beta/models/gemma-4-26b-a4b-it:streamGenerateContent?alt=sse",
+    urlGoogle("gemini-3.5-flash-lite", "stream"),
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:streamGenerateContent?alt=sse",
   );
 });
 

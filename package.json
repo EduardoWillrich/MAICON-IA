@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "predev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/cert-dev.ps1",
-    "dev": "concurrently -k \"node server/index.js\" \"node server/entrada.js\" \"vite\"",
+    "dev": "concurrently -k \"node --watch server/index.js\" \"node server/entrada.js\" \"vite\"",
     "dev:api": "node --watch server/index.js",
     "dev:ui": "vite",
     "test": "node --test",

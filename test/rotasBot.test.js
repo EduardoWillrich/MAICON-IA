@@ -1,0 +1,34 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import express from "express";
+import { DatabaseSync } from "node:sqlite";
+import { MotorOperacoes } from "../server/operacoesBot.js";
+import { instalarRotasBot } from "../server/rotasBot.js";
+
+test("API protege administração, conta proprietária, prévia e execução", async (t) => {
+  let chamadas = 0;
+  const motor = new MotorOperacoes(new DatabaseSync(":memory:"), async () => { chamadas++; return { estado: "confirmado", texto: "ok" }; });
+  const app = express(); app.use(express.json());
+  app.use((req, _res, next) => { req.conta = { email: req.get("x-conta") || "admin@example.com" }; next(); });
+  instalarRotasBot(app, { motor, acesso: (conta) => ({ papel: conta.startsWith("usuario") ? "usuario" : "admin", removida: conta.startsWith("removida") }), conectar: async () => { throw new Error("SQL indisponível"); } });
+  const servidor = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => servidor.once("listening", resolve));
+  t.after(() => new Promise((resolve) => { servidor.closeAllConnections(); servidor.close(resolve); }));
+  const url = `http://127.0.0.1:${servidor.address().port}/api/bot`;
+  const req = (path, body, conta = "admin@example.com") => fetch(url + path, { method: body ? "POST" : "GET", headers: { "Content-Type": "application/json", "x-conta": conta }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  assert.equal((await req("/tarefas", null, "usuario@example.com")).status, 403);
+  assert.equal((await req("/abrir-atividade", {idAtividade:22}, "usuario@example.com")).status, 403);
+  assert.equal((await req("/tarefas", null, "removida@example.com")).status, 403);
+  const previa = await (await req("/tarefas", { titulo: "Teste", etapas: [{ acao: "preencher", numero: "IM2099-25 teste", campo: "Marca", valor: "ABC" }] })).json();
+  assert.equal(previa.estado, "previa");
+  assert.equal(chamadas, 0);
+  assert.equal((await req(`/tarefas/${previa.id}`, null, "outro@example.com")).status, 400);
+  assert.equal((await req(`/tarefas/${previa.id}/controle`, { acao: "executar" }, "outro@example.com")).status, 400);
+  assert.equal((await req(`/tarefas/${previa.id}/controle`, { acao: "executar" })).status, 200);
+  await motor.fila;
+  assert.equal(chamadas, 1);
+  assert.equal((await (await req(`/tarefas/${previa.id}`)).json()).estado, "concluida");
+  assert.equal((await req("/tarefas", { etapas: [{ acao: "concluir", numero: "IM2099-25", codigo: "1" }] })).status, 400);
+  const erro = await (await req("/excecoes")).json();
+  assert.match(erro.erro, /SQL indisponível/);
+});

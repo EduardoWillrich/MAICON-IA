@@ -11,7 +11,17 @@ const ambienteCompleto = {
   GOOGLE_API_KEY: "teste-google",
 };
 
-test("a fila usa somente a chave do Google", () => {
+test("a fila usa só o Google, mesmo com Ollama e OpenRouter no ambiente", () => {
+  const fila = filaDeChaves([], {
+    OLLAMA_API_KEY: "teste-ollama",
+    OPENROUTER_API_KEY: "teste-openrouter",
+    GOOGLE_API_KEY: "teste-google",
+  });
+  assert.deepEqual(fila.map((item) => item.provedor), ["google"]);
+  assert.deepEqual(fila.map((item) => item.chave), ["teste-google"]);
+});
+
+test("a fila ignora chave pessoal de outro provedor", () => {
   const fila = filaDeChaves(
     [
       { provedor: "openrouter", chave: "teste-openrouter" },

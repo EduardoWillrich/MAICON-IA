@@ -1,9 +1,19 @@
 ﻿import { useEffect, useRef, useState, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { RespostaTexto as TextoResposta, CabecalhoResposta } from "./RespostaTexto";
+import { IconeAcaoResposta } from "./IconeAcaoResposta";
+import { PensandoResposta } from "./PensandoResposta";
+import { ResultadosConsulta as ListaConsulta } from "./ResultadosConsulta";
+import { semDadosRepetidos, usarTabelaConsulta, linhasDaLista } from "./respostaConsulta";
+import { pedidoFichaCliente } from "../server/pedidoFicha.js";
 import logoMaiconPng from "./assets/maicon-logo.png";
 import logoMaicon from "./assets/maicon-logo.svg";
 import logoConline from "./assets/conline-logo.png";
+import logoConlineVermelha from "./assets/conline-logo-vermelha.png";
+import FollowUp, { type FollowUpData } from "./FollowUp";
+import { GatilhosCard } from "./GatilhosCard";
+import { gatilhosDoTexto } from "./gatilhos";
+import { ProjetoTarefasCard } from "./ProjetoTarefasCard";
+import { projetoTarefasDoTexto } from "./projetoTarefas";
 import type { LogPdf } from "./PdfHistorico";
 import {
   relatorioComDetalhe,
@@ -16,12 +26,12 @@ import {
 import { calculosDaConsulta, guardarReceita, linhasDaConsulta, receitaSalva, textoDaConsulta, type Receita } from "./receitasIa";
 import { InicioPainel } from "./InicioPainel";
 import { AvaliacaoResposta } from "./AvaliacaoResposta";
-import { renovarTokenGmail } from "./tokenGmail";
-import { SymbolLoader } from "./Loader";
+import { garantirEnvioGmail, renovarTokenGmail } from "./tokenGmail";
 import { SqlDestaque } from "./SqlDestaque";
 import { DiaCard, LogCard, PainelTiCard, diaDoTexto, logDoTexto, painelDoTexto } from "./PainelTi";
 import { completarConsultaLog } from "./ferramentasIa";
 import { formatarDataHora, formatarDatasNoTexto } from "./datas";
+import { baixarPdfProposta } from "./pdfProposta";
 import { acoesDoEvento, camposQueMudaram, nomeProprio, rotuloCampo } from "./relatorio";
 import { rotuloTipo } from "./types";
 
@@ -77,7 +87,7 @@ function PreviaRelatorio({
   return (
     <div className="chat-previa">
       <div className="chat-previa-topo">
-        <strong>Antes de começarmos, confira se essas informações estão corretas.</strong>
+        <strong>Confira a amostra antes de continuar.</strong>
       </div>
       <div className="chat-previa-campos">
         {previa.colunas.map((coluna) => (
@@ -111,9 +121,10 @@ function PreviaRelatorio({
       {podeAprovar ? (
         <div className="chat-previa-acoes">
           <button type="button" onClick={onAprovar}>
-            Está certo, trazer o restante
+            <IconeAcaoResposta nome="copiado" />
+            Confirmar e continuar
           </button>
-          <small>Se algo estiver errado, escreva o que precisa mudar.</small>
+          <small>Para corrigir, descreva o ajuste no chat.</small>
         </div>
       ) : null}
     </div>
@@ -124,14 +135,14 @@ const IAS_CONSUMO = ["google", "openrouter"] as const;
 type IaConsumo = (typeof IAS_CONSUMO)[number];
 const ROTULO_CONSUMO: Record<IaConsumo, { nome: string; aba: string; texto: string }> = {
   google: {
-    nome: "Gemma 4",
+    nome: "Gemini 3.5 Flash-Lite",
     aba: "Google",
-    texto: "Pedidos de hoje no Gemma 4, pela API do Google. O dia zera à meia-noite da Califórnia.",
+    texto: "Pedidos de hoje no Gemini 3.5 Flash-Lite, o único modelo do chat. O dia zera à meia-noite da Califórnia.",
   },
   openrouter: {
-    nome: "Gemma 4 31B · OpenRouter",
+    nome: "OpenRouter",
     aba: "OpenRouter",
-    texto: "Reserva usada quando o Google estoura o limite ou devolve erro. É o mesmo Gemma 4 31B.",
+    texto: "Saldo da chave. O chat não usa o OpenRouter.",
   },
 };
 
@@ -315,10 +326,12 @@ const SUGESTOES_COMERCIAL: { titulo: string; descricao: string; pergunta: string
   { titulo: "Resumo do processo", descricao: "Cliente, vendedor responsável e a situação atual.", pergunta: "Faça o resumo do processo {processo}.", icone: "resumoProcesso" },
   { titulo: "Buscar cliente", descricao: "Ficha do cliente: vendedor, sem proposta, último processo, comissão e se paga em dia.", pergunta: "Se eu informar uma referência de processo, busque os processos. Se eu informar o nome do cliente, monte a ficha: processos abertos, vendedor, quantos estão sem proposta, o último processo, a comissão deste mês, se ele é ouro, prata ou bronze e se paga em dia. Se eu não disse nem o nome nem a referência, pergunte qual cliente.", icone: "buscarCliente" },
   { titulo: "Proposta", descricao: "Oferta comercial e as datas da proposta.", pergunta: "Qual a proposta e a oferta do processo {processo}?", icone: "proposta" },
+  { titulo: "Montar proposta", descricao: "E-mail da proposta para um cliente, pelo e-mail dele ou pelas últimas propostas.", pergunta: "Monte o e-mail da proposta comercial para enviar ao cliente. Use o e-mail que ele enviou ou as últimas propostas. Se eu não disse o nome do cliente, pergunte qual.", icone: "proposta" },
   { titulo: "Comissão do mês", descricao: "Comissões já calculadas neste mês.", pergunta: "Qual a comissão neste mês?", icone: "comissaoMes" },
   { titulo: "Processos do cliente", descricao: "Ficha com os processos abertos, o vendedor, a comissão e o relacionamento.", pergunta: "Monte a ficha do cliente com os processos abertos. Se eu não disse o nome, pergunte qual cliente. Inclua vendedor, quantos estão sem proposta, o último processo, a comissão deste mês, se ele é ouro, prata ou bronze e se paga em dia.", icone: "processosCliente" },
   { titulo: "Ouro, prata e bronze", descricao: "Relacionamento desses clientes, em cartões coloridos.", pergunta: "Qual o relacionamento dos clientes ouro, prata e bronze?", icone: "ouroPrata" },
   { titulo: "Minhas pendências", descricao: "O que está atrasado e o que vence nos próximos 7 dias.", pergunta: "Quais são minhas pendências atrasadas e as dos próximos 7 dias?", icone: "minhasPendencias" },
+  { titulo: "Followup", descricao: "Modelo pronto para o cliente, com a rota e os acompanhamentos.", pergunta: "Monte o followup do processo {processo}, com os acompanhamentos, no modelo pronto para baixar.", icone: "relatorio" },
 ];
 
 const SUGESTOES_SETOR: Record<string, { titulo: string; descricao: string; pergunta: string; icone: keyof typeof ICONES }[]> = {
@@ -332,6 +345,7 @@ const SUGESTOES_SETOR: Record<string, { titulo: string; descricao: string; pergu
     { titulo: "Resumo do processo", descricao: "Situação, prazos e a pendência atual.", pergunta: "Faça o resumo operacional do processo {processo}.", icone: "resumoProcesso" },
     { titulo: "Rota do navio", descricao: "Navio, portos e as datas de cada trecho da viagem.", pergunta: "Como está a rota do navio no processo {processo}?", icone: "navio" },
     { titulo: "Acompanhamentos", descricao: "As notas de acompanhamento mais recentes.", pergunta: "Quais os acompanhamentos do processo {processo}?", icone: "acompanhamentos" },
+  { titulo: "Followup", descricao: "Modelo pronto para o cliente, com a rota e os acompanhamentos.", pergunta: "Monte o followup do processo {processo}, com os acompanhamentos, no modelo pronto para baixar.", icone: "relatorio" },
     { titulo: "Prazos", descricao: "Embarque, desembarque e entrega que vencem nos próximos 7 dias.", pergunta: "Quais prazos de embarque, desembarque e entrega vencem nos próximos 7 dias?", icone: "prazos" },
     { titulo: "Processos parados", descricao: "Sem nenhuma nota de acompanhamento há 7 dias.", pergunta: "Quais processos estão parados há 7 dias sem acompanhamento?", icone: "Processosparados" },
     { titulo: "O que mudou", descricao: "Campos alterados neste processo nos últimos 30 dias.", pergunta: "O que mudou no processo {processo} nos últimos 30 dias?", icone: "oQueMudou" },
@@ -345,6 +359,8 @@ const SUGESTOES_SETOR: Record<string, { titulo: string; descricao: string; pergu
     { titulo: "CE ainda não liberado", descricao: "Atividades do CE e do IM que ainda não estão com CE liberado.", pergunta: "Quais atividades do documental CE e do documental IM ainda não têm o CE liberado?", icone: "ceNaoLiberado" },
     { titulo: "Do processo", descricao: "Atividades do CE e do IM, envolvidos, liberação e o que falta.", pergunta: "No processo {processo}, quais atividades estão com o documental CE e com o documental IM, quem são os envolvidos, o CE já está liberado e o que falta para concluir?", icone: "doProcesso" },
     { titulo: "Campos livres", descricao: "Campos livres que já estão preenchidos neste processo.", pergunta: "Quais campos livres estão preenchidos no processo {processo}?", icone: "camposLivres" },
+    { titulo: "Documentos do e-mail", descricao: "Anexos de um processo, para baixar aqui. A IA pergunta o número.", pergunta: "Quais documentos chegaram por e-mail de um processo? Se eu não informei o número, pergunte qual processo. Deixe os anexos para baixar.", icone: "relatorio" },
+    { titulo: "Followup", descricao: "Modelo pronto para o cliente, com a rota e os acompanhamentos.", pergunta: "Monte o followup do processo {processo}, com os acompanhamentos, no modelo pronto para baixar.", icone: "relatorio" },
   ],
   admin: [
     { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "resumo" },
@@ -357,6 +373,7 @@ const SUGESTOES_SETOR: Record<string, { titulo: string; descricao: string; pergu
   gerencia: [
     { titulo: "Meu dia", descricao: "O que está pendente no seu nome: atrasado, hoje e a semana.", pergunta: "Como está o meu dia?", icone: "meudia" },
     { titulo: "Ficha do processo", descricao: "Situação, proposta, documental e o que fazer agora.", pergunta: "Monte a ficha do processo {processo}.", icone: "fichaProcesso" },
+    { titulo: "Followup", descricao: "Modelo pronto para o cliente, com a rota e os acompanhamentos.", pergunta: "Monte o followup do processo {processo}, com os acompanhamentos, no modelo pronto para baixar.", icone: "relatorio" },
     { titulo: "Fila dos setores", descricao: "Abertos, sem proposta, atrasados e parados, por setor.", pergunta: "Como está a fila dos setores: processos abertos, sem proposta, atrasados e parados?", icone: "filaCe" },
     { titulo: "Processos parados", descricao: "Sem nenhuma nota de acompanhamento há 7 dias.", pergunta: "Quais processos estão parados há 7 dias sem acompanhamento?", icone: "Processosparados" },
     { titulo: "Prazos vencendo", descricao: "Embarque, desembarque e entrega que vencem nos próximos 7 dias.", pergunta: "Quais prazos de embarque, desembarque e entrega vencem nos próximos 7 dias?", icone: "prazos" },
@@ -389,6 +406,16 @@ const SUGESTOES_SETOR: Record<string, { titulo: string; descricao: string; pergu
     { titulo: "Quem mais alterou", descricao: "Ranking de quem mais gravou log nas últimas 24 horas.", pergunta: "Quem mais gravou log nas últimas 24 horas?", icone: "Rank" },
     { titulo: "Contas da IA", descricao: "Quem entrou na IA e qual o papel de cada conta.", pergunta: "Quais contas acessaram a IA e qual o papel de cada uma?", icone: "ContaIA" },
     { titulo: "Log de um processo", descricao: "Histórico técnico de um processo. Se faltar o número, a IA pergunta.", pergunta: "Consulte o log técnico de um processo. Se eu não informei o número, pergunte qual processo.", icone: "LogProcesso" },
+  ],
+  atividades: [
+    { titulo: "Projeto do modal", descricao: "Atividades do projeto de tarefas, na ordem do fluxo.", pergunta: "Leia o projeto de tarefas do modal. Se eu não disse IM, IA, EM ou EA, pergunte qual.", icone: "pendencias" },
+    { titulo: "Projeto do processo", descricao: "O fluxo de tarefas do processo informado.", pergunta: "Leia o projeto de tarefas de um processo. Se eu não informei o número, pergunte qual processo.", icone: "fichaProcesso" },
+    { titulo: "Monitoramentos", descricao: "Campos que o monitoramento observa e quando dispara.", pergunta: "Quais são os monitoramentos de campo deste projeto? Se eu não disse o modal nem o processo, pergunte qual.", icone: "Monitoramento" },
+    { titulo: "Gatilhos", descricao: "O que acontece quando a atividade muda de situação.", pergunta: "Quais são os gatilhos das atividades deste projeto? Se eu não disse o modal nem o processo, pergunte qual.", icone: "divergencias" },
+    { titulo: "Preencher campo", descricao: "Manda o bot digitar um campo no processo teste, sem gravar no banco.", pergunta: "Mande o bot preencher um campo numa atividade do processo teste. Se faltar o processo, o código, o campo ou o valor, pergunte só o que falta.", icone: "camposLivres" },
+    { titulo: "Concluir atividade", descricao: "Manda o bot concluir uma atividade do processo teste.", pergunta: "Mande o bot concluir uma atividade do processo teste. Se faltar o processo ou o código, pergunte só o que falta.", icone: "check" },
+    { titulo: "Restaurar atividade", descricao: "Manda o bot restaurar uma atividade inativa ou concluída do processo teste.", pergunta: "Mande o bot restaurar uma atividade do processo teste. Se faltar o processo ou o código, pergunte só o que falta.", icone: "check" },
+    { titulo: "Aprendizado do bot", descricao: "Comandos que a Maicon já enviou ao bot.", pergunta: "O que o bot já aprendeu dos comandos que você enviou?", icone: "memoria" },
   ],
 };
 
@@ -512,6 +539,7 @@ function relatoriosDaVisao(visao: string, semComissao: boolean) {
   const area = visao || "geral";
   const lista = RELATORIOS_PRONTOS.filter((item) => {
     if (area === "ti") return item.visoes.includes("ti") || item.visoes.includes("*");
+    if (area === "atividades") return item.visoes.includes("atividades");
     if (area === "tudo" || area === "admin" || area === "geral") return !item.visoes.includes("ti") || item.visoes.includes("*");
     return item.visoes.includes("*") || item.visoes.includes(area);
   }).filter((item) => !semComissao || !/comiss/i.test(item.titulo));
@@ -537,11 +565,9 @@ function comProcesso(lista: { titulo: string; descricao: string; pergunta: strin
         }
       : item;
     const temProcesso = base.pergunta.includes("{processo}");
-    const pergunta = !temProcesso
-      ? base.pergunta
-      : processo
-        ? base.pergunta.replaceAll("{processo}", processo)
-        : `${base.pergunta.replace(" {processo}", "").replace("{processo}", "um processo")} Se eu não informei o número, pergunte qual processo.`;
+    const pergunta = temProcesso
+      ? `${base.pergunta.replaceAll(" {processo}", "").replaceAll("{processo}", "um processo")} Se eu não informei o número, pergunte qual processo.`
+      : base.pergunta;
     return { ...base, pergunta, receita: base.receita ?? receitaSalva(pergunta) ?? undefined };
   });
 }
@@ -682,8 +708,20 @@ const ROTULO_FERRAMENTA: Record<string, string> = {
   divergencias_viagem: "Lendo divergências de desembarque",
   rota_processo: "Montando a rota",
   andamento_atividade: "Lendo o andamento da atividade",
+  projeto_tarefas: "Lendo o projeto de tarefas",
+  monitores_campo: "Lendo os monitoramentos de campo",
+  gatilhos_atividade: "Lendo os gatilhos",
+  comando_bot: "Enviando o comando ao bot",
+  tarefa_bot: "Organizando a execução no HeadCargo",
+  rotina_bot: "Preparando a rotina",
+  painel_excecoes: "Lendo o que exige atenção",
+  regras_bot: "Consultando requisitos validados",
+  aprendizado_bot: "Lendo o que o bot aprendeu",
   executar_sql: "Consultando o banco",
   emails_gmail: "Lendo os e-mails",
+  enviar_followup: "Enviando o follow-up",
+  email_atividade: "Montando o e-mail da atividade",
+  montar_proposta: "Montando a proposta",
   localizar_processo: "Localizando o processo",
   propostas_periodo: "Lendo as propostas do período",
   resultado_atual: "Lendo o resultado da tela",
@@ -691,15 +729,13 @@ const ROTULO_FERRAMENTA: Record<string, string> = {
   esquecer_preferencia: "Removendo da memória",
 };
 
-function dataLegivel(valor: unknown): string {
-  const texto = String(valor ?? "");
-  const data = texto.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
-  if (!data) return texto;
-  return `${data[3]}/${data[2]}/${data[1]} ${data[4]}:${data[5]}`;
-}
-
 function textoParaIa(conteudo: string) {
+  try {
+    const dados = JSON.parse(conteudo);
+    if (dados.tarefaId) return JSON.stringify({ tarefaId: dados.tarefaId, tarefaEstado: dados.tarefaEstado, texto: String(dados.texto || "").slice(0, 7500) });
+  } catch { /* resultado textual */ }
   const pronto = textoDaConsulta(conteudo) || conteudo;
+  if (/```(?:tarefas|gatilhos)\b/i.test(pronto)) return pronto;
   return pronto.length > 8000 ? `${pronto.slice(0, 8000)}\n…` : pronto;
 }
 
@@ -717,30 +753,7 @@ function resumirResultado(conteudo: string): string {
   if (typeof registro.texto === "string" && registro.texto.trim()) return registro.texto.trim();
   const linhas = Array.isArray(registro.linhas) ? registro.linhas : [];
   if (linhas.length) {
-    const comDescricao = linhas.filter((linha) => String(linha.Descricao ?? linha.descricao ?? "").trim());
-    const amostra = (comDescricao.length ? comDescricao : linhas).slice(0, 20);
-    const texto = comDescricao.length
-      ? amostra
-          .map((linha) => {
-            const descricao = String(linha.Descricao ?? linha.descricao ?? "").replace(/\s+/g, " ").trim();
-            const quando = linha.Data ?? linha.data;
-            const responsavel = String(linha.Responsavel ?? linha.responsavel ?? "").trim();
-            const partes = [descricao];
-            if (quando) partes.unshift(`${dataLegivel(quando)}.`);
-            if (responsavel) partes.push(`Responsável: ${responsavel}.`);
-            return partes.join(" ");
-          })
-          .join("\n")
-      : amostra
-          .map((item) =>
-            Object.entries(item)
-              .filter(([, valor]) => valor != null && String(valor).trim())
-              .map(([chave, valor]) => `${chave}: ${dataLegivel(valor)}`)
-              .join(". "),
-          )
-          .join("\n");
-    const total = comDescricao.length || linhas.length;
-    return total > amostra.length ? `${texto}\nMais ${total - amostra.length} registros.` : texto;
+    return textoDaConsulta(conteudo);
   }
   return "";
 }
@@ -848,19 +861,22 @@ function dataCurta(valor: string): string {
   return valor.match(/^\d{2}\/\d{2}\/\d{2,4}/)?.[0] ?? "";
 }
 
-function graficoSePedido(texto: string, pedido: string): string {
-  if (!/gr[aá]fico/i.test(pedido) || !/fatura/i.test(pedido) || /```grafico/i.test(texto)) return texto;
+function pedeGraficoFaturas(texto: string) {
+  return /gr[aá]fico/i.test(texto) && /fatura/i.test(texto);
+}
+
+function pontosDaTabela(texto: string): string[] {
   const linhas = texto
     .split("\n")
     .map((linha) => linha.trim())
     .filter((linha) => linha.startsWith("|") && !/^\|\s*-+/.test(linha));
-  if (linhas.length < 2) return texto;
+  if (linhas.length < 2) return [];
   const celulas = (linha: string) => linha.split("|").slice(1, -1).map((celula) => celula.trim());
   const cabeca = celulas(linhas[0]).map((celula) => celula.toLowerCase());
   const iNome = cabeca.findIndex((celula) => /fatura|n[uú]mero|nome/.test(celula));
   const iValor = cabeca.findIndex((celula) => /valor/.test(celula));
   const iData = cabeca.findIndex((celula) => /^data\b/.test(celula));
-  if (iNome < 0 || iValor < 0) return texto;
+  if (iNome < 0 || iValor < 0) return [];
   const pontos: string[] = [];
   for (const linha of linhas.slice(1)) {
     const cols = celulas(linha);
@@ -870,14 +886,36 @@ function graficoSePedido(texto: string, pedido: string): string {
     const data = iData >= 0 ? dataCurta(cols[iData] ?? "") : "";
     pontos.push(data ? `${nome} | ${valor} | ${data}` : `${nome} | ${valor}`);
   }
+  return pontos;
+}
+
+function pontosDoTexto(texto: string): string[] {
+  const pontos: string[] = [];
+  const regra = /fatura:\s*([^.\n]+?)\.\s*valor:\s*(?:R\$\s*)?(\d+(?:[.,]\d+)*)\.\s*data:\s*(\d{2}\/\d{2}\/\d{2,4})/gi;
+  for (const achado of texto.matchAll(regra)) {
+    const nome = achado[1].trim();
+    const valor = numeroMonetario(achado[2].replace(/\s/g, ""));
+    if (!nome || valor == null) continue;
+    pontos.push(`${nome} | ${valor} | ${achado[3]}`);
+  }
+  return pontos;
+}
+
+function graficoSePedido(texto: string, pedido: string): string {
+  if (!pedeGraficoFaturas(pedido) || /```grafico/i.test(texto)) return texto;
+  const daTabela = pontosDaTabela(texto);
+  const pontos = daTabela.length ? daTabela : pontosDoTexto(texto);
   if (!pontos.length) return texto;
   const processo = (pedido.match(/\b[A-Za-z]{1,4}\d{2,6}-\d{2}\b/i)?.[0] ?? "").toUpperCase();
   const titulo = processo ? `Faturas ${processo}` : "Faturas";
-  return `${texto.trim()}\n\n\`\`\`grafico\n${titulo}\n${pontos.join("\n")}\n\`\`\``;
+  const bloco = `\`\`\`grafico\n${titulo}\n${pontos.join("\n")}\n\`\`\``;
+  return daTabela.length ? `${texto.trim()}\n\n${bloco}` : bloco;
 }
 
 function processoCitado(texto: string): string {
-  return texto.toUpperCase().match(/\b[A-Z]{1,4}\d{2,6}-\d{2}\b/)?.[0] ?? "";
+  const achado = texto.toUpperCase().match(/\b([A-Z]{1,4}\d{2,6}-\d{2})(\s+TESTE)?\b/);
+  if (!achado) return "";
+  return achado[2] ? `${achado[1]} teste` : achado[1];
 }
 
 function assuntoGeral(texto: string) {
@@ -929,6 +967,14 @@ function trechoDaPergunta(historico: Mensagem[]): Mensagem[] {
     }
   }
   return historico.slice(inicio);
+}
+
+function receitaFollowup(pergunta: string): Receita[] | null {
+  const texto = textoVisivel(pergunta);
+  if (!/follow[\s-]?up/i.test(texto)) return null;
+  const numero = processoCitado(texto);
+  if (!numero) return null;
+  return [{ nome: "modelo_followup", args: { numero } }];
 }
 
 function receitaCampoLivre(pergunta: string): Receita[] | null {
@@ -984,8 +1030,9 @@ function textoItensDaRodada(historico: Mensagem[], pergunta: string): string {
 }
 
 function receitaDaRota(pergunta: string, anteriores: Mensagem[]): Receita[] | null {
-  const numero = pergunta.match(/\b([A-Za-z]{1,4}\d{2,6}-\d{2})\b/i)?.[1];
+  const numero = processoCitado(pergunta);
   if (!numero || pedeLog(textoVisivel(pergunta))) return null;
+  if (/\batividad/i.test(pergunta)) return null;
   const pedeRota = /rota|navio|rastre/i.test(pergunta);
   const recente = anteriores
     .filter((item) => item.role === "user" || (item.role === "assistant" && item.content))
@@ -994,22 +1041,68 @@ function receitaDaRota(pergunta: string, anteriores: Mensagem[]): Receita[] | nu
     .join("\n");
   const soNumero = pergunta.trim().length <= numero.length + 8;
   if (!pedeRota && !(/rota|navio|rastre/i.test(recente) && soNumero)) return null;
-  return [{ nome: "rota_processo", args: { numero: numero.toUpperCase() } }];
+  return [{ nome: "rota_processo", args: { numero } }];
 }
 
 function perguntaAberta(anteriores: Mensagem[]): string {
   const usuarios = anteriores.filter((item) => item.role === "user");
   for (let i = usuarios.length - 1; i >= 0; i--) {
     const texto = textoVisivel(usuarios[i].content);
-    const achado = texto.match(/\b([A-Za-z]{1,4}\d{2,6}-\d{2})\b/i)?.[1];
-    const soNumero = Boolean(achado) && texto.trim().length <= (achado?.length ?? 0) + 8;
+    const achado = processoCitado(texto);
+    const soNumero = Boolean(achado) && texto.trim().length <= achado.length + 8;
     if (!soNumero && texto.trim()) return texto;
   }
   return "";
 }
 
+function receitaEmailAtividade(pergunta: string, anteriores: Mensagem[]): Receita[] | null {
+  const texto = textoVisivel(pergunta);
+  if (!/e-?mail/i.test(texto) || !/atividad/i.test(texto)) return null;
+  const pedido = texto.replace(/\batividade\s+(?:de\s+|do\s+|da\s+)?[\s\S]*$/i, "atividade");
+  if (/\benviar\b|\bmandar\b|\bencaminhar\b/i.test(pedido)) return null;
+  if (!/ger[ae]|mont[ae]|fa[zç]|quero|mostr|dess[ae]|dest[ae]/i.test(texto)) return null;
+  const id = texto.match(/\b(\d{6,8})\b/)?.[1] || "";
+  const numeroNaFala = processoCitado(texto);
+  const numeroAnterior = anteriores
+    .slice()
+    .reverse()
+    .map((item) => processoCitado(textoVisivel(item.content)))
+    .find(Boolean) || "";
+  const citado = texto.match(/atividade\s+["“']([^"”']+)["”']/i)?.[1]?.trim() || "";
+  const resto = texto.match(/\batividade\s+(?:de\s+|do\s+|da\s+)?(.+)$/i)?.[1]?.replace(/[?.!]+$/, "").trim() || "";
+  const nome = citado || (/^(dess[ae]|dest[ae]|aberta|em aberto|acima|anterior)$/i.test(resto) ? "" : resto);
+  return [{ nome: "email_atividade", args: { id, nome, numero: numeroNaFala || numeroAnterior } }];
+}
+
+function nomeDoClienteProposta(texto: string) {
+  const direto = texto.match(/\bcliente\s+(?!informado\b|qual\b)([A-Za-zÀ-ú0-9][^?.!\n]{1,80})/i);
+  if (direto) return direto[1].replace(/\s+\b(?:com base|usando|pronto|para enviar|e as|ou as).*/i, "").trim();
+  const para = texto.match(/\bpara\s+(?:a|o)\s+(?!cliente\b|enviar\b)([A-Za-zÀ-ú0-9][^?.!\n]{1,80})/i);
+  return para?.[1]?.replace(/\s+\b(?:com base|usando|pronto).*/i, "").trim() || "";
+}
+
+function pedeMontarProposta(texto: string) {
+  return /mont[ae].{0,60}proposta|proposta.{0,40}(?:por )?e-?mail|e-?mail.{0,40}proposta/i.test(texto)
+    && !/qual (?:a|é|e) proposta|oferta do processo/i.test(texto);
+}
+
+function receitaMontarProposta(pergunta: string, anteriores: Mensagem[]): Receita[] | null {
+  const texto = textoVisivel(pergunta);
+  const anterior = [...anteriores].reverse().map((item) => (item.role === "user" ? textoVisivel(item.content) : "")).find(Boolean) || "";
+  const pede = pedeMontarProposta(texto);
+  const segue = !pede && pedeMontarProposta(anterior) && texto.trim().length > 1 && texto.trim().length < 80 && !/[?]/.test(texto);
+  if (!pede && !segue) return null;
+  const numero = processoCitado(texto);
+  const cliente = segue ? texto.replace(/[?.!]+$/, "").trim() : nomeDoClienteProposta(texto);
+  if (!cliente && !numero) return null;
+  return [{ nome: "montar_proposta", args: { cliente, numero } }];
+}
+
 function receitaDoAssunto(assunto: string, numero: string): Receita[] | null {
-  const n = numero.toUpperCase();
+  const n = numero;
+  if (/documento|anexo/i.test(assunto) && /e-?mail/i.test(assunto)) {
+    return [{ nome: "emails_gmail", args: { processo: n, documentos: true } }];
+  }
   if (/campo(?:s)? livres?/i.test(assunto) && !/quem (?:alter|inclu|mud)|hist[oó]rico/i.test(assunto)) {
     return [{ nome: "documental_ce", args: { foco: "campos", numero: n } }];
   }
@@ -1017,7 +1110,8 @@ function receitaDoAssunto(assunto: string, numero: string): Receita[] | null {
     return [{ nome: "documental_ce", args: { foco: "processo", caso: "ambos", numero: n } }];
   }
   if (pedeLog(assunto)) return null;
-  if (/rota|navio|rastre/i.test(assunto)) return [{ nome: "rota_processo", args: { numero: n } }];
+  if (/follow[\s-]?up/i.test(assunto)) return [{ nome: "modelo_followup", args: { numero: n } }];
+  if (/rota|navio|rastre/i.test(assunto) && !/\batividad/i.test(assunto)) return [{ nome: "rota_processo", args: { numero: n } }];
   if (/acompanhament/i.test(assunto)) return [{ nome: "acompanhamentos_processo", args: { numero: n } }];
   if (/proposta|oferta/i.test(assunto)) return [{ nome: "proposta_processo", args: { numero: n } }];
   if (/\btaxas?\b/i.test(assunto)) return [{ nome: "taxas_processo", args: { numero: n } }];
@@ -1027,7 +1121,7 @@ function receitaDoAssunto(assunto: string, numero: string): Receita[] | null {
 }
 
 function receitaContinuacao(pergunta: string, anteriores: Mensagem[]): Receita[] | null {
-  const numero = pergunta.match(/\b([A-Za-z]{1,4}\d{2,6}-\d{2})\b/i)?.[1];
+  const numero = processoCitado(pergunta);
   if (!numero || pergunta.trim().length > numero.length + 8) return null;
   const assunto = perguntaAberta(anteriores);
   if (!assunto) return null;
@@ -1083,6 +1177,9 @@ function textoDocumentalDaRodada(historico: Mensagem[], pergunta: string): strin
 
 const FERRAMENTAS_PRONTAS = new Set([
   "acompanhamentos_processo",
+  "modelo_followup",
+  "email_atividade",
+  "montar_proposta",
   "meu_dia",
   "ficha_processo",
   "processos_abertos",
@@ -1110,6 +1207,12 @@ const FERRAMENTAS_PRONTAS = new Set([
   "explicar_itens_carga",
   "explicar_campo_livre",
   "andamento_atividade",
+  "projeto_tarefas",
+  "monitores_campo",
+  "gatilhos_atividade",
+  "comando_bot",
+  "tarefa_bot",
+  "aprendizado_bot",
 ]);
 
 function respostaProntaDoHistorico(historico: Mensagem[]): string {
@@ -1189,6 +1292,7 @@ function periodoPedido(texto: string): { inicio: string; fimExclusivo?: string }
     });
     const ordenadas = [...iso].sort();
     if (ordenadas.length > 1) return { inicio: ordenadas[0], fimExclusivo: diaSeguinte(ordenadas[ordenadas.length - 1]) };
+    if (/\bat[eé]\s+(?:hoje|agora)\b/i.test(texto)) return { inicio: ordenadas[0] };
     if (!/\b(?:a partir|desde|ap[oó]s)\b/i.test(texto)) {
       return { inicio: ordenadas[0], fimExclusivo: diaSeguinte(ordenadas[0]) };
     }
@@ -1390,7 +1494,7 @@ function textoDaDataAtual(texto: string) {
 }
 
 function numeroSolto(texto: string): string {
-  const numero = texto.toUpperCase().match(/\b([A-Z]{1,4}\d{2,6}-\d{2})\b/)?.[1] ?? "";
+  const numero = processoCitado(texto);
   if (!numero || texto.trim().length > numero.length + 8) return "";
   return numero;
 }
@@ -1423,6 +1527,18 @@ function idsMaritimos(texto: string): string[] {
   return [
     ...new Set([...texto.matchAll(/IdLogistica_Maritima_Container\s*[:=]?\s*(\d{3,})/gi)].map((achado) => achado[1])),
   ].slice(0, 40);
+}
+
+function alvoLogNomeado(texto: string): { tabela: string; campo: string; id: string } | null {
+  const achado = texto.match(/\bmov_logistica_(master|house|taxa)\s+(\d{3,})\b/i);
+  if (!achado) return null;
+  const qual = achado[1].toLowerCase();
+  const mapa: Record<string, { tabela: string; campo: string }> = {
+    master: { tabela: "mov_Logistica_Master", campo: "IdLogistica_Master" },
+    house: { tabela: "mov_Logistica_House", campo: "IdLogistica_House" },
+    taxa: { tabela: "mov_Logistica_Taxa", campo: "IdLogistica_Taxa" },
+  };
+  return { ...mapa[qual], id: achado[2] };
 }
 
 function idsTaxa(texto: string): string[] {
@@ -1500,6 +1616,12 @@ function sqlSemRepetir(sql: string): string {
 function mensagensParaArquivo(lista: Mensagem[]): Mensagem[] {
   return lista.map((mensagem) => {
     if (mensagem.role !== "tool") return mensagem;
+    const textoCompleto = textoDaConsulta(mensagem.content) || mensagem.content;
+    if (gatilhosDoTexto(textoCompleto) || projetoTarefasDoTexto(textoCompleto)) return mensagem;
+    try {
+      const dados = JSON.parse(mensagem.content);
+      if (dados.tarefaId) return { ...mensagem, content: JSON.stringify({ tarefaId: dados.tarefaId, tarefaEstado: dados.tarefaEstado, texto: String(dados.texto || "").slice(0, 7500) }) };
+    } catch { /* mantém o tratamento das demais ferramentas */ }
     const sql = sqlDoResultado(mensagem.content);
     if (!sql) return { ...mensagem, content: mensagem.content.slice(0, 2000) };
     let texto = "";
@@ -1712,7 +1834,7 @@ function numeroDoGrafico(bruto: string) {
 }
 
 function diaDoGrafico(valor: string) {
-  const achado = valor.trim().match(/^(\d{2})\/(\d{2})\/(\d{2,4})$/);
+  const achado = valor.trim().match(/^(\d{2})\/(\d{2})\/(\d{2,4})/);
   if (!achado) return null;
   const ano = achado[3].length === 2 ? 2000 + Number(achado[3]) : Number(achado[3]);
   return Date.UTC(ano, Number(achado[2]) - 1, Number(achado[1]));
@@ -1746,7 +1868,8 @@ function seriesDoGrafico(texto: string) {
   if (comData.length === serie.length && serie.length > 1) {
     serie.sort((a, b) => (diaDoGrafico(a.detalhe) ?? 0) - (diaDoGrafico(b.detalhe) ?? 0));
   }
-  return { titulo, itens: serie, moeda: serie.some((item) => item.moeda) };
+  const linha = comData.length === serie.length && serie.length > 1;
+  return { titulo, itens: serie, moeda: serie.some((item) => item.moeda), linha };
 }
 
 function textoDoValor(valor: number, moeda: boolean) {
@@ -1773,7 +1896,7 @@ function rotuloDoEixo(nome: string, detalhe: string) {
 }
 
 function Grafico({ texto }: { texto: string }) {
-  const { titulo, itens, moeda } = seriesDoGrafico(texto);
+  const { titulo, itens, moeda, linha } = seriesDoGrafico(texto);
   if (!itens.length) return null;
   const menor = Math.min(...itens.map((item) => item.valor));
   const maior = Math.max(...itens.map((item) => item.valor));
@@ -1793,7 +1916,7 @@ function Grafico({ texto }: { texto: string }) {
   return (
     <figure className="chat-grafico">
       {titulo ? <h3 className="chat-grafico-titulo">{titulo}</h3> : null}
-      <p className="chat-grafico-sub">{itens.length === 1 ? (moeda ? "1 preço" : "1 ponto") : `${itens.length} ${moeda ? "preços" : "pontos"}`}</p>
+      <p className="chat-grafico-sub">{itens.length === 1 ? (linha ? "1 fatura" : moeda ? "1 preço" : "1 ponto") : `${itens.length} ${linha ? "faturas" : moeda ? "preços" : "pontos"}`}</p>
       <div className="chat-grafico-stats">
         {resumo.map(([rotulo, valor, faixa]) => (
           <div key={rotulo} className={faixa ? `chat-grafico-stat ${faixa}` : "chat-grafico-stat"}>
@@ -1802,7 +1925,7 @@ function Grafico({ texto }: { texto: string }) {
           </div>
         ))}
       </div>
-      <div className="chat-grafico-plot" role="img" aria-label={titulo || "Gráfico de preços"}>
+      <div className="chat-grafico-plot" role="img" aria-label={titulo || (linha ? "Gráfico de linhas" : "Gráfico de preços")}>
         {marcas.map((marca) => (
           <span key={marca.bottom} className="chat-grafico-tick" style={{ bottom: `${marca.bottom}%` }}>
             {textoDoEixo(marca.valor)}
@@ -1813,7 +1936,30 @@ function Grafico({ texto }: { texto: string }) {
             <b>média</b>
           </div>
         ) : null}
-        <div className="chat-grafico-barras">
+        {linha ? (
+          <>
+            <svg className="chat-grafico-linha" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+              <polyline
+                points={itens
+                  .map((item, indice) => {
+                    const x = ((indice + 0.5) / itens.length) * 100;
+                    const y = 100 - alturaDe(item.valor);
+                    return `${x},${y}`;
+                  })
+                  .join(" ")}
+              />
+            </svg>
+            {itens.map((item, indice) => (
+              <span
+                key={`ponto-${item.nome}-${item.detalhe}-${indice}`}
+                className="chat-grafico-marca"
+                style={{ left: `${((indice + 0.5) / itens.length) * 100}%`, bottom: `${alturaDe(item.valor)}%` }}
+                title={[item.nome, item.detalhe, textoDoValor(item.valor, moeda)].filter(Boolean).join(" · ")}
+              />
+            ))}
+          </>
+        ) : null}
+        {!linha ? <div className="chat-grafico-barras">
           {itens.map((item, indice) => {
             const faixa = faixaDoValor(item.valor, menor, maior);
             return (
@@ -1827,7 +1973,7 @@ function Grafico({ texto }: { texto: string }) {
               </div>
             );
           })}
-        </div>
+        </div> : null}
       </div>
       <div className="chat-grafico-eixo">
         {itens.map((item, indice) => {
@@ -2244,30 +2390,306 @@ function RotaCard({ bruto, completo = false }: { bruto: string; completo?: boole
   );
 }
 
+type AnexoEmail = { nome?: string; tamanho?: number; id?: string; mensagem?: string };
+
+function tamanhoDoAnexo(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function extensaoDoAnexo(nome: string) {
+  return nome.split(".").pop()?.toLowerCase() || "arq";
+}
+
+function tipoDoAnexo(nome: string) {
+  const ext = extensaoDoAnexo(nome);
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "png") return "image/png";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "gif") return "image/gif";
+  if (ext === "webp") return "image/webp";
+  return "";
+}
+
+async function arquivoDoAnexo(anexo: AnexoEmail) {
+  let token = "";
+  try {
+    token = (await renovarTokenGmail()) || "";
+  } catch {
+    token = "";
+  }
+  if (!token) throw new Error("Entre com o Google uma vez para baixar os documentos.");
+  const resp = await fetch("/api/gmail/anexo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, mensagem: anexo.mensagem, anexo: anexo.id, nome: anexo.nome }),
+  });
+  if (!resp.ok) {
+    const erro = await resp.json().catch(() => ({}));
+    throw new Error(typeof erro.erro === "string" ? erro.erro : "Não consegui baixar o documento.");
+  }
+  const bruto = await resp.blob();
+  const tipo = tipoDoAnexo(anexo.nome || "");
+  return tipo ? new Blob([bruto], { type: tipo }) : bruto;
+}
+
+function emailsDoCartao(valor: unknown) {
+  const lista = Array.isArray(valor) ? valor : [];
+  return [...new Set(lista.map((item) => String(item || "").trim().toLowerCase()).filter((item) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(item)))];
+}
+
+function htmlComLogo(html: string) {
+  return html
+    .replaceAll('src="cid:logo-conline"', `src="${logoConlineVermelha}"`)
+    .replace(/src="data:image\/png;base64,[^"]+"/g, `src="${logoConlineVermelha}"`);
+}
+
 function EmailCard({ bruto }: { bruto: string }) {
-  let dados: { assunto?: string; de?: string; data?: string; naoLida?: boolean; alerta?: string; corpo?: string; processo?: string } = {};
+  const [baixando, setBaixando] = useState("");
+  const [falha, setFalha] = useState("");
+  const [previas, setPrevias] = useState<Record<string, string>>({});
+  const [enviando, setEnviando] = useState(false);
+  const [gerandoPdf, setGerandoPdf] = useState(false);
+  const [avisoEnvio, setAvisoEnvio] = useState("");
+  const [buscandoEmails, setBuscandoEmails] = useState(false);
+  const [lista, setLista] = useState<string[]>([]);
+  const [novo, setNovo] = useState("");
+  let dados: { assunto?: string; de?: string; data?: string; naoLida?: boolean; alerta?: string; corpo?: string; processo?: string; atividade?: string; html?: string; para?: string[]; anexos?: AnexoEmail[] } | null = null;
   try {
     dados = JSON.parse(bruto);
   } catch {
-    return null;
+    dados = null;
   }
-  const corpo = String(dados.corpo ?? "")
+  const processo = String(dados?.processo ?? "").trim();
+  const corpo = String(dados?.corpo ?? "")
     .split("\n")
     .map((linha) => linha.trim())
-    .filter(Boolean);
+    .filter((linha) => linha && linha.replace(/\s/g, "") !== processo);
+  const anexos = (dados?.anexos || []).filter((item) => item.nome && item.id && item.mensagem);
+  const chaveAnexo = anexos.map((item) => `${item.mensagem}:${item.id}`).join("|");
+  const atividade = String(dados?.atividade ?? "").trim();
+  const htmlAtividade = atividade && dados?.html ? String(dados.html) : "";
+
+  useEffect(() => {
+    if (!htmlAtividade) return;
+    const prontos = emailsDoCartao(dados?.para);
+    if (prontos.length || !processo) {
+      setLista(prontos);
+      setBuscandoEmails(false);
+      return;
+    }
+    let vivo = true;
+    setBuscandoEmails(true);
+    fetch(`/api/followup/emails?numero=${encodeURIComponent(processo)}`)
+      .then((resp) => resp.json())
+      .then((corpoJson: { emails?: string[] }) => {
+        if (vivo) setLista(emailsDoCartao(corpoJson.emails));
+      })
+      .catch(() => {
+        if (vivo) setLista([]);
+      })
+      .finally(() => {
+        if (vivo) setBuscandoEmails(false);
+      });
+    return () => {
+      vivo = false;
+    };
+  }, [htmlAtividade, processo, bruto]);
+
+  useEffect(() => {
+    let ativo = true;
+    const criadas: string[] = [];
+    void (async () => {
+      for (const anexo of anexos) {
+        if (!tipoDoAnexo(anexo.nome || "")) continue;
+        const chave = `${anexo.mensagem}:${anexo.id}`;
+        try {
+          const blob = await arquivoDoAnexo(anexo);
+          if (!ativo) return;
+          const url = URL.createObjectURL(blob);
+          criadas.push(url);
+          setPrevias((atual) => ({ ...atual, [chave]: url }));
+        } catch {
+          /* a prévia fica com a sigla do arquivo */
+        }
+      }
+    })();
+    return () => {
+      ativo = false;
+      for (const url of criadas) URL.revokeObjectURL(url);
+    };
+  }, [chaveAnexo]);
+
+  async function baixar(anexo: AnexoEmail) {
+    const chave = `${anexo.mensagem}:${anexo.id}`;
+    setFalha("");
+    setBaixando(chave);
+    try {
+      const blob = await arquivoDoAnexo(anexo);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = anexo.nome || "documento";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (erro) {
+      setFalha(erro instanceof Error ? erro.message : "Não consegui baixar o documento.");
+    } finally {
+      setBaixando("");
+    }
+  }
+  if (!dados) return null;
+  const acrescentar = () => {
+    const email = novo.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setAvisoEnvio("Informe um e-mail válido.");
+      return;
+    }
+    setLista((atual) => (atual.includes(email) ? atual : [...atual, email]));
+    setNovo("");
+    setAvisoEnvio("");
+  };
+  const enviarAtividade = async () => {
+    if (!lista.length) {
+      setAvisoEnvio("Adicione ao menos um e-mail.");
+      return;
+    }
+    setEnviando(true);
+    setAvisoEnvio("");
+    try {
+      const token = await garantirEnvioGmail();
+      const resp = await fetch("/api/gmail/enviar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token,
+          para: lista.join(", "),
+          assunto: dados.assunto || atividade,
+          html: htmlAtividade,
+          numero: processo,
+        }),
+      });
+      const corpoEnvio = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(typeof corpoEnvio.erro === "string" ? corpoEnvio.erro : "Não consegui enviar.");
+      setAvisoEnvio(typeof corpoEnvio.texto === "string" ? corpoEnvio.texto : "E-mail enviado.");
+    } catch (erro) {
+      const mensagem = erro instanceof Error ? erro.message : "Não consegui enviar.";
+      setAvisoEnvio(mensagem === "GMAIL_SEM_ENVIO" ? "Autorize o envio na janela do Google e tente de novo." : mensagem);
+    } finally {
+      setEnviando(false);
+    }
+  };
+  if (htmlAtividade) {
+    return (
+      <article className="chat-modelo">
+        <div className="chat-modelo-destinos">
+          <strong>Destinatários</strong>
+          {buscandoEmails ? <em>Buscando os e-mails do cadastro…</em> : null}
+          {!buscandoEmails && !lista.length ? <em>Nenhum destinatário no modelo. Adicione um e-mail.</em> : null}
+          {lista.map((email) => (
+            <span key={email}>
+              <b>{email}</b>
+              <button type="button" aria-label={`Remover ${email}`} onClick={() => setLista((atual) => atual.filter((item) => item !== email))}>
+                ×
+              </button>
+            </span>
+          ))}
+          <input
+            type="email"
+            value={novo}
+            placeholder="adicionar e-mail"
+            aria-label="Adicionar e-mail"
+            onChange={(evento) => setNovo(evento.target.value)}
+            onKeyDown={(evento) => {
+              if (evento.key === "Enter") {
+                evento.preventDefault();
+                acrescentar();
+              }
+            }}
+          />
+        </div>
+        <div className="chat-modelo-acoes">
+          <button type="button" disabled={enviando || buscandoEmails} onClick={() => void enviarAtividade()}>
+            {enviando ? "Enviando…" : "Enviar por e-mail"}
+          </button>
+          {htmlAtividade.includes("Estatística do cliente") || htmlAtividade.includes("ESTATÍSTICA DO CLIENTE") ? (
+            <button
+              type="button"
+              disabled={gerandoPdf}
+              onClick={() => {
+                setGerandoPdf(true);
+                setAvisoEnvio("");
+                void baixarPdfProposta(htmlAtividade, logoConlineVermelha)
+                  .catch((erro) => setAvisoEnvio(erro instanceof Error ? erro.message : "Não consegui baixar o PDF."))
+                  .finally(() => setGerandoPdf(false));
+              }}
+            >
+              {gerandoPdf ? "Gerando…" : "Baixar PDF"}
+            </button>
+          ) : null}
+          {avisoEnvio ? <p>{avisoEnvio}</p> : null}
+        </div>
+        <iframe
+          className="chat-modelo-html"
+          sandbox="allow-same-origin"
+          srcDoc={htmlComLogo(htmlAtividade)}
+          title={dados.assunto || atividade}
+          onLoad={(evento) => {
+            const quadro = evento.currentTarget;
+            const altura = quadro.contentDocument?.documentElement?.scrollHeight || 0;
+            if (altura > 200) quadro.style.height = `${altura + 8}px`;
+          }}
+        />
+      </article>
+    );
+  }
   return (
     <article className={`chat-email${dados.alerta ? " alerta" : ""}`}>
       <header>
-        <strong>{dados.assunto || "E-mail"}</strong>
-        {dados.processo ? <em className="processo">{dados.processo}</em> : null}
-        {dados.naoLida ? <em>Não lida</em> : null}
+        <strong>{dados.assunto || dados.atividade || "E-mail"}</strong>
+        <span>
+          {processo ? <em className="processo">{processo}</em> : null}
+          {dados.naoLida ? <em>Não lida</em> : null}
+        </span>
       </header>
       <p>
         {dados.de ? <span>{dados.de}</span> : null}
         {dados.data ? <time>{dados.data}</time> : null}
       </p>
       {dados.alerta ? <b>Alerta: {dados.alerta}. Não clique em link nem informe senha.</b> : null}
-      {corpo.length ? (
+      {anexos.length ? (
+        <ul className="chat-email-anexos">
+          {anexos.map((anexo) => {
+            const chave = `${anexo.mensagem}:${anexo.id}`;
+            const nome = anexo.nome || "documento";
+            const ext = extensaoDoAnexo(nome);
+            const previa = previas[chave];
+            const imagem = /^image\//.test(tipoDoAnexo(nome));
+            return (
+              <li key={chave}>
+                <div className="chat-email-arquivo">
+                  <span className="chat-email-preview">
+                    {previa && imagem ? <img src={previa} alt="" /> : null}
+                    {previa && !imagem && ext === "pdf" ? <iframe src={`${previa}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`} title="" tabIndex={-1} /> : null}
+                    {!previa || (ext !== "pdf" && !imagem) ? <i>{ext}</i> : null}
+                  </span>
+                  <button type="button" className="chat-email-baixar" onClick={() => void baixar(anexo)} disabled={baixando === chave}>
+                    {baixando === chave ? "Baixando…" : "Baixar"}
+                  </button>
+                </div>
+                <span>
+                  <strong>{nome}</strong>
+                  {anexo.tamanho ? <small>{tamanhoDoAnexo(anexo.tamanho)}</small> : null}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {falha ? <b>{falha}</b> : null}
+      {dados.html ? <iframe className="chat-email-html" sandbox="" srcDoc={htmlComLogo(dados.html)} title={dados.assunto || "E-mail da atividade"} /> : null}
+      {!dados.html && corpo.length ? (
         <div>
           {corpo.map((linha) =>
             /^\*\*[^*]+:\*\*/.test(linha) ? (
@@ -2281,6 +2703,444 @@ function EmailCard({ bruto }: { bruto: string }) {
           )}
         </div>
       ) : null}
+    </article>
+  );
+}
+
+type MarcoModelo = { nome?: string; valor?: string; previsto?: boolean };
+type NotaModelo = { data?: string; responsavel?: string; texto?: string };
+type AtividadeModelo = {
+  id?: number;
+  nome?: string;
+  previsao?: string;
+  responsavel?: string;
+  modeloMensagem?: string;
+  modeloAcompanhamento?: string;
+  nota?: string;
+};
+type ModeloPronto = {
+  modelo?: string;
+  numero?: string;
+  cliente?: string;
+  emailCliente?: string;
+  emailsCliente?: string[];
+  referencia?: string;
+  situacao?: string;
+  origem?: string;
+  destino?: string;
+  navio?: string;
+  viagem?: string;
+  companhia?: string;
+  conhecimento?: string;
+  ce?: string;
+  data?: string;
+  assunto?: string;
+  campos?: { label?: string; value?: string }[];
+  marcos?: MarcoModelo[];
+  acompanhamentos?: NotaModelo[];
+  atividades?: AtividadeModelo[];
+};
+
+function textoPdfModelo(valor: string) {
+  return valor.replace(/\u2014|\u2013/g, "-").replace(/\u2192/g, "->").replace(/[^\n\r\t\u0020-\u00ff]/g, "");
+}
+
+async function baixarPdfModelo(bruto: ModeloPronto) {
+  const dados = followupDoModelo(bruto);
+  const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
+  const doc = await PDFDocument.create();
+  const regular = await doc.embedFont(StandardFonts.Helvetica);
+  const negrito = await doc.embedFont(StandardFonts.HelveticaBold);
+  let logo: Awaited<ReturnType<typeof doc.embedPng>> | null = null;
+  try {
+    const arquivo = await fetch(logoConlineVermelha).then((resposta) => resposta.arrayBuffer());
+    logo = await doc.embedPng(arquivo);
+  } catch {
+    logo = null;
+  }
+  const largura = 595;
+  const altura = 842;
+  const margem = 36;
+  const miolo = largura - margem * 2;
+  const preto = rgb(0.1, 0.1, 0.1);
+  const vermelho = rgb(225 / 255, 6 / 255, 0);
+  const branco = rgb(1, 1, 1);
+  let pagina = doc.addPage([largura, altura]);
+  let y = altura - margem;
+  const nova = () => {
+    pagina = doc.addPage([largura, altura]);
+    y = altura - margem;
+  };
+  const garantir = (espaco: number) => {
+    if (y - espaco < margem) nova();
+  };
+  const quebrar = (texto: string, fonte: typeof regular, tamanho: number, limite: number) => {
+    const palavras = textoPdfModelo(texto).split(/\s+/).filter(Boolean);
+    const linhas: string[] = [];
+    let atual = "";
+    for (const palavra of palavras) {
+      const tentativa = atual ? `${atual} ${palavra}` : palavra;
+      if (fonte.widthOfTextAtSize(tentativa, tamanho) > limite && atual) {
+        linhas.push(atual);
+        atual = palavra;
+      } else atual = tentativa;
+    }
+    if (atual) linhas.push(atual);
+    return linhas;
+  };
+  const meta = [
+    `REFERÊNCIA:  ${dados.reference}`,
+    `CLIENTE:  ${dados.client}`,
+    dados.date ? `DATA:  ${dados.date}` : "",
+    dados.clientRef ? `REF. CLIENTE:  ${dados.clientRef}` : "",
+  ].filter(Boolean);
+  const alturaLogo = 42;
+  const alturaCabeca = Math.max(alturaLogo, meta.length * 12);
+  garantir(alturaCabeca + 14);
+  if (logo) {
+    const logoLargura = (logo.width / logo.height) * alturaLogo;
+    pagina.drawImage(logo, { x: margem, y: y - alturaLogo + 6, width: logoLargura, height: alturaLogo });
+  } else {
+    pagina.drawText("conline", { x: margem, y: y - 24, size: 18, font: negrito, color: vermelho });
+  }
+  meta.forEach((item, indice) => {
+    const limpo = textoPdfModelo(item);
+    const larguraTexto = negrito.widthOfTextAtSize(limpo, 8);
+    pagina.drawText(limpo, { x: largura - margem - larguraTexto, y: y - 8 - indice * 12, size: 8, font: negrito, color: preto });
+  });
+  y -= alturaCabeca + 8;
+  pagina.drawRectangle({ x: margem, y, width: miolo, height: 3, color: preto });
+  y -= 16;
+  const coluna = miolo / 2;
+  for (let indice = 0; indice < dados.fields.length; indice += 2) {
+    const pares = [dados.fields[indice], dados.fields[indice + 1]].filter(Boolean);
+    const blocos = pares.map((campo) => {
+      const rotulo = textoPdfModelo(`${campo.label.toUpperCase()}:`);
+      const larguraRotulo = negrito.widthOfTextAtSize(rotulo, 8);
+      const linhas = quebrar(campo.value || "", regular, 8, coluna - larguraRotulo - 14);
+      return { rotulo, larguraRotulo, linhas };
+    });
+    const linhasAltura = Math.max(...blocos.map((bloco) => Math.max(bloco.linhas.length, 1)), 1);
+    const alturaLinha = linhasAltura * 11 + 3;
+    garantir(alturaLinha);
+    blocos.forEach((bloco, posicao) => {
+      const x = margem + posicao * coluna;
+      pagina.drawText(bloco.rotulo, { x, y, size: 8, font: negrito, color: preto });
+      (bloco.linhas.length ? bloco.linhas : [""]).forEach((item, linha) => {
+        pagina.drawText(item, { x: linha === 0 ? x + bloco.larguraRotulo + 4 : x, y: y - linha * 11, size: 8, font: regular, color: preto });
+      });
+    });
+    y -= alturaLinha;
+  }
+  y -= 8;
+  garantir(20);
+  pagina.drawRectangle({ x: margem, y: y - 12, width: miolo, height: 16, color: vermelho });
+  pagina.drawText("DATA", { x: margem + 6, y: y - 8, size: 8, font: negrito, color: branco });
+  pagina.drawText("DESCRIÇÃO", { x: margem + 92, y: y - 8, size: 8, font: negrito, color: branco });
+  y -= 24;
+  if (!dados.events.length) {
+    pagina.drawText("Nenhum acompanhamento neste processo.", { x: margem + 92, y, size: 8, font: regular, color: preto });
+  }
+  dados.events.forEach((evento) => {
+    const texto = quebrar([evento.text, evento.notice].filter(Boolean).join(" "), regular, 8, miolo - 100);
+    const linhas = texto.length ? texto : [""];
+    const alturaNota = linhas.length * 11 + 6;
+    garantir(alturaNota);
+    pagina.drawText(textoPdfModelo(evento.date), { x: margem + 6, y, size: 8, font: negrito, color: preto });
+    linhas.forEach((item, linha) => {
+      pagina.drawText(item, { x: margem + 92, y: y - linha * 11, size: 8, font: regular, color: preto });
+    });
+    y -= alturaNota;
+  });
+  const bytes = await doc.save();
+  const blob = new Blob([Uint8Array.from(bytes)], { type: "application/pdf" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `Followup ${dados.reference || "processo"}.pdf`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function portoDoFollowup(texto?: string) {
+  const bruto = String(texto ?? "").trim();
+  const corte = bruto.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
+  if (!corte) return { name: bruto || "—", code: "" };
+  return { name: corte[1].trim() || bruto, code: corte[2].trim() };
+}
+
+function tituloDoFollowup(numero: string) {
+  if (/^EM/i.test(numero)) return "Follow-up · Exportação marítima";
+  if (/^IA/i.test(numero)) return "Follow-up · Importação aérea";
+  if (/^EA/i.test(numero)) return "Follow-up · Exportação aérea";
+  return "Follow-up · Importação marítima";
+}
+
+function dataDoMarco(marcos: MarcoModelo[] | undefined, nome: string) {
+  const marco = (marcos || []).find((item) => item.nome === nome && item.valor);
+  if (!marco?.valor) return "";
+  return marco.previsto ? `${nome} previsto ${marco.valor}` : `${nome} ${marco.valor}`;
+}
+
+function avisoDoAcompanhamento(texto: string) {
+  const partes = texto.split(/\s*(?=Aviso importante\s*:)/i).map((parte) => parte.trim()).filter(Boolean);
+  if (partes.length < 2) return { text: texto, notice: "" };
+  return { text: partes[0], notice: partes.slice(1).join(" ") };
+}
+
+const CAMPOS_FOLLOWUP = [
+  "Exportador",
+  "Importador",
+  "HBL",
+  "Navio/Viagem",
+  "Origem",
+  "Destino",
+  "CE Mercante",
+  "Destino final",
+  "Prev. de embarque",
+  "Prev. de desembarque",
+  "Data de embarque",
+  "Data de desembarque",
+  "Modalidade de frete",
+  "Mercadoria",
+  "Peso bruto",
+  "Qtde de volumes",
+  "Cubagem",
+  "Term. desova",
+  "Cia de transporte",
+  "Containers",
+  "Booking",
+];
+
+function chaveCampoFollowup(rotulo: string) {
+  return rotulo
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function valorDoMarco(marcos: MarcoModelo[] | undefined, nome: string, previsto: boolean) {
+  const marco = (marcos || []).find((item) => item.nome === nome && item.valor && Boolean(item.previsto) === previsto);
+  return marco?.valor || "";
+}
+
+function camposDoFollowup(dados: ModeloPronto, origem: string, destino: string, navio: string): { label: string; value: string }[] {
+  const embarque = valorDoMarco(dados.marcos, "Embarque", false);
+  const embarquePrevisto = valorDoMarco(dados.marcos, "Embarque", true);
+  const desembarque = valorDoMarco(dados.marcos, "Desembarque", false);
+  const desembarquePrevisto = valorDoMarco(dados.marcos, "Desembarque", true);
+  const vindos = new Map<string, string>();
+  for (const item of dados.campos || []) {
+    if (!item.label) continue;
+    vindos.set(chaveCampoFollowup(String(item.label)), String(item.value || ""));
+  }
+  const reservas: Record<string, string> = {
+    hbl: dados.conhecimento || "",
+    navioviagem: navio,
+    origem,
+    destino,
+    cemercante: dados.ce || "",
+    prevdeembarque: embarquePrevisto,
+    prevdedesembarque: desembarquePrevisto,
+    datadeembarque: embarque,
+    datadedesembarque: desembarque,
+    ciadetransporte: dados.companhia || "",
+  };
+  const usados = new Set(CAMPOS_FOLLOWUP.map(chaveCampoFollowup));
+  const oficiais = CAMPOS_FOLLOWUP.map((label) => {
+    const chave = chaveCampoFollowup(label);
+    const vindo = vindos.get(chave);
+    const valor = vindo != null && vindo !== "" ? vindo : reservas[chave] || "";
+    return { label, value: chave === "cubagem" ? valor.replace(/\bm3\b/g, "m³") : valor };
+  });
+  const extras = (dados.campos || [])
+    .filter((item) => item.label && !usados.has(chaveCampoFollowup(String(item.label))))
+    .map((item) => ({ label: String(item.label), value: String(item.value || "") }));
+  return [...oficiais, ...extras];
+}
+
+function followupDoModelo(dados: ModeloPronto, semStatus = false): FollowUpData {
+  const numero = dados.numero || "Processo";
+  const origem = portoDoFollowup(dados.origem);
+  const destino = portoDoFollowup(dados.destino);
+  const embarque = dataDoMarco(dados.marcos, "Embarque");
+  const desembarque = dataDoMarco(dados.marcos, "Desembarque");
+  const navio = [dados.navio, dados.viagem].filter(Boolean).join(" / ");
+  const campos = camposDoFollowup(dados, origem.name === "—" ? "" : origem.name, destino.name === "—" ? "" : destino.name, navio);
+  return {
+    title: tituloDoFollowup(numero),
+    reference: numero,
+    client: dados.cliente || "Cliente não informado",
+    clientRef: dados.referencia || undefined,
+    date: dados.data || undefined,
+    status: semStatus ? undefined : dados.situacao || undefined,
+    origin: { ...origem, date: embarque || undefined },
+    destination: { ...destino, date: desembarque || undefined },
+    vessel: dados.navio ? `${dados.navio}${dados.viagem ? ` · viagem ${dados.viagem}` : ""}` : undefined,
+    fields: campos,
+    events: (dados.acompanhamentos || []).map((nota) => {
+      const aviso = avisoDoAcompanhamento(nota.texto || "");
+      return {
+        date: nota.data || "Nota",
+        text: aviso.text,
+        notice: aviso.notice || undefined,
+      };
+    }),
+  };
+}
+
+function emailsDaFicha(ficha: ModeloPronto | null) {
+  const achados = [...(ficha?.emailsCliente || []), ficha?.emailCliente || ""].join(" ").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
+  return [...new Set(achados.map((item) => item.toLowerCase()))];
+}
+
+function ModeloCard({ bruto, semStatus = false }: { bruto: string; semStatus?: boolean }) {
+  const [gerando, setGerando] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [avisoEnvio, setAvisoEnvio] = useState("");
+  const [buscandoEmails, setBuscandoEmails] = useState(true);
+  const [lista, setLista] = useState<string[]>([]);
+  const [novo, setNovo] = useState("");
+  let dados: ModeloPronto | null = null;
+  try {
+    dados = JSON.parse(bruto);
+  } catch {
+    dados = null;
+  }
+  const numero = dados?.numero || "";
+  useEffect(() => {
+    if (!numero) {
+      setBuscandoEmails(false);
+      return;
+    }
+    let vivo = true;
+    setBuscandoEmails(true);
+    fetch(`/api/followup/emails?numero=${encodeURIComponent(numero)}`)
+      .then((resp) => resp.json())
+      .then((corpo: { emails?: string[] }) => {
+        if (!vivo) return;
+        const vindos = Array.isArray(corpo.emails) ? corpo.emails : [];
+        const emails = vindos.length ? emailsDaFicha({ emailsCliente: vindos }) : emailsDaFicha(dados);
+        setLista(emails);
+      })
+      .catch(() => {
+        if (!vivo) return;
+        setLista(emailsDaFicha(dados));
+      })
+      .finally(() => {
+        if (vivo) setBuscandoEmails(false);
+      });
+    return () => {
+      vivo = false;
+    };
+  }, [numero, bruto]);
+  if (!dados) return null;
+  const ficha = dados;
+  const acrescentar = () => {
+    const email = novo.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setAvisoEnvio("Informe um e-mail válido.");
+      return;
+    }
+    setLista((atual) => (atual.includes(email) ? atual : [...atual, email]));
+    setNovo("");
+    setAvisoEnvio("");
+  };
+  const enviarFicha = async () => {
+    if (!lista.length) {
+      setAvisoEnvio("Adicione ao menos um e-mail.");
+      return;
+    }
+    setEnviando(true);
+    setAvisoEnvio("");
+    try {
+      const token = await garantirEnvioGmail();
+      const resp = await fetch("/api/gmail/enviar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token,
+          para: lista.join(", "),
+          modelo: { ...ficha, emailsCliente: lista },
+          assunto: ficha.assunto,
+          semStatus,
+        }),
+      });
+      const corpo = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(typeof corpo.erro === "string" ? corpo.erro : "Não consegui enviar.");
+      setAvisoEnvio(typeof corpo.texto === "string" ? corpo.texto : "E-mail enviado.");
+    } catch (erro) {
+      const mensagem = erro instanceof Error ? erro.message : "Não consegui enviar.";
+      setAvisoEnvio(mensagem === "GMAIL_SEM_ENVIO" ? "Autorize o envio na janela do Google e tente de novo." : mensagem);
+    } finally {
+      setEnviando(false);
+    }
+  };
+  return (
+    <article className="chat-modelo">
+      <div className="chat-modelo-destinos">
+        <strong>E-mails do cliente</strong>
+        {buscandoEmails ? <em>Buscando os e-mails do cadastro…</em> : null}
+        {!buscandoEmails && !lista.length ? <em>Nenhum e-mail no cadastro deste cliente.</em> : null}
+        {lista.map((email) => (
+          <span key={email}>
+            <b>{email}</b>
+            <button type="button" aria-label={`Remover ${email}`} onClick={() => setLista((atual) => atual.filter((item) => item !== email))}>
+              ×
+            </button>
+          </span>
+        ))}
+        <input
+          type="email"
+          value={novo}
+          placeholder="adicionar e-mail"
+          aria-label="Adicionar e-mail"
+          onChange={(evento) => setNovo(evento.target.value)}
+          onKeyDown={(evento) => {
+            if (evento.key === "Enter") {
+              evento.preventDefault();
+              acrescentar();
+            }
+          }}
+        />
+      </div>
+      <div className="chat-modelo-acoes">
+        <button type="button" disabled={enviando || buscandoEmails} onClick={() => void enviarFicha()}>
+          {enviando ? "Enviando…" : "Enviar por e-mail"}
+        </button>
+        <button
+          type="button"
+          disabled={gerando}
+          onClick={() => {
+            setGerando(true);
+            void baixarPdfModelo(ficha).finally(() => setGerando(false));
+          }}
+        >
+          {gerando ? "Gerando…" : "Baixar PDF"}
+        </button>
+        {avisoEnvio ? <p>{avisoEnvio}</p> : null}
+      </div>
+      {ficha.atividades?.length ? (
+        <div className="chat-modelo-atividades">
+          <strong>Atividades em aberto</strong>
+          <em>A nota de cada uma é o acompanhamento que o HeadCargo grava quando a atividade é concluída. O follow usa o modelo de mensagem dessa atividade.</em>
+          <ul>
+            {ficha.atividades.map((atividade) => (
+              <li key={atividade.id || atividade.nome}>
+                <b>{atividade.nome}</b>
+                <span>
+                  {[atividade.previsao && `Previsão ${atividade.previsao}`, atividade.responsavel, atividade.modeloMensagem && `Follow ${atividade.modeloMensagem}`]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+                {atividade.nota ? <p>{atividade.nota}</p> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <FollowUp data={followupDoModelo(ficha, semStatus)} logoSrc={logoConlineVermelha} />
     </article>
   );
 }
@@ -2475,70 +3335,12 @@ function prazosDaLista(titulo: string, itens: ItemLista[]) {
 }
 
 function PrazosCard({ titulo, sub, itens, aviso }: { titulo: string; sub: string; itens: ItemPrazo[]; aviso: string }) {
-  const tons = itens.map((item) => item.datas[item.datas.length - 1]?.dias ?? 0);
-  const atrasados = tons.filter((dias) => dias < 0).length;
-  const hoje = tons.filter((dias) => dias === 0).length;
-  const semana = tons.filter((dias) => dias > 0 && dias <= 7).length;
-  const adiante = tons.filter((dias) => dias > 7).length;
-  const resumo = [
-    `${itens.length} ${itens.length === 1 ? "processo" : "processos"}`,
-    atrasados ? `${atrasados} ${atrasados === 1 ? "atrasado" : "atrasados"}` : "",
-    hoje ? `${hoje} ${hoje === 1 ? "vence hoje" : "vencem hoje"}` : "",
-    semana ? `${semana} em até 7 dias` : "",
-    adiante ? `${adiante} mais adiante` : "",
-  ].filter(Boolean);
-  return (
-    <article className="resposta prazos">
-      <header className="prazos-topo">
-        <h2>
-          {titulo}
-          {sub ? <small>{sub}</small> : null}
-        </h2>
-        <div className="resumo">
-          {resumo.map((texto) => (
-            <span
-              key={texto}
-              className={/atrasad|vence hoje|vencem hoje/i.test(texto) ? "hoje" : /7 dias/i.test(texto) ? "semana" : /adiante/i.test(texto) ? "normal" : ""}
-            >
-              {texto}
-            </span>
-          ))}
-        </div>
-      </header>
-      <ul className="prazos-lista">
-        {itens.map((item, indice) => {
-          const referencia = item.datas[item.datas.length - 1];
-          const tom = referencia.dias <= 0 ? "hoje" : referencia.dias <= 7 ? "semana" : "";
-          return (
-            <li key={`${item.codigo}-${indice}`} className={`prazo-item${tom ? ` ${tom}` : ""}`} style={{ ["--i" as string]: indice }}>
-              <div>
-                <span className="codigo">{item.codigo}</span>
-                {item.empresa ? (
-                  <p className="empresa">
-                    {item.empresa}
-                    {item.filial ? <span className="filial">{item.filial}</span> : null}
-                  </p>
-                ) : null}
-              </div>
-              <div className="datas-prazo">
-                {item.datas.map((data, n) => (
-                  <div key={`${data.rotulo}-${data.data}`} className={n === item.datas.length - 1 ? "prazo fim" : "prazo"}>
-                    <span className="rotulo">{data.rotulo}</span>
-                    <span className="data">
-                      {data.data}
-                      {data.hora ? <span className="hora"> {data.hora}</span> : null}
-                    </span>
-                    {n === item.datas.length - 1 ? <span className="rel">{rotuloRelativo(data.dias)}</span> : null}
-                  </div>
-                ))}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-      {aviso ? <p className="prazos-aviso">{aviso}</p> : null}
-    </article>
-  );
+  const linhas = itens.map(item => {
+    const linha: Record<string, unknown> = { Processo: item.codigo, Cliente: [item.empresa, item.filial].filter(Boolean).join(" ") };
+    for (const data of item.datas) linha[data.rotulo] = [data.data, data.hora].filter(Boolean).join(" ");
+    return linha;
+  });
+  return <ListaConsulta titulo={titulo} sub={sub} linhas={linhas} aviso={aviso} />;
 }
 
 function partesDoResumo(texto: string) {
@@ -2647,16 +3449,6 @@ function ResumoCard({
   );
 }
 
-function TextoResposta({ texto }: { texto: string }) {
-  return (
-    <article className="resposta">
-      <div className="resposta-texto">
-        <MarkdownTexto texto={texto} />
-      </div>
-    </article>
-  );
-}
-
 function chaveCampo(rotulo: string) {
   return rotulo.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 }
@@ -2681,7 +3473,41 @@ function atividadeDoItem(item: ItemLista) {
   };
 }
 
-function AtividadesCard({ titulo, itens, aviso }: { titulo: string; itens: NonNullable<ReturnType<typeof atividadeDoItem>>[]; aviso: string }) {
+function processoDoTitulo(titulo: string) {
+  const achado = titulo.match(/\b([A-Za-z]{1,4}\d{2,6}-\d{2}(?:\s+teste)?)\b/i);
+  if (!achado) return "";
+  return achado[1].replace(/\s+teste$/i, " teste").replace(/^[a-z]{1,4}/i, (trecho) => trecho.toUpperCase());
+}
+
+function atividadeAberta(situacao: string) {
+  return !/conclu|cancelad|encerrad|n[aã]o realizada/i.test(situacao);
+}
+
+function atividadeInativa(item: NonNullable<ReturnType<typeof atividadeDoItem>>) {
+  return /inativ/i.test(`${item.codigo} ${item.nome}`);
+}
+
+function pedidoDaAtividade(item: NonNullable<ReturnType<typeof atividadeDoItem>>, processo: string, acao: "conclua" | "restaure" | "cancele") {
+  const codigo = /^\d{3,4}(?:\.\d+)?$/.test(item.codigo) ? item.codigo : "";
+  const nome = [codigo, item.nome].filter(Boolean).join(" ");
+  return `${acao} essa atividade ${nome} nesse processo ${processo}`;
+}
+
+function AtividadesCard({
+  titulo,
+  itens,
+  aviso,
+  aoConcluir,
+  ocupado = false,
+}: {
+  titulo: string;
+  itens: NonNullable<ReturnType<typeof atividadeDoItem>>[];
+  aviso: string;
+  aoConcluir?: (pedido: string) => void;
+  ocupado?: boolean;
+}) {
+  if (itens.length > 1) return <ListaConsulta titulo={titulo} aviso={aviso} linhas={itens.map(item => ({ Codigo: item.codigo, Atividade: item.nome, Situacao: item.situacao, Responsavel: item.responsavel, Previsao: item.previsao, Observacao: item.observacao }))} />;
+  const processo = processoDoTitulo(titulo);
   return (
     <article className="resposta">
       <header className="prazos-topo">
@@ -2695,7 +3521,43 @@ function AtividadesCard({ titulo, itens, aviso }: { titulo: string; itens: NonNu
           <li key={`${item.codigo}-${indice}`} className={`atividade-linha${item.atrasada ? " atrasada" : ""}`}>
             <span className="atividade-codigo">{item.codigo}</span>
             <div className="atividade-corpo">
-              <p className="atividade-nome">{item.nome}</p>
+              <div className="atividade-topo">
+                <p className="atividade-nome">{item.nome}</p>
+                {aoConcluir && processo ? (
+                  <span className="atividade-acoes">
+                    {atividadeInativa(item) || !atividadeAberta(item.situacao) ? (
+                      <button
+                        type="button"
+                        className="atividade-concluir"
+                        disabled={ocupado}
+                        onClick={() => aoConcluir(pedidoDaAtividade(item, processo, "restaure"))}
+                      >
+                        Restaurar
+                      </button>
+                    ) : null}
+                    {atividadeAberta(item.situacao) ? (
+                      <button
+                        type="button"
+                        className="atividade-concluir"
+                        disabled={ocupado}
+                        onClick={() => aoConcluir(pedidoDaAtividade(item, processo, "cancele"))}
+                      >
+                        Cancelar
+                      </button>
+                    ) : null}
+                    {atividadeAberta(item.situacao) ? (
+                      <button
+                        type="button"
+                        className="atividade-concluir"
+                        disabled={ocupado}
+                        onClick={() => aoConcluir(pedidoDaAtividade(item, processo, "conclua"))}
+                      >
+                        Concluir
+                      </button>
+                    ) : null}
+                  </span>
+                ) : null}
+              </div>
               <dl className="atividade-meta">
                 <div>
                   <dt>Situação</dt>
@@ -2720,75 +3582,13 @@ function AtividadesCard({ titulo, itens, aviso }: { titulo: string; itens: NonNu
   );
 }
 
-function ListaCard({ titulo, sub, itens, aviso }: { titulo: string; sub: string; itens: ItemLista[]; aviso: string }) {
+function ListaCard({ titulo, sub, itens, aviso, aoConcluir, ocupado = false }: {
+  titulo: string; sub: string; itens: ItemLista[]; aviso: string;
+  aoConcluir?: (pedido: string) => void; ocupado?: boolean;
+}) {
   const atividades = itens.map(atividadeDoItem).filter((item): item is NonNullable<ReturnType<typeof atividadeDoItem>> => item !== null);
-  if (atividades.length > 0 && atividades.length === itens.length) {
-    return <AtividadesCard titulo={titulo} itens={atividades} aviso={aviso} />;
-  }
-  return (
-    <article className="resposta">
-      {titulo || sub ? (
-        <header className="prazos-topo">
-          <h2>
-            {titulo || "Resultado"}
-            {sub ? <small>{sub}</small> : null}
-          </h2>
-          <div className="resumo">
-            <span>{itens.length === 1 ? "1 item" : `${itens.length} itens`}</span>
-          </div>
-        </header>
-      ) : null}
-      <ul className="prazos-lista">
-        {itens.map((item, indice) => {
-          const codigo = item.titulo.match(/\b[A-Za-z]{1,4}\d{2,6}-\d{2}\b/i)?.[0] ?? "";
-          const tituloEhCodigo = codigo && item.titulo.trim().toUpperCase() === codigo.toUpperCase();
-          const atividade = !tituloEhCodigo ? item.titulo.match(/^(.+?)\s+—\s+(.+)$/) : null;
-          const nome = tituloEhCodigo ? item.linhas[0] ?? "" : atividade?.[2] ?? item.titulo;
-          const detalhes = tituloEhCodigo ? item.linhas.slice(1) : item.linhas;
-          const selo = tituloEhCodigo ? codigo : atividade?.[1] ?? codigo;
-          const quando = item.hora.match(/^(\d{2}\/\d{2}\/\d{4})(?:\s+(\d{2}:\d{2}))?$/);
-          const data = quando?.[1] ?? item.hora;
-          const hora = quando?.[2] ?? "";
-          const ePendencia = /pend[eê]ncia/i.test(titulo);
-          const dias = quando && ePendencia ? diasAte(quando[1]) : null;
-          const rotulo = quando ? (ePendencia ? "Previsão" : "Data") : "Hora";
-          const tomPrazo = dias == null ? "" : dias <= 0 ? "hoje" : dias <= 7 ? "semana" : "";
-          const tom = item.tipo === "del" ? "hoje" : item.tipo === "upd" ? "semana" : tomPrazo;
-          return (
-            <li key={`${item.titulo}-${item.hora}-${indice}`} className={`prazo-item${tom ? ` ${tom}` : ""}`} style={{ ["--i" as string]: indice }}>
-              <div>
-                {selo ? <span className="codigo">{selo}</span> : null}
-                {nome ? <p className="empresa">{nome}</p> : null}
-                {detalhes.map((linha) => (
-                  <p key={linha} className="resposta-detalhe">{linha}</p>
-                ))}
-              </div>
-              {item.hora || item.tag ? (
-                <div className="datas-prazo">
-                  {item.hora ? (
-                    <div className="prazo">
-                      <span className="rotulo">{rotulo}</span>
-                      <span className="data">
-                        {data}
-                        {hora ? <span className="hora">{hora}</span> : null}
-                      </span>
-                      {dias != null ? <span className="rel">{rotuloRelativo(dias)}</span> : null}
-                    </div>
-                  ) : null}
-                  {item.tag ? (
-                    <div className="prazo fim">
-                      <span className="rel">{item.tag}</span>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
-      {aviso ? <p className="prazos-aviso">{aviso}</p> : null}
-    </article>
-  );
+  if (atividades.length === 1 && itens.length === 1) return <AtividadesCard titulo={titulo} itens={atividades} aviso={aviso} aoConcluir={aoConcluir} ocupado={ocupado} />;
+  return <ListaConsulta titulo={titulo} sub={sub} linhas={linhasDaLista(itens)} aviso={aviso} />;
 }
 
 function pediuTextoParaEnviar(texto: string) {
@@ -2805,7 +3605,7 @@ function normalizarCartoes(texto: string) {
       const tipo = linguagem.toLowerCase();
       const conteudo = corpo.trim();
       if (!conteudo) return "";
-      if (/^(grafico|email|rota|dia|encarte|sites)$/.test(tipo)) return bloco;
+      if (/^(grafico|email|rota|dia|encarte|sites|modelo|gatilhos|tarefas)$/.test(tipo)) return bloco;
       if (!/^(log|painel|json)$/.test(tipo) && !/^[{[]/.test(conteudo)) return bloco;
       try {
         const dados = JSON.parse(conteudo) as { banco?: unknown; itens?: unknown };
@@ -2841,7 +3641,7 @@ function semBlocoAberto(texto: string) {
       return antes ? `${antes}\n\n${bloco}` : bloco;
     }
   }
-  if (tipo === "grafico" || tipo === "email" || tipo === "rota" || tipo === "dia" || tipo === "encarte") {
+  if (tipo === "grafico" || tipo === "email" || tipo === "rota" || tipo === "dia" || tipo === "encarte" || tipo === "modelo") {
     const fechado = `${resto.trimEnd()}\n\`\`\``;
     return antes ? `${antes}\n${fechado}` : fechado;
   }
@@ -2854,6 +3654,10 @@ function temCartao(texto: string) {
 
 function cartaoDaFerramenta(conteudo: string): string | null {
   const texto = textoDaConsulta(conteudo) || conteudo;
+  const modelo = texto.match(/```modelo\s*([\s\S]*?)```/i);
+  if (modelo) return `\`\`\`modelo\n${modelo[1].trim()}\n\`\`\``;
+  const email = texto.match(/```email\s*([\s\S]*?)```/i);
+  if (email && /"html"\s*:/.test(email[1])) return `\`\`\`email\n${email[1].trim()}\n\`\`\``;
   for (const achado of texto.matchAll(/```(log|painel)\s*([\s\S]*?)```/gi)) {
     const bloco = achado[0];
     const log = achado[1].toLowerCase() === "log" ? logDoTexto(bloco) : null;
@@ -2945,22 +3749,42 @@ function RelacionamentoGrupos({ intro, grupos }: { intro: string; grupos: { nive
   );
 }
 
-function Markdown({ texto: bruto, ocultarSql = false, textoCorrido = false }: { texto: string; ocultarSql?: boolean; textoCorrido?: boolean }) {
+function Markdown({
+  texto: bruto,
+  ocultarSql = false,
+  textoCorrido = false,
+  semStatus = false,
+  aoConcluir,
+  ocupado = false,
+  abrirHeadCargo = false,
+}: {
+  texto: string;
+  ocultarSql?: boolean;
+  textoCorrido?: boolean;
+  semStatus?: boolean;
+  aoConcluir?: (pedido: string) => void;
+  ocupado?: boolean;
+  abrirHeadCargo?: boolean;
+}) {
   let texto = bruto;
-  const partes: { tipo: "md" | "grafico" | "email" | "rota" | "encarte" | "sites"; texto: string }[] = [];
+  const gatilhos = gatilhosDoTexto(bruto);
+  if (gatilhos) return <GatilhosCard lista={gatilhos} />;
+  const projetoTarefas = projetoTarefasDoTexto(bruto);
+  if (projetoTarefas) return <ProjetoTarefasCard lista={projetoTarefas} />;
+  const partes: { tipo: "md" | "grafico" | "email" | "rota" | "encarte" | "sites" | "modelo"; texto: string }[] = [];
   const normal = normalizarCartoes(texto);
   if (textoCorrido) {
     return normal ? <TextoResposta texto={ocultarSql ? semSql(normal) : normal} /> : null;
   }
   const dia = diaDoTexto(normal);
-  if (dia) return <DiaCard dia={dia} />;
+  if (dia) return <DiaCard dia={dia} abrirHeadCargo={abrirHeadCargo} />;
   const painel = painelDoTexto(normal);
   if (painel && !/\|[^\n]+\|/.test(normal)) return <PainelTiCard painel={painel} />;
   const log = logDoTexto(normal);
   if (log?.itens.length) return <LogCard log={log} />;
   if (!normal) return null;
   texto = normal;
-  const regra = /```(grafico|email|rota|encarte|sites)\s*\n([\s\S]*?)```/gi;
+  const regra = /```(grafico|email|rota|encarte|sites|modelo)\s*\n([\s\S]*?)```/gi;
   let cursor = 0;
   for (const achado of texto.matchAll(regra)) {
     const inicio = achado.index ?? 0;
@@ -2969,7 +3793,7 @@ function Markdown({ texto: bruto, ocultarSql = false, textoCorrido = false }: { 
       if (md.trim()) partes.push({ tipo: "md", texto: md });
     }
     const nome = achado[1].toLowerCase();
-    const tipo = nome === "email" ? "email" : nome === "rota" ? "rota" : nome === "encarte" ? "encarte" : nome === "sites" ? "sites" : "grafico";
+    const tipo = nome === "email" ? "email" : nome === "rota" ? "rota" : nome === "encarte" ? "encarte" : nome === "sites" ? "sites" : nome === "modelo" ? "modelo" : "grafico";
     partes.push({ tipo, texto: achado[2] });
     cursor = inicio + achado[0].length;
   }
@@ -2998,6 +3822,8 @@ function Markdown({ texto: bruto, ocultarSql = false, textoCorrido = false }: { 
       <Grafico key={indice} texto={parte.texto} />
     ) : parte.tipo === "email" ? (
       <EmailCard key={indice} bruto={parte.texto} />
+    ) : parte.tipo === "modelo" ? (
+      <ModeloCard key={indice} bruto={parte.texto} semStatus={semStatus} />
     ) : parte.tipo === "rota" ? (
       <RotaCard key={indice} bruto={parte.texto} />
     ) : parte.tipo === "encarte" ? (
@@ -3005,7 +3831,7 @@ function Markdown({ texto: bruto, ocultarSql = false, textoCorrido = false }: { 
     ) : parte.tipo === "sites" ? (
       <SitesCard key={indice} bruto={parte.texto} />
     ) : (
-      <Fragmento key={indice} texto={parte.texto} />
+      <Fragmento key={indice} texto={parte.texto} aoConcluir={aoConcluir} ocupado={ocupado} />
     );
   const saida: ReactNode[] = [];
   let fila: { parte: (typeof partes)[number]; indice: number }[] = [];
@@ -3063,7 +3889,7 @@ function garantirEncartes(texto: string, encartes: string[] = []) {
   return [...faltam, texto.trim()].filter(Boolean).join("\n\n");
 }
 
-function textoSemListaGrande(texto: string): string {
+function textoSemListaGrande(texto: string, linhas: Record<string, unknown>[]): string {
   const encartes = extrairEncartes(texto);
   const corpo = texto.replace(/```encarte\s*\n[\s\S]*?```/gi, "").trim();
   if (/\bficha de\b/i.test(corpo)) {
@@ -3074,92 +3900,7 @@ function textoSemListaGrande(texto: string): string {
       .trim();
     return [encartes.join("\n\n"), resumo].filter(Boolean).join("\n\n");
   }
-  const corte = corpo.search(/\nMostrei \d+ de \d+/);
-  if (corte >= 0) {
-    const resto = corpo.slice(corte).replace(/^\n?Mostrei \d+ de \d+[^\n]*\n?/, "").trim();
-    return [encartes.join("\n\n"), resto].filter(Boolean).join("\n\n");
-  }
-  if ((corpo.match(/\b[A-Za-z]{1,4}\d{2,6}-\d{2}\b/g) ?? []).length > 12) return encartes.join("\n\n");
-  return [encartes.join("\n\n"), corpo].filter(Boolean).join("\n\n");
-}
-
-function linhasDoCalculo(calculos: string) {
-  return calculos
-    .split("\n")
-    .map((linha) => linha.trim())
-    .filter((linha) => linha.startsWith("- "))
-    .map((linha) => linha.replace(/^- /, ""));
-}
-
-function ListaConsulta({ linhas, calculos = "" }: { linhas: Record<string, unknown>[]; calculos?: string }) {
-  const [todos, setTodos] = useState(false);
-  const colunas = Object.keys(linhas[0] ?? {}).filter((coluna) => !/^id/i.test(coluna)).slice(0, 6);
-  const recentes = 12;
-  const visiveis = todos ? linhas : linhas.slice(0, recentes);
-  const totais = linhasDoCalculo(calculos);
-  return (
-    <div className="chat-lista-consulta">
-      <div className="chat-relatorio-topo">
-        <div>
-          <span>Lista</span>
-          <strong>{todos ? "Todos os registros" : "Na ordem da consulta"}</strong>
-          <small>
-            {linhas.length} {linhas.length === 1 ? "registro" : "registros"}
-            {todos || linhas.length <= recentes ? "" : ` · mostrando ${visiveis.length}`}
-          </small>
-        </div>
-        {linhas.length > recentes ? (
-          <div className="chat-relatorio-acoes">
-            <button type="button" className="chat-ver-consulta" onClick={() => setTodos((atual) => !atual)}>
-              {todos ? "Mostrar os primeiros" : `Ver todos (${linhas.length})`}
-            </button>
-          </div>
-        ) : null}
-      </div>
-      {totais.length ? (
-        <ul className="chat-lista-totais">
-          {totais.map((item, indice) => (
-            <li key={`${indice}-${item}`}>{item}</li>
-          ))}
-        </ul>
-      ) : null}
-      <div className="chat-relatorio-tabela-wrap">
-        <table className="chat-relatorio-tabela">
-          <thead>
-            <tr>{colunas.map((coluna) => <th key={coluna}>{coluna.replaceAll("_", " ")}</th>)}</tr>
-          </thead>
-          <tbody>
-            {visiveis.map((linha, indice) => (
-              <tr key={indice}>
-                {colunas.map((coluna) => (
-                  <td key={coluna} className={/processo|numero/i.test(coluna) ? "chat-lista-processo" : undefined}>
-                    {formatarDatasNoTexto(String(linha[coluna] ?? ""))}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function MarkdownTexto({ texto }: { texto: string }) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        table: ({ children }) => (
-          <div className="chat-tabela">
-            <table>{children}</table>
-          </div>
-        ),
-      }}
-    >
-      {formatarDatasNoTexto(texto)}
-    </ReactMarkdown>
-  );
+  return semDadosRepetidos([encartes.join("\n\n"), corpo].filter(Boolean).join("\n\n"), linhas);
 }
 
 function atividadesDoTexto(texto: string) {
@@ -3219,9 +3960,9 @@ function atividadesDoTexto(texto: string) {
   return itens.length ? { titulo, itens } : null;
 }
 
-function Fragmento({ texto }: { texto: string }) {
+function Fragmento({ texto, aoConcluir, ocupado = false }: { texto: string; aoConcluir?: (pedido: string) => void; ocupado?: boolean }) {
   const atividades = atividadesDoTexto(texto);
-  if (atividades) return <AtividadesCard titulo={atividades.titulo} itens={atividades.itens} aviso="" />;
+  if (atividades) return <AtividadesCard titulo={atividades.titulo} itens={atividades.itens} aviso="" aoConcluir={aoConcluir} ocupado={ocupado} />;
   const resumo = resumoDoTexto(texto);
   if (resumo) return <ResumoCard resumo={resumo} />;
   const pecas = partirResposta(texto);
@@ -3235,7 +3976,7 @@ function Fragmento({ texto }: { texto: string }) {
         }
         const prazos = prazosDaLista(peca.titulo, peca.itens);
         if (prazos) return <PrazosCard key={indice} titulo={prazos.titulo} sub={prazos.sub} itens={prazos.itens} aviso={peca.aviso} />;
-        return <ListaCard key={indice} titulo={peca.titulo} sub={peca.sub} itens={peca.itens} aviso={peca.aviso} />;
+        return <ListaCard key={indice} titulo={peca.titulo} sub={peca.sub} itens={peca.itens} aviso={peca.aviso} aoConcluir={aoConcluir} ocupado={ocupado} />;
       })}
     </>
   );
@@ -3643,6 +4384,12 @@ export function ChatIa({
   const [texto, setTexto] = useState("");
   const [status, setStatus] = useState("");
   const [ocupado, setOcupado] = useState(false);
+  useEffect(() => {
+    if (!ocupado) return;
+    const atualizar = (evento: Event) => setStatus(String((evento as CustomEvent<string>).detail || "Executando no HeadCargo…"));
+    window.addEventListener("maicon-bot-progresso", atualizar);
+    return () => window.removeEventListener("maicon-bot-progresso", atualizar);
+  }, [ocupado]);
   const [emFundo, setEmFundo] = useState(false);
   const [sobreTela, setSobreTela] = useState(false);
   const pipRef = useRef<Window | null>(null);
@@ -4047,7 +4794,6 @@ export function ChatIa({
 
   function pintarMiniChat(janela: Window) {
     const lista = janela.document.getElementById("msgs");
-    const campo = janela.document.getElementById("campo") as HTMLTextAreaElement | null;
     const chips = janela.document.getElementById("chips");
     if (!lista) return;
     const escapar = (valor: string) => valor.replace(/[&<>"]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&quot;"));
@@ -4784,12 +5530,22 @@ export function ChatIa({
       }
       rotasProntas: {
       if (dadosAprovados) break rotasProntas;
-      const campoDireto = modoRelatorioRef.current || apresentacaoRef.current ? null : receitaCampoLivre(pergunta);
+      if (!modoRelatorioRef.current && !apresentacaoRef.current && pedidoFichaCliente([...mensagens, { role: "user", content: pergunta }])?.perguntar) {
+        const content = "Qual cliente você quer na ficha?";
+        setMensagens([...historico, { role: "assistant", content, duracaoMs: duracaoConsulta() }]);
+        setErro("");
+        avisarConclusao(content, false);
+        return;
+      }
+      const propostaDireta = modoRelatorioRef.current || apresentacaoRef.current ? null : receitaMontarProposta(pergunta, mensagens);
+      const followDireto = propostaDireta || modoRelatorioRef.current || apresentacaoRef.current ? null : receitaFollowup(pergunta);
+      const emailDireto = followDireto || propostaDireta || modoRelatorioRef.current || apresentacaoRef.current ? null : receitaEmailAtividade(pergunta, mensagens);
+      const campoDireto = emailDireto || modoRelatorioRef.current || apresentacaoRef.current ? null : receitaCampoLivre(pergunta);
       const cargaDireta = campoDireto || modoRelatorioRef.current || apresentacaoRef.current ? null : receitaItensCarga(pergunta, mensagens);
       const continuacao = modoRelatorioRef.current || apresentacaoRef.current ? null : receitaContinuacao(pergunta, mensagens);
       const rotaDireta = continuacao || cargaDireta || modoRelatorioRef.current || apresentacaoRef.current ? null : receitaDaRota(pergunta, mensagens);
       const roteada = perguntaComProcesso(pergunta, mensagens);
-      let receita = campoDireto ?? cargaDireta ?? continuacao ?? rotaDireta ?? (modoRelatorioRef.current || apresentacaoRef.current ? null : receitaPronta?.length ? receitaPronta : receitaSalva(roteada));
+      let receita = propostaDireta ?? followDireto ?? emailDireto ?? campoDireto ?? cargaDireta ?? continuacao ?? rotaDireta ?? (modoRelatorioRef.current || apresentacaoRef.current ? null : receitaPronta?.length ? receitaPronta : receitaSalva(roteada));
       if (!rotaDireta && !receita && !apresentacaoRef.current) {
         const respReceita = await fetch(
           `${api}/api/receitas?email=${encodeURIComponent(email)}&visao=${encodeURIComponent(admin ? visao : setor)}&pergunta=${encodeURIComponent(pergunta)}`,
@@ -4849,6 +5605,37 @@ export function ChatIa({
       }
       const processosDiretos = processosDoTexto(textoVisivel(roteada));
       const pedidoLog = numeroSolto(pergunta) ? `${perguntaAberta(mensagens)}\n${pergunta}`.trim() : pergunta;
+      const alvoTabela = alvoLogNomeado(textoVisivel(pedidoLog));
+      if (segueLog(pergunta, mensagens) && alvoTabela && !containersDiretos.length && !idsDiretos.length && !taxasDiretas.length) {
+        setStatus("Consultando o log…");
+        historico = [...historico, { role: "assistant", content: "Estou consultando o log." }];
+        setMensagens(historico);
+        const args = {
+          ...argsLogDosIds([alvoTabela.id], pedidoLog),
+          tabela: alvoTabela.tabela,
+          campo_chave: alvoTabela.campo,
+          valores: alvoTabela.id,
+          tipo: 0,
+          processo: processosDiretos[0] ?? "",
+          perguntaOriginal: pedidoLog,
+        };
+        const resultado = await executar("consultar_log", args, controle.signal);
+        const bruto = capturarLog();
+        const log = bruto ? restringirAoProcesso(bruto, pedidoLog) : null;
+        const falhou = /^erro:/i.test(resultado) && !log;
+        const content = log ? resumoDoLog(log) : resultado.replace(/^Erro:\s*/i, "");
+        const resposta: Extract<Mensagem, { role: "assistant" }> = {
+          role: "assistant",
+          content,
+          duracaoMs: duracaoConsulta(),
+          ...(log ? { log } : {}),
+        };
+        historico = [...historico.slice(0, -1), resposta];
+        setMensagens(historico);
+        setErro(falhou ? content : "");
+        avisarConclusao(content, falhou);
+        return;
+      }
       if (segueLog(pergunta, mensagens) && processosDiretos.length && !containersDiretos.length && !idsDiretos.length && !taxasDiretas.length) {
         setStatus("Consultando o log…");
         historico = [...historico, { role: "assistant", content: "Estou consultando o log." }];
@@ -4898,6 +5685,7 @@ export function ChatIa({
           valores: id,
           ancorar: !periodoPedido(pedidoLog),
           processo: numero,
+          perguntaOriginal: pedidoLog,
         };
         const resultado = await executar("consultar_log", args, controle.signal);
         const bruto = capturarLog();
@@ -4923,8 +5711,18 @@ export function ChatIa({
         let falhou = false;
         for (const passo of receita) {
           if (canceladoRef.current) throw new DOMException("Cancelado", "AbortError");
-          setStatus(`${ROTULO_FERRAMENTA[passo.nome] ?? "Consultando"}…`);
-          const args = { ...passo.args };
+          const botaoPasso = String(passo.args?.botao ?? "");
+          const rotuloPasso = passo.args?.restaurar || /restaur/i.test(botaoPasso)
+            ? "Restaurando a atividade no HeadCargo"
+            : /cancel/i.test(botaoPasso)
+              ? "Cancelando a atividade no HeadCargo"
+              : passo.args?.concluir || /conclu/i.test(botaoPasso)
+                ? "Concluindo a atividade no HeadCargo"
+                : botaoPasso
+                  ? `Clicando em ${botaoPasso.toLowerCase()} no HeadCargo`
+                  : (ROTULO_FERRAMENTA[passo.nome] ?? "Consultando");
+          setStatus(`${rotuloPasso}…`);
+          const args: Record<string, unknown> = { ...passo.args, perguntaOriginal: pergunta };
           if (passo.nome === "consultar_log") Object.assign(args, completarConsultaLog(passo.args, pergunta));
           if (passo.nome === "executar_sql" && typeof args.sql === "string") {
             const eraAmostra = Boolean(args.previa);
@@ -4932,7 +5730,7 @@ export function ChatIa({
             let sql = consultaTotalRef.current || sqlComPeriodo(sqlSemRepetir(args.sql), pergunta);
             if (!consultaTotalRef.current) args.pergunta = pergunta;
             if (consultaTotalRef.current || eraAmostra || perguntaDeConjunto(pergunta)) sql = sqlAprovadoInteiro(sql);
-            if (!consultaTotalRef.current) args.previa = true;
+            if (!consultaTotalRef.current && !pedeGraficoFaturas(assuntoDaPergunta(pergunta, mensagens))) args.previa = true;
             args.sql = sql;
           }
           const resultado = await executar(passo.nome, args, controle.signal);
@@ -4949,7 +5747,7 @@ export function ChatIa({
           brutos.push({ nome: passo.nome, args, resultado });
           const secao = secaoDaFerramenta(passo.nome, resultado);
           if (secao) secoesDaPergunta.push(secao);
-          if (!consultaTotalRef.current && passo.nome === "executar_sql" && secao?.colunas.length && typeof args.sql === "string") {
+          if (!consultaTotalRef.current && !pedeGraficoFaturas(assuntoDaPergunta(pergunta, mensagens)) && passo.nome === "executar_sql" && secao?.colunas.length && typeof args.sql === "string") {
             historico = [
               ...historico,
               {
@@ -5026,7 +5824,7 @@ export function ChatIa({
           body: JSON.stringify({
           mensagens: historico.map((item) => {
             if (item.role === "tool") return { ...item, content: textoParaIa(item.content) };
-            if (item.role === "assistant" && item.content.length > 6000) {
+            if (item.role === "assistant" && item.content.length > 6000 && !/```(?:tarefas|gatilhos)\b/i.test(item.content)) {
               return { ...item, content: `${item.content.slice(0, 6000)}\n…` };
             }
             return item;
@@ -5067,6 +5865,7 @@ export function ChatIa({
               erro?: string;
               mensagem?: Extract<Mensagem, { role: "assistant" }>;
             };
+            if (evento.tipo === "status" && evento.texto) setStatus(evento.texto);
             if (evento.tipo === "erro") throw new Error(evento.erro || "Falha ao falar com a IA");
             if (evento.tipo === "texto" && evento.texto) {
               parcial += evento.texto;
@@ -5209,6 +6008,7 @@ export function ChatIa({
               !pedeLog(assuntoDaPergunta(pergunta, mensagens));
             try {
               const args = JSON.parse(chamada.function.arguments || "{}");
+                args.perguntaOriginal = pergunta;
               const pedido = [...historico].reverse().find((m) => m.role === "user")?.content ?? "";
               if (logIndevido) {
                 resultado = "Erro: a pergunta não pediu log nem histórico. Consulte os dados pedidos, sem abrir o log.";
@@ -5223,7 +6023,7 @@ export function ChatIa({
                   let sql = consultaTotalRef.current || sqlComPeriodo(sqlSemRepetir(args.sql), pergunta);
                   if (!consultaTotalRef.current) args.pergunta = pergunta;
                   if (consultaTotalRef.current || eraAmostra || perguntaDeConjunto(pergunta)) sql = sqlAprovadoInteiro(sql);
-                  if (!consultaTotalRef.current) args.previa = true;
+                  if (!consultaTotalRef.current && !pedeGraficoFaturas(assuntoDaPergunta(pergunta, mensagens))) args.previa = true;
                   args.sql = sql;
                   chamada.function.arguments = JSON.stringify(args);
                 }
@@ -5252,7 +6052,7 @@ export function ChatIa({
             return { role: "tool" as const, tool_call_id: chamada.id, content: resultado };
           }),
         );
-        if (!consultaTotalRef.current) {
+        if (!consultaTotalRef.current && !pedeGraficoFaturas(assuntoDaPergunta(pergunta, mensagens))) {
           const amostra = resultados.find((item) => {
             const chamada = resposta.tool_calls?.find((chamada) => chamada.id === item.tool_call_id);
             return chamada?.function.name === "executar_sql" && !item.content.startsWith("Erro:");
@@ -5622,6 +6422,11 @@ export function ChatIa({
                     TI
                   </button>
                 </li>
+                <li>
+                  <button type="button" className={visao === "atividades" ? "ativo" : ""} onClick={() => onVisao?.("atividades")}>
+                    Atividades [BETA]
+                  </button>
+                </li>
               </ul>
             </div>
           ) : null}
@@ -5793,6 +6598,8 @@ export function ChatIa({
                         ? "Gerência"
                       : admin && visao === "ti"
                         ? "TI"
+                      : admin && visao === "atividades"
+                        ? "Atividades"
                       : admin && visao === "documental"
                         ? "Documental"
                         : admin && visao === "operacional"
@@ -6660,12 +7467,14 @@ export function ChatIa({
                   Boolean(bloco.mensagem.relatorio) &&
                   (("pedidoRelatorio" in bloco.mensagem && bloco.mensagem.pedidoRelatorio) ||
                     /^\s*pedir relat[oó]rio/i.test(pedidoUsuario));
+                const mostrarTabela = usarTabelaConsulta(bloco.linhas, bloco.mensagem.content, pediuTextoParaEnviar(pedidoUsuario));
                 return bloco.mensagem.role === "assistant" &&
                 !("log" in bloco.mensagem && bloco.mensagem.log) &&
                 !pediuRelatorio &&
                 (!normalizarCartoes(bloco.mensagem.content) || catalogoInterno(bloco.mensagem.content)) ? null : bloco.mensagem.role === "assistant" ? (
                   <div key={i} id={`chat-msg-${i}`} className={`chat-linha${buscaAlvo === i ? " busca-alvo" : ""}`}>
                     <div className="chat-msg chat-assistant">
+                      <CabecalhoResposta />
                       {"previa" in bloco.mensagem && bloco.mensagem.previa ? (
                         <PreviaRelatorio
                           previa={bloco.mensagem.previa}
@@ -6677,13 +7486,22 @@ export function ChatIa({
                         <LogCard log={cartaoDoHistorico(bloco.mensagem.log)} />
                       ) : pediuRelatorio || ("previa" in bloco.mensagem && bloco.mensagem.previa) ? null : (
                         <>
-                          {bloco.linhas.length > 12 ? <ListaConsulta linhas={bloco.linhas} calculos={bloco.calculos} /> : null}
                           <Markdown
+                            abrirHeadCargo={admin}
                             ocultarSql={!admin}
+                            semStatus={(admin ? (visao === "inside" ? "comercial" : visao === "tudo" ? "gerencia" : visao) : setor) === "operacional"}
                             textoCorrido={pediuTextoParaEnviar(pedidoUsuario)}
+                            ocupado={ocupado}
+                            aoConcluir={
+                              admin
+                                ? (pedido) => {
+                                    void enviar(pedido);
+                                  }
+                                : undefined
+                            }
                             texto={semMençãoPdf(
                               graficoSePedido(
-                                (bloco.linhas.length > 12 ? textoSemListaGrande : (texto: string) => texto)(
+                                (mostrarTabela ? (texto: string) => textoSemListaGrande(texto, bloco.linhas) : (texto: string) => texto)(
                                   garantirEncartes(respostaSemPayload(bloco.mensagem.content), bloco.encartes),
                                 ),
                                 blocos
@@ -6694,6 +7512,7 @@ export function ChatIa({
                               ),
                             )}
                           />
+                          {mostrarTabela ? <ListaConsulta linhas={bloco.linhas} calculos={bloco.calculos} /> : null}
                         </>
                       )}
                       {pode.log && "log" in bloco.mensagem && bloco.mensagem.log ? (
@@ -6744,8 +7563,8 @@ export function ChatIa({
                             </button>
                           ) : null}
                           {bloco.mensagem.content.trim() ? (
-                            <button type="button" className="chat-ver-consulta" onClick={() => void copiarResposta(bloco.mensagem.content, i)}>
-                              {respostaCopiada === i ? "Copiado" : "Copiar resposta"}
+                            <button type="button" className="chat-ver-consulta chat-copiar-resposta" title={respostaCopiada === i ? "Copiado" : "Copiar resposta"} aria-label={respostaCopiada === i ? "Copiado" : "Copiar resposta"} onClick={() => void copiarResposta(bloco.mensagem.content, i)}>
+                              <IconeAcaoResposta nome={respostaCopiada === i ? "copiado" : "copiar"} />
                             </button>
                           ) : null}
                           {bloco.mensagem.content.trim() && !(ocupado && i === blocos.length - 1) ? (
@@ -6758,13 +7577,13 @@ export function ChatIa({
                             />
                           ) : null}
                           {"duracaoMs" in bloco.mensagem && bloco.mensagem.duracaoMs ? (
-                            <span className="chat-tempo">Levou {formatarDuracao(bloco.mensagem.duracaoMs)}</span>
+                            <span className="chat-tempo" title="Tempo de resposta">{formatarDuracao(bloco.mensagem.duracaoMs)}</span>
                           ) : null}
                           {admin && "uso" in bloco.mensagem && bloco.mensagem.uso && bloco.mensagem.uso.total > 0 ? (
                             <span className="chat-uso" title={tituloUso(bloco.mensagem.uso)}>
                               <b>{numeroTokens(bloco.mensagem.uso.total)}</b>
                               <span>tokens</span>
-                              {bloco.mensagem.uso.contexto ? <em>{textoPercentual(bloco.mensagem.uso)}</em> : null}
+                              {bloco.mensagem.uso.contexto ? <><span aria-hidden="true">·</span><em>{textoPercentual(bloco.mensagem.uso)}</em></> : null}
                             </span>
                           ) : null}
                           {admin && consultaAberta === i && bloco.consultas.length && !("log" in bloco.mensagem && bloco.mensagem.log) ? (
@@ -6793,9 +7612,8 @@ export function ChatIa({
               })}
 
               {status ? (
-                <div className="chat-linha chat-pensando">
-                  <SymbolLoader className="cl-loader--inline" label={status} />
-                  <div className="chat-msg chat-assistant chat-digitando">{status}</div>
+                <div className="chat-linha">
+                  <PensandoResposta status={status} />
                 </div>
               ) : null}
               {erro ? <p className="chat-erro">{erro}</p> : null}

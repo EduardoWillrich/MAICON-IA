@@ -1,7 +1,9 @@
-import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
+﻿import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
 import { SymbolLoader } from "./Loader";
+import { FilaAtividades } from "./FilaAtividades";
 
-type Item = { titulo: string; detalhe: string; texto?: string; quando?: string; marca?: string; processo?: string; pergunta?: string; partes?: { texto: string; tom: string }[] };
+type Mudanca = { tipo: "inserido" | "atualizado"; rotulo: string; quando: string; texto: string };
+type Item = { titulo: string; detalhe: string; texto?: string; quando?: string; marca?: string; processo?: string; pergunta?: string; partes?: { texto: string; tom: string }[]; mudancas?: Mudanca[] };
 type Bloco = { titulo: string; itens: Item[]; vazio: string; pergunta?: string };
 type Ranking = { titulo: string; detalhe: string; vazio: string; itens: { nome: string; qtd: number }[] };
 type Encarte = {
@@ -278,50 +280,7 @@ function FilaInicio({
     });
   }
 
-  return (
-    <section className="inicio-bloco inicio-fila">
-      <header>
-        <h3>
-          Sua fila
-          <em>{grupos.length}</em>
-        </h3>
-        <button type="button" onClick={() => dispensar(grupos.flatMap((grupo) => grupo.processos.flatMap((linha) => linha.chaves)))}>
-          Dispensar
-        </button>
-      </header>
-      <ul>
-        {grupos.map((grupo) => (
-          <li key={grupo.chave}>
-            <strong>
-              {grupo.codigo ? <em className="inicio-codigo">{grupo.codigo}</em> : null}
-              {grupo.atividade}
-            </strong>
-            <span className="inicio-fila-processos">
-              {grupo.processos.map((linha) => (
-                <button
-                  key={linha.processo}
-                  type="button"
-                  onClick={() =>
-                    onPerguntar(
-                      `Qual o andamento da atividade ${grupo.codigo || grupo.atividade} no processo ${linha.processo === "Sem processo" ? "" : linha.processo}?`,
-                    )
-                  }
-                >
-                  {linha.processo}
-                  {linha.marca ? (
-                    <em className={linha.marca === "Atrasada" ? "atrasada" : linha.marca === "Hoje" ? "hoje" : "sem-previsao"}>
-                      {linha.marca}
-                      {linha.quando && linha.marca === "Atrasada" ? ` · ${linha.quando}` : ""}
-                    </em>
-                  ) : null}
-                </button>
-              ))}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
+  return <FilaAtividades grupos={grupos} onConsultar={onPerguntar} onDispensar={dispensar} />;
 }
 
 function MarcarProcesso({ api, onMarcado }: { api: string; onMarcado: (processo: string) => void }) {
@@ -373,7 +332,7 @@ function MarcarProcesso({ api, onMarcado }: { api: string; onMarcado: (processo:
         placeholder="IM5328-26"
         aria-label="Número do processo para acompanhar"
       />
-      <button className="pa-btn-primary" type="submit" disabled={enviando}>{enviando ? "Acompanhando" : "Acompanhar"}</button>
+      <button className="pa-btn-primary" type="submit" disabled={enviando} style={{ fontFamily: "Inter, Segoe UI, sans-serif", fontWeight: 500, fontSize: 13, letterSpacing: "0.06em" }}>{enviando ? "Acompanhando" : "Acompanhar"}</button>
       {erro ? <small className="pa-erro">{erro}</small> : null}
     </form>
   );
@@ -458,17 +417,17 @@ function ProcessosAcompanhados({
                       {mudou ? <span className="pa-changed">mudou desde ontem</span> : null}
                     </span>
                   ) : null}
-                  {item.texto || item.quando ? (
+                  {item.texto ? (
                     <span className="pa-note">
                       {item.quando ? <span className="pa-note-quando">{item.quando}</span> : null}
-                      {item.texto ? <span className="pa-note-texto">{item.texto}</span> : null}
+                      <span className="pa-note-texto">{item.texto}</span>
                     </span>
                   ) : null}
                 </button>
                 <div className="pa-side">
                   <span className="pa-tags">
                     {item.processo ? <span className="pa-tag pa-tag--danger">{item.processo}</span> : null}
-                    {item.marca ? <span className="pa-tag">{item.marca}</span> : null}
+                    {item.texto ? <span className="pa-tag pa-tag--danger">Nota</span> : null}
                   </span>
                   {item.processo ? (
                     <button type="button" className="pa-btn-remove" onClick={() => onRemover(item.processo || "")}>
@@ -522,33 +481,58 @@ export function InicioPainel({
   const [resumo, setResumo] = useState<Resumo | null>(null);
   const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(true);
+  const [tentativa, setTentativa] = useState(0);
   const [marcados, setMarcados] = useState<string[]>([]);
   const [ocultos, setOcultos] = useState<string[]>([]);
-
   useEffect(() => {
     let ativo = true;
     setCarregando(true);
     setErro("");
-    void fetch(`${api}/api/inicio/resumo`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, nome, visao }),
-    })
-      .then(async (resp) => {
-        const dados = (await resp.json()) as Resumo & { erro?: string };
-        if (!resp.ok) throw new Error(dados.erro || "Não carregou o início.");
-        if (ativo) setResumo(dados);
-      })
-      .catch((e: unknown) => {
-        if (ativo) setErro(e instanceof Error ? e.message : "Não carregou o início.");
-      })
-      .finally(() => {
-        if (ativo) setCarregando(false);
+    const pedir = async () => {
+      const resp = await fetch(`${api}/api/inicio/resumo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, nome, visao }),
       });
+      const texto = await resp.text();
+      if (!texto.trim()) throw new Error("vazio");
+      let dados: Resumo & { erro?: string };
+      try {
+        dados = JSON.parse(texto) as Resumo & { erro?: string };
+      } catch {
+        throw new Error("vazio");
+      }
+      if (!resp.ok) throw new Error(dados.erro || "Não carregou o início.");
+      return dados;
+    };
+    void (async () => {
+      let ultima: unknown = null;
+      for (let vez = 0; vez < 4; vez += 1) {
+        if (!ativo) return;
+        try {
+          const dados = await pedir();
+          if (ativo) setResumo(dados);
+          ultima = null;
+          break;
+        } catch (falha) {
+          ultima = falha;
+          const mensagem = falha instanceof Error ? falha.message : "";
+          const transitória = !mensagem || mensagem === "vazio";
+          if (!transitória || vez === 3) break;
+          await new Promise((resolver) => setTimeout(resolver, 1200 * (vez + 1)));
+        }
+      }
+      if (!ativo) return;
+      if (ultima) {
+        const mensagem = ultima instanceof Error ? ultima.message : "";
+        setErro(!mensagem || mensagem === "vazio" ? "Não carregou o início." : mensagem);
+      }
+      setCarregando(false);
+    })();
     return () => {
       ativo = false;
     };
-  }, [api, email, nome, visao]);
+  }, [api, email, nome, visao, tentativa]);
 
   const primeiro = nome.trim().split(" ")[0];
   const favoritosBase = resumo?.favoritos ?? { titulo: "Processos acompanhados", itens: [], vazio: "Nenhum processo marcado.", pergunta: "" };
@@ -564,7 +548,8 @@ export function InicioPainel({
         pergunta: `Quais os acompanhamentos do processo ${processo}?`,
       })),
       ...favoritosBase.itens,
-    ].filter((item) => !ocultos.includes((item.processo || item.titulo).toUpperCase())),
+    ]
+      .filter((item) => !ocultos.includes((item.processo || item.titulo).toUpperCase())),
     vazio: "",
   };
   if (!favoritos.itens.length) favoritos.vazio = favoritosBase.vazio || "Nenhum processo marcado.";
@@ -590,7 +575,14 @@ export function InicioPainel({
             <SymbolLoader className="cl-loader--inline" label="Carregando os indicadores" />
           </div>
         ) : null}
-        {erro && !carregando ? <p className="chat-erro">{erro}</p> : null}
+        {erro && !carregando ? (
+          <p className="chat-erro">
+            {erro}{" "}
+            <button type="button" onClick={() => setTentativa((atual) => atual + 1)}>
+              Tentar de novo
+            </button>
+          </p>
+        ) : null}
 
         {!carregando && resumo?.kpis ? (
           <div className="inicio-conteudo">

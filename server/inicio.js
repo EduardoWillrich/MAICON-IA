@@ -1523,18 +1523,41 @@ async function telaGerencia(pool, modalidade) {
   };
 }
 
-async function blocoFavoritos(pool, email) {
-  const numeros = listarFavoritos(email).map((item) => item.processo).filter(Boolean);
-  if (!numeros.length) return bloco("Processos acompanhados", [], "Nenhum processo marcado. Informe um número para acompanhar o que mudar.", "");
-  const simples = numeros.map((numero) => item(numero, "acompanhando", "", "", numero, `O que mudou no processo ${numero} desde ontem?`));
-  let r;
-  try {
+const cacheMudancas = new Map();
+
+function tituloDaMudanca(tabela, campos, tarefas, atividades, livres) {
+  const escrito = textoCampo(campos, ["Descricao", "Mensagem", "Assunto", "Corpo", "Titulo", "Complemento", "Texto"]);
+  if (escrito) return escrito;
+  const tarefa = tarefas.get(idCampo(campos, "IdTarefa")) || atividades.get(idCampo(campos, "IdAtividade"));
+  const nomeTarefa = [tarefa?.Codigo, tarefa?.Descricao].map((parte) => String(parte ?? "").trim()).filter(Boolean).join(" ");
+  if (nomeTarefa) return nomeTarefa;
+  const livre = livres.get(idCampo(campos, "IdCampo_Livre"));
+  if (livre) {
+    const nome = String(livre.Nome ?? "").trim() || "Campo livre";
+    const valor = String(livre.Valor ?? "").trim() || textoCampo(campos, ["Valor_Alfanumerico", "Valor_Texto"]);
+    return valor ? `${nome}: ${valor}` : nome;
+  }
+  const numero = textoCampo(campos, ["Number", "Numero", "Referencia", "Nome"]);
+  if (numero && !/^\d{1,8}$/.test(numero)) return numero;
+  return rotuloTabela(tabela);
+}
+
+function xpathValor(nome, valores) {
+  const lista = [...new Set(valores.filter(Boolean))];
+  if (!lista.length) return "";
+  const condicao = lista.map((valor) => `@Value="${valor}"`).join(" or ");
+  return `Campo[@Nome="${nome}" and (${condicao})]`;
+}
+
+async function linhasDosAcompanhados(pool, numeros) {
   const pedido = pool.request();
   numeros.forEach((numero, indice) => pedido.input(`n${indice}`, sql.VarChar(30), numero));
   const marcas = numeros.map((_, indice) => `@n${indice}`).join(", ");
-  r = await pedido.query(`
+  return pedido.query(`
     SELECT
       Lhs.Numero_Processo,
+      Lhs.IdLogistica_House,
+      Lhs.IdProjeto_Atividade,
       Cli.Nome AS Cliente,
       Aco.Data AS NotaData,
       LEFT(CAST(Aco.Descricao AS nvarchar(160)), 160) AS Nota
@@ -1547,12 +1570,202 @@ async function blocoFavoritos(pool, email) {
       ORDER BY A.Data DESC
     ) Aco
     WHERE Lhs.Numero_Processo IN (${marcas})`);
+}
+
+export async function mudancasDosAcompanhados(pool, email) {
+  const numeros = listarFavoritos(email)
+    .map((item) => String(item.processo ?? "").trim().toUpperCase())
+    .filter((numero) => /^[A-Z]{1,4}\d{2,6}-\d{2}$/.test(numero));
+  if (!numeros.length) return { itens: [] };
+  const chave = `${String(email ?? "").trim().toLowerCase()}|${numeros.join(",")}`;
+  const guardado = cacheMudancas.get(chave);
+  if (guardado && Date.now() - guardado.quando < 60_000) return guardado.valor;
+  let casas;
+  try {
+    casas = await linhasDosAcompanhados(pool, numeros);
+  } catch {
+    return { itens: [] };
+  }
+  const porNumero = new Map();
+  const porCasa = new Map();
+  const porProj = new Map();
+  for (const linha of casas.recordset) {
+    const numero = String(linha.Numero_Processo ?? "").trim().toUpperCase();
+    if (!numero) continue;
+    porNumero.set(numero, numero);
+    const casa = String(linha.IdLogistica_House ?? "").trim();
+    const proj = String(linha.IdProjeto_Atividade ?? "").trim();
+    if (/^\d+$/.test(casa)) porCasa.set(casa, numero);
+    if (/^\d+$/.test(proj)) porProj.set(proj, numero);
+  }
+  const filtros = [
+    xpathValor("Numero_Processo", numeros),
+    xpathValor("IdLogistica_House", [...porCasa.keys()]),
+    xpathValor("IdProjeto_Atividade", [...porProj.keys()]),
+  ].filter(Boolean);
+  if (!filtros.length) return { itens: [] };
+  const xpath = `/Log/Tabela[(@Tipo="1" or @Tipo="3") and (${filtros.join(" or ")})]`;
+  const pedido = pool.request();
+  pedido.timeout = 20000;
+  let r;
+  try {
+    r = await pedido.query(`
+      SELECT
+        Recente.Data_Inicio,
+        Recente.Usuario,
+        Recente.Tabela,
+        Recente.Tipo,
+        Recente.Numero,
+        Recente.Casa,
+        Recente.Proj,
+        Recente.Descricao,
+        Recente.Mensagem,
+        Recente.Assunto,
+        Recente.Corpo,
+        Recente.TituloCampo,
+        Recente.Complemento,
+        Recente.Texto,
+        Recente.Numbero,
+        Recente.NomeCampo,
+        Recente.IdTarefa,
+        Recente.IdAtividade,
+        Recente.IdCampoLivre
+      FROM (
+        SELECT
+          Extraido.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY COALESCE(
+              NULLIF(LTRIM(RTRIM(Extraido.Numero)), ''),
+              'H' + ISNULL(Extraido.Casa, ''),
+              'P' + ISNULL(Extraido.Proj, '')
+            )
+            ORDER BY Extraido.Data_Inicio DESC
+          ) AS Ordem
+        FROM (
+          SELECT
+            Ltb.Data_Inicio,
+            LTRIM(RTRIM(Usr.Nome)) AS Usuario,
+            T.Tabela.value('@Nome', 'varchar(128)') AS Tabela,
+            T.Tabela.value('@Tipo', 'smallint') AS Tipo,
+            T.Tabela.value('(Campo[@Nome="Numero_Processo"]/@Value)[1]', 'varchar(40)') AS Numero,
+            T.Tabela.value('(Campo[@Nome="IdLogistica_House"]/@Value)[1]', 'varchar(20)') AS Casa,
+            T.Tabela.value('(Campo[@Nome="IdProjeto_Atividade"]/@Value)[1]', 'varchar(20)') AS Proj,
+            T.Tabela.value('(Campo[@Nome="Descricao"]/@Value)[1]', 'varchar(160)') AS Descricao,
+            T.Tabela.value('(Campo[@Nome="Mensagem"]/@Value)[1]', 'varchar(160)') AS Mensagem,
+            T.Tabela.value('(Campo[@Nome="Assunto"]/@Value)[1]', 'varchar(160)') AS Assunto,
+            T.Tabela.value('(Campo[@Nome="Corpo"]/@Value)[1]', 'varchar(160)') AS Corpo,
+            T.Tabela.value('(Campo[@Nome="Titulo"]/@Value)[1]', 'varchar(160)') AS TituloCampo,
+            T.Tabela.value('(Campo[@Nome="Complemento"]/@Value)[1]', 'varchar(160)') AS Complemento,
+            T.Tabela.value('(Campo[@Nome="Texto"]/@Value)[1]', 'varchar(160)') AS Texto,
+            T.Tabela.value('(Campo[@Nome="Number"]/@Value)[1]', 'varchar(60)') AS Numbero,
+            T.Tabela.value('(Campo[@Nome="Nome"]/@Value)[1]', 'varchar(80)') AS NomeCampo,
+            T.Tabela.value('(Campo[@Nome="IdTarefa"]/@Value)[1]', 'varchar(20)') AS IdTarefa,
+            T.Tabela.value('(Campo[@Nome="IdAtividade"]/@Value)[1]', 'varchar(20)') AS IdAtividade,
+            T.Tabela.value('(Campo[@Nome="IdCampo_Livre"]/@Value)[1]', 'varchar(20)') AS IdCampoLivre
+          FROM sys_Log_Tabela Ltb WITH (INDEX(Idx_sys_Log_Tabela_Data_Inicio))
+          JOIN sys_Usuario Usr ON Usr.IdUsuario = Ltb.IdUsuario
+          CROSS APPLY Ltb.Dados_Log.nodes('${xpath}') AS T(Tabela)
+          WHERE Ltb.Data_Inicio >= DATEADD(day, -7, GETDATE())
+        ) Extraido
+      ) Recente
+      WHERE Recente.Ordem <= 12
+      ORDER BY Recente.Data_Inicio DESC`);
+  } catch (erro) {
+    console.error("mudancas dos acompanhados:", erro?.message || erro);
+    return { itens: [] };
+  }
+  const eventos = r.recordset.map((linha) => ({
+    ...linha,
+    campos: [
+      ["Descricao", linha.Descricao],
+      ["Mensagem", linha.Mensagem],
+      ["Assunto", linha.Assunto],
+      ["Corpo", linha.Corpo],
+      ["Titulo", linha.TituloCampo],
+      ["Complemento", linha.Complemento],
+      ["Texto", linha.Texto],
+      ["Number", linha.Numbero],
+      ["Nome", linha.NomeCampo],
+      ["IdTarefa", linha.IdTarefa],
+      ["IdAtividade", linha.IdAtividade],
+      ["IdCampo_Livre", linha.IdCampoLivre],
+    ]
+      .filter(([, valor]) => String(valor ?? "").trim())
+      .map(([nome, valor]) => ({ nome, valor: String(valor).trim() })),
+  }));
+  const idsDe = (nome) => eventos.map((linha) => idCampo(linha.campos, nome));
+  let tarefas = new Map();
+  let atividades = new Map();
+  let livres = new Map();
+  try {
+    [tarefas, atividades, livres] = await Promise.all([
+      mapaPorIds(pool, idsDe("IdTarefa"), `
+        SELECT IdTarefa AS Id, Codigo, Descricao
+        FROM cad_Tarefa
+        WHERE IdTarefa IN (/*IDS*/)`, "Id"),
+      mapaPorIds(pool, idsDe("IdAtividade"), `
+        SELECT Ati.IdAtividade AS Id, Tar.Codigo, Tar.Descricao
+        FROM mov_Atividade Ati
+        LEFT JOIN cad_Tarefa Tar ON Tar.IdTarefa = Ati.IdTarefa
+        WHERE Ati.IdAtividade IN (/*IDS*/)`, "Id"),
+      mapaPorIds(pool, idsDe("IdCampo_Livre"), `
+        SELECT Mcl.IdCampo_Livre AS Id,
+          COALESCE(NULLIF(LTRIM(RTRIM(Cfg.Descricao)), ''), Cfg.Identificador) AS Nome,
+          COALESCE(
+            NULLIF(LTRIM(RTRIM(Mcl.Valor_Alfanumerico)), ''),
+            NULLIF(LTRIM(RTRIM(CAST(Mcl.Valor_Texto AS nvarchar(160)))), '')
+          ) AS Valor
+        FROM mov_Campo_Livre Mcl
+        JOIN cad_Configuracao_Campo_Livre Cfg ON Cfg.IdConfiguracao_Campo_Livre = Mcl.IdConfiguracao_Campo_Livre
+        WHERE Mcl.IdCampo_Livre IN (/*IDS*/)`, "Id"),
+    ]);
+  } catch (erro) {
+    console.error("nomes das mudanças:", erro?.message || erro);
+  }
+  const grupos = new Map(numeros.map((numero) => [numero, []]));
+  for (const linha of eventos) {
+    const numeroXml = String(linha.Numero ?? "").trim().toUpperCase();
+    const alvo = porNumero.has(numeroXml)
+      ? numeroXml
+      : porCasa.get(String(linha.Casa ?? "").trim()) || porProj.get(String(linha.Proj ?? "").trim());
+    const lista = grupos.get(alvo);
+    if (!lista || lista.length >= 12) continue;
+    const data = linha.Data_Inicio instanceof Date ? linha.Data_Inicio : new Date(linha.Data_Inicio);
+    lista.push({
+      tipo: Number(linha.Tipo) === 1 ? "inserido" : "atualizado",
+      rotulo: tituloDaMudanca(linha.Tabela, linha.campos, tarefas, atividades, livres),
+      quando: dataHora(linha.Data_Inicio),
+      texto: String(linha.Usuario ?? "").trim(),
+      recente: Boolean(data) && !Number.isNaN(data.getTime()) && Date.now() - data.getTime() <= 86_400_000,
+    });
+  }
+  const valor = {
+    itens: numeros.map((numero) => {
+      const mudancas = grupos.get(numero) || [];
+      return {
+        processo: numero,
+        recente: mudancas.some((evento) => evento.recente),
+        mudancas: mudancas.map(({ recente, ...evento }) => evento),
+      };
+    }),
+  };
+  cacheMudancas.set(chave, { quando: Date.now(), valor });
+  return valor;
+}
+
+async function blocoFavoritos(pool, email) {
+  const numeros = listarFavoritos(email).map((item) => item.processo).filter(Boolean);
+  if (!numeros.length) return bloco("Processos acompanhados", [], "Nenhum processo marcado. Informe um número para acompanhar o que mudar.", "");
+  const simples = numeros.map((numero) => item(numero, "acompanhando", "", "", numero, `O que mudou no processo ${numero} desde ontem?`));
+  let r;
+  try {
+  r = await linhasDosAcompanhados(pool, numeros);
   } catch {
     return bloco("Processos acompanhados", simples, "", "");
   }
   const porNumero = new Map(r.recordset.map((linha) => [String(linha.Numero_Processo ?? "").trim().toUpperCase(), linha]));
   const itens = numeros.map((numero) => {
-    const linha = porNumero.get(numero) ?? {};
+    const linha = porNumero.get(String(numero).toUpperCase()) ?? {};
     const nota = String(linha.Nota ?? "").replace(/\s+/g, " ").trim();
     const quando = dataHora(linha.NotaData);
     const recente = Boolean(nota) && mudouDesdeOntem(linha.NotaData);
@@ -1579,26 +1792,25 @@ export async function resumoInicial(pool, { email, nome, token, visao, admin, se
   const modalidade = !admin && setor === "operacional"
     ? modalManual || (modalidadeManual === "todas" ? "" : String(perfil.modalidade ?? ""))
     : "";
-  const tela = setor === "gerencia"
-    ? await telaGerencia(pool, admin ? "" : modalManual)
-    : setor === "ti"
-      ? await telaTi(pool)
-      : setor === "financeiro"
-        ? await telaFinanceiro(pool)
-        : setor === "documental"
-          ? await telaDocumental(pool)
-          : setor === "operacional"
-            ? await telaOperacional(pool, email, nome, modalidade)
-            : setor === "comercial" || setor === "inside"
-              ? await telaComercial(pool, email, nome, setor === "inside", Boolean(perfil.semComissao) && !admin, Boolean(admin))
-              : setor === "tudo"
-                ? await telaTudo(pool)
-                : await telaGeral(pool, email, nome);
-  try {
-    tela.favoritos = await blocoFavoritos(pool, email);
-  } catch {
-    tela.favoritos = null;
-  }
+  const [tela, favoritos] = await Promise.all([
+    setor === "gerencia"
+      ? telaGerencia(pool, admin ? "" : modalManual)
+      : setor === "ti"
+        ? telaTi(pool)
+        : setor === "financeiro"
+          ? telaFinanceiro(pool)
+          : setor === "documental"
+            ? telaDocumental(pool)
+            : setor === "operacional"
+              ? telaOperacional(pool, email, nome, modalidade)
+              : setor === "comercial" || setor === "inside"
+                ? telaComercial(pool, email, nome, setor === "inside", Boolean(perfil.semComissao) && !admin, Boolean(admin))
+                : setor === "tudo"
+                  ? telaTudo(pool)
+                  : telaGeral(pool, email, nome),
+    blocoFavoritos(pool, email).catch(() => null),
+  ]);
+  tela.favoritos = favoritos;
   try {
     if (setor === "ti" || setor === "gerencia") tela.placar = placarAvaliacoes(7);
   } catch {
